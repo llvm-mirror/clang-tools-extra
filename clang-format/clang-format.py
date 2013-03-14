@@ -41,12 +41,20 @@ stdout, stderr = p.communicate(input=text)
 
 # If successful, replace buffer contents.
 if stderr:
-  print stderr
-else:
-  if stdout != text:
-    lines = stdout.split('\n')
-    for i in range(min(len(buf), len(lines))):
-      buf[i] = lines[i]
-    for line in lines[len(buf):]:
-      buf.append(line)
-    del buf[len(lines):]
+  message = stderr.splitlines()[0]
+  parts = message.split(' ', 2)
+  if len(parts) > 2:
+    message = parts[2]
+  print 'Formatting failed: %s (total %d warnings, %d errors)' % (
+      message, stderr.count('warning:'), stderr.count('error:'))
+
+if not stdout:
+  print ('No output from clang-format (crashed?).\n' +
+      'Please report to bugs.llvm.org.')
+elif stdout != text:
+  lines = stdout.split('\n')
+  for i in range(min(len(buf), len(lines))):
+    buf[i] = lines[i]
+  for line in lines[len(buf):]:
+    buf.append(line)
+  del buf[len(lines):]
