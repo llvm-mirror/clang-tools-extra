@@ -20,13 +20,15 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 
+#include "clang/Lex/Lexer.h"
+
 using namespace clang::ast_matchers;
 using namespace clang::tooling;
 using namespace clang;
 
 namespace {
 
-/// \brief Replaces the provided range with the text "nullptr", but only if 
+/// \brief Replaces the provided range with the text "nullptr", but only if
 /// the start and end location are both in main file.
 /// Returns true if and only if a replacement was made.
 bool ReplaceWithNullptr(tooling::Replacements &Replace, SourceManager &SM,
@@ -49,12 +51,13 @@ bool ReplaceWithNullptr(tooling::Replacements &Replace, SourceManager &SM,
 /// nested within. However, there is no guarantee that only explicit casts
 /// exist between the found top-most explicit cast and the possibly more than
 /// one nested implicit cast. This visitor finds all cast sequences with an
-/// implicit cast to null within and creates a replacement.
+/// implicit cast to null within and creates a replacement leaving the
+/// outermost explicit cast unchanged to avoid introducing ambiguities.
 class CastSequenceVisitor : public RecursiveASTVisitor<CastSequenceVisitor> {
 public:
   CastSequenceVisitor(tooling::Replacements &R, SourceManager &SM,
                       unsigned &AcceptedChanges)
-      : Replace(R), SM(SM), AcceptedChanges(AcceptedChanges), FirstCast(0) {}
+      : Replace(R), SM(SM), AcceptedChanges(AcceptedChanges), FirstSubExpr(0) {}
 
   // Only VisitStmt is overridden as we shouldn't find other base AST types
   // within a cast expression.
@@ -62,16 +65,18 @@ public:
     CastExpr *C = dyn_cast<CastExpr>(S);
 
     if (!C) {
-      ResetFirstCast();
+      ResetFirstSubExpr();
       return true;
-    } else if (!FirstCast) {
-      FirstCast = C;
+    } else if (!FirstSubExpr) {
+      // Get the subexpression of the outermost explicit cast
+      FirstSubExpr = C->getSubExpr();
     }
 
     if (C->getCastKind() == CK_NullToPointer ||
         C->getCastKind() == CK_NullToMemberPointer) {
-      SourceLocation StartLoc = FirstCast->getLocStart();
-      SourceLocation EndLoc = FirstCast->getLocEnd();
+
+      SourceLocation StartLoc = FirstSubExpr->getLocStart();
+      SourceLocation EndLoc = FirstSubExpr->getLocEnd();
 
       // If the start/end location is a macro, get the expansion location.
       StartLoc = SM.getFileLoc(StartLoc);
@@ -80,20 +85,20 @@ public:
       AcceptedChanges +=
           ReplaceWithNullptr(Replace, SM, StartLoc, EndLoc) ? 1 : 0;
 
-      ResetFirstCast();
+      ResetFirstSubExpr();
     }
 
     return true;
   }
 
 private:
-  void ResetFirstCast() { FirstCast = 0; }
+  void ResetFirstSubExpr() { FirstSubExpr = 0; }
 
 private:
   tooling::Replacements &Replace;
   SourceManager &SM;
   unsigned &AcceptedChanges;
-  CastExpr *FirstCast;
+  Expr *FirstSubExpr;
 };
 
 void NullptrFixer::run(const ast_matchers::MatchFinder::MatchResult &Result) {
@@ -111,13 +116,32 @@ void NullptrFixer::run(const ast_matchers::MatchFinder::MatchResult &Result) {
   const CastExpr *Cast = Result.Nodes.getNodeAs<CastExpr>(ImplicitCastNode);
   if (Cast) {
     const Expr *E = Cast->IgnoreParenImpCasts();
-
     SourceLocation StartLoc = E->getLocStart();
     SourceLocation EndLoc = E->getLocEnd();
 
-    // If the start/end location is a macro, get the expansion location.
-    StartLoc = SM.getFileLoc(StartLoc);
-    EndLoc = SM.getFileLoc(EndLoc);
+    // If the start/end location is a macro argument expansion, get the
+    // expansion location. If its a macro body expansion, check to see if its
+    // coming from a macro called NULL.
+    if (SM.isMacroArgExpansion(StartLoc) && SM.isMacroArgExpansion(EndLoc)) {
+      StartLoc = SM.getFileLoc(StartLoc);
+      EndLoc = SM.getFileLoc(EndLoc);
+    } else if (SM.isMacroBodyExpansion(StartLoc) &&
+               SM.isMacroBodyExpansion(EndLoc)) {
+      llvm::StringRef ImmediateMacroName = clang::Lexer::getImmediateMacroName(
+          StartLoc, SM, Result.Context->getLangOpts());
+      if (ImmediateMacroName != "NULL")
+        return;
+
+      SourceLocation MacroCallerStartLoc =
+          SM.getImmediateMacroCallerLoc(StartLoc);
+      SourceLocation MacroCallerEndLoc = SM.getImmediateMacroCallerLoc(EndLoc);
+
+      if (MacroCallerStartLoc.isFileID() && MacroCallerEndLoc.isFileID()) {
+        StartLoc = SM.getFileLoc(StartLoc);
+        EndLoc = SM.getFileLoc(EndLoc);
+      } else
+        return;
+    }
 
     AcceptedChanges +=
         ReplaceWithNullptr(Replace, SM, StartLoc, EndLoc) ? 1 : 0;

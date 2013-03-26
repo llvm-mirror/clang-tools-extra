@@ -8,6 +8,7 @@
 
 const unsigned int g_null = 0;
 #define NULL 0
+// CHECK: #define NULL 0
 
 void test_assignment() {
   int *p1 = 0;
@@ -69,16 +70,16 @@ template <typename T>
 struct Bar {
   Bar(T *p) : m_p(p) {
     m_p = static_cast<T*>(NULL);
-    // CHECK: m_p = nullptr;
+    // CHECK: m_p = static_cast<T*>(nullptr);
 
     m_p = static_cast<T*>(reinterpret_cast<int*>((void*)NULL));
-    // CHECK: m_p = nullptr;
+    // CHECK: m_p = static_cast<T*>(nullptr);
 
     m_p = static_cast<T*>(p ? p : static_cast<void*>(g_null));
-    // CHECK: m_p = static_cast<T*>(p ? p : nullptr);
+    // CHECK: m_p = static_cast<T*>(p ? p : static_cast<void*>(nullptr));
 
     T *p2 = static_cast<T*>(reinterpret_cast<int*>((void*)NULL));
-    // CHECK: T *p2 = nullptr;
+    // CHECK: T *p2 = static_cast<T*>(nullptr);
 
     m_p = NULL;
     // CHECK: m_p = nullptr;
@@ -179,32 +180,6 @@ int test_function_return6() {
   // CHECK: return g_null;
 }
 
-// Test function-like macros where the parameter to the macro (expression)
-// results in a nullptr.
-void __dummy_assert_fail() {}
-
-void test_function_like_macro1() {
-  // This tests that the CastSequenceVisitor is working properly.
-#define my_assert(expr) \
-  ((expr) ? static_cast<void>(expr) : __dummy_assert_fail())
-
-  int *p;
-  my_assert(p != 0);
-  // CHECK: my_assert(p != nullptr);
-#undef my_assert
-}
-
-void test_function_like_macro2() {
-  // This tests that the implicit cast is working properly.
-#define my_macro(expr) \
-  (expr)
-
-  int *p;
-  my_macro(p != 0);
-  // CHECK: my_macro(p != nullptr);
-#undef my_macro
-}
-
 // Test parentheses expressions resulting in a nullptr.
 int *test_parentheses_expression1() {
   return(0);
@@ -223,15 +198,56 @@ int *test_nested_parentheses_expression() {
 
 void *test_parentheses_explicit_cast() {
   return(static_cast<void*>(0));
-  // CHECK: return(nullptr);
+  // CHECK: return(static_cast<void*>(nullptr));
 }
 
 void *test_parentheses_explicit_cast_sequence1() {
   return(static_cast<void*>(static_cast<int*>((void*)NULL)));
-  // CHECK: return(nullptr);
+  // CHECK: return(static_cast<void*>(nullptr));
 }
 
 void *test_parentheses_explicit_cast_sequence2() {
   return(static_cast<void*>(reinterpret_cast<int*>((float*)int(0.f))));
-  // CHECK: return(nullptr);
+  // CHECK: return(static_cast<void*>(nullptr));
+}
+
+// Test explicit cast expressions resulting in nullptr
+struct Bam {
+  Bam(int *a) {}
+  Bam(float *a) {}
+  Bam operator=(int *a) { return Bam(a); }
+  Bam operator=(float *a) { return Bam(a); }
+};
+
+void ambiguous_function(int *a) {}
+void ambiguous_function(float *a) {}
+
+void test_explicit_cast_ambiguous1() {
+  ambiguous_function((int*)0);
+  // CHECK: ambiguous_function((int*)nullptr);
+}
+
+void test_explicit_cast_ambiguous2() {
+  ambiguous_function((int*)(0));
+  // CHECK: ambiguous_function((int*)nullptr);
+}
+
+void test_explicit_cast_ambiguous3() {
+  ambiguous_function(static_cast<int*>(reinterpret_cast<int*>((float*)0)));
+  // CHECK: ambiguous_function(static_cast<int*>(nullptr));
+}
+
+Bam test_explicit_cast_ambiguous4() {
+  return(((int*)(0)));
+  // CHECK: return(((int*)nullptr));
+}
+
+void test_explicit_cast_ambiguous5() {
+  // Test for ambiguous overloaded constructors
+  Bam k((int*)(0));
+  // CHECK: Bam k((int*)nullptr);
+
+  // Test for ambiguous overloaded operators
+  k = (int*)0;
+  // CHECK: k = (int*)nullptr;
 }

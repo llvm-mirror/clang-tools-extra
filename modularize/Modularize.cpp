@@ -34,6 +34,29 @@
 //
 // note: '(symbol)' in (file) at (row):(column) not always provided
 //
+// Future directions:
+//
+// Basically, we want to add new checks for whatever we can check with respect
+// to checking headers for module'ability.
+//
+// Some ideas:
+//
+// 1. Group duplicate definition messages into a single list.
+//
+// 2. Try to figure out the preprocessor conditional directives that
+// contribute to problems.
+//
+// 3. Check for correct and consistent usage of extern "C" {} and other
+// directives. Warn about #include inside extern "C" {}.
+//
+// 4. What else?
+//
+// General clean-up and refactoring:
+//
+// 1. The Location class seems to be something that we might
+// want to design to be applicable to a wider range of tools, and stick it
+// somewhere into Tooling/ in mainline
+//
 //===----------------------------------------------------------------------===//
  
 #include "llvm/Config/config.h"
@@ -58,6 +81,9 @@ using namespace clang::tooling;
 using namespace clang;
 using llvm::StringRef;
 
+// FIXME: The Location class seems to be something that we might
+// want to design to be applicable to a wider range of tools, and stick it
+// somewhere into Tooling/ in mainline
 struct Location {
   const FileEntry *File;
   unsigned Line, Column;
@@ -145,9 +171,6 @@ struct HeaderEntry {
 typedef std::vector<HeaderEntry> HeaderContents;
 
 class EntityMap : public llvm::StringMap<llvm::SmallVector<Entry, 2> > {
-  llvm::DenseMap<const FileEntry *, HeaderContents> CurHeaderContents;
-  llvm::DenseMap<const FileEntry *, HeaderContents> AllHeaderContents;
-  
 public:
   llvm::DenseMap<const FileEntry *, HeaderContents> HeaderContentMismatches;
     
@@ -197,14 +220,14 @@ public:
     
     CurHeaderContents.clear();
   }
+private:
+  llvm::DenseMap<const FileEntry *, HeaderContents> CurHeaderContents;
+  llvm::DenseMap<const FileEntry *, HeaderContents> AllHeaderContents;
 };
 
 class CollectEntitiesVisitor
   : public RecursiveASTVisitor<CollectEntitiesVisitor>
 {
-  SourceManager &SM;
-  EntityMap &Entities;
-  
 public:
   CollectEntitiesVisitor(SourceManager &SM, EntityMap &Entities)
     : SM(SM), Entities(Entities) { }
@@ -249,12 +272,12 @@ public:
     Entities.add(Name, isa<TagDecl>(ND)? Entry::Tag : Entry::Value, Loc);
     return true;
   }
+private:
+  SourceManager &SM;
+  EntityMap &Entities;
 };
 
 class CollectEntitiesConsumer : public ASTConsumer {
-  EntityMap &Entities;
-  Preprocessor &PP;
-  
 public:
   CollectEntitiesConsumer(EntityMap &Entities, Preprocessor &PP)
     : Entities(Entities), PP(PP) { }
@@ -280,30 +303,32 @@ public:
     // Merge header contents.
     Entities.mergeCurHeaderContents();
   }
+private:
+  EntityMap &Entities;
+  Preprocessor &PP;
 };
 
 class CollectEntitiesAction : public SyntaxOnlyAction {
-  EntityMap &Entities;
-  
+public:
+  CollectEntitiesAction(EntityMap &Entities) : Entities(Entities) { }
 protected:
   virtual clang::ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
                                                 StringRef InFile) {
     return new CollectEntitiesConsumer(Entities, CI.getPreprocessor());
   }
-  
-public:
-  CollectEntitiesAction(EntityMap &Entities) : Entities(Entities) { }
+private:
+  EntityMap &Entities;  
 };
 
 class ModularizeFrontendActionFactory : public FrontendActionFactory {
-  EntityMap &Entities;
-
 public:
   ModularizeFrontendActionFactory(EntityMap &Entities) : Entities(Entities) { }
 
   virtual CollectEntitiesAction *create() {
     return new CollectEntitiesAction(Entities);
   }
+private:
+  EntityMap &Entities;  
 };
 
 int main(int argc, const char **argv) {
@@ -347,8 +372,9 @@ int main(int argc, const char **argv) {
   EntityMap Entities;
   ClangTool Tool(*Compilations, Headers);
   int HadErrors = Tool.run(new ModularizeFrontendActionFactory(Entities));
-  
+
   // Check for the same entity being defined in multiple places.
+  // FIXME: Could they be grouped into a list?
   for (EntityMap::iterator E = Entities.begin(), EEnd = Entities.end();
        E != EEnd; ++E) {
     Location Tag, Value, Macro;
@@ -376,6 +402,8 @@ int main(int argc, const char **argv) {
   
   // Complain about any headers that have contents that differ based on how
   // they are included.
+  // FIXME: Could we provide information about which preprocessor conditionals
+  // are involved?
   for (llvm::DenseMap<const FileEntry *, HeaderContents>::iterator
             H = Entities.HeaderContentMismatches.begin(),
          HEnd = Entities.HeaderContentMismatches.end();
