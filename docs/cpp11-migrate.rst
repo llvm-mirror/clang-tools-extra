@@ -10,6 +10,7 @@ cpp11-migrate User's Manual
    UseAutoTransform
    UseNullptrTransform
    LoopConvertTransform
+   AddOverrideTransform
 
 :program:`cpp11-migrate` is a standalone tool used to automatically convert
 C++98 and C++03 code to use features of the new C++11 standard where
@@ -40,10 +41,23 @@ Command Line Options
   Makes use of the new C++11 keyword ``nullptr`` where possible.
   See :doc:`UseNullptrTransform`.
 
+.. option:: -user-null-macros=<string>
+
+  ``<string>`` is a comma-separated list of user-defined macros that behave like
+  the ``NULL`` macro. The :option:`-use-nullptr` transform will replace these
+  macros along with ``NULL``. See :doc:`UseNullptrTransform`.
+
 .. option:: -use-auto
 
   Replace the type specifier of variable declarations with the ``auto`` type
   specifier. See :doc:`UseAutoTransform`.
+
+.. option:: -add-override
+
+  Adds the override specifier to member functions where it is appropriate. That
+  is, the override specifier is added to member functions that override a
+  virtual function in a base class and that don't already have the specifier.
+  See :doc:`AddOverrideTransform`.
 
 .. option:: -p=<build-path>
 
@@ -76,7 +90,7 @@ Command Line Options
   :ref:`transform documentation <transforms>` for details.
 
 .. option:: -final-syntax-check
- 
+
   After applying the final transform to a file, parse the file to ensure the
   last transform did not introduce syntax errors. Syntax errors introduced by
   earlier transforms are already caught when subsequent transforms parse the

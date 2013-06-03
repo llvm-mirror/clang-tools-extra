@@ -18,7 +18,9 @@
 using namespace clang::ast_matchers;
 using namespace clang;
 
-const char *DeclNodeId = "decl";
+const char *IteratorDeclStmtId = "iterator_decl";
+const char *DeclWithNewId = "decl_new";
+const char *NewExprId = "new_expr";
 
 namespace clang {
 namespace ast_matchers {
@@ -230,18 +232,55 @@ TypeMatcher iteratorFromUsingDeclaration() {
 }
 } // namespace
 
-DeclarationMatcher makeIteratorMatcher() {
-  return varDecl(allOf(
-                   hasWrittenNonListInitializer(),
-                   unless(hasType(autoType())),
-                   hasType(
-                     isSugarFor(
-                       anyOf(
-                         typedefIterator(),
-                         nestedIterator(),
-                         iteratorFromUsingDeclaration()
-                       )
-                     )
-                   )
-                 )).bind(DeclNodeId);
+// \brief This matcher returns delaration statements that contain variable
+// declarations with written non-list initializer for standard iterators.
+StatementMatcher makeIteratorDeclMatcher() {
+  return declStmt(
+    // At least one varDecl should be a child of the declStmt to ensure it's a
+    // declaration list and avoid matching other declarations
+    // e.g. using directives.
+    has(varDecl()),
+    unless(has(varDecl(
+      anyOf(
+        unless(hasWrittenNonListInitializer()),
+        hasType(autoType()),
+        unless(hasType(
+          isSugarFor(
+            anyOf(
+              typedefIterator(),
+              nestedIterator(),
+              iteratorFromUsingDeclaration()
+            )
+          )
+        ))
+      )
+    )))
+  ).bind(IteratorDeclStmtId);
+}
+
+DeclarationMatcher makeDeclWithNewMatcher() {
+  return varDecl(
+           hasInitializer(
+             ignoringParenImpCasts(
+               newExpr().bind(NewExprId)
+             )
+           ),
+
+           // FIXME: TypeLoc information is not reliable where CV qualifiers are
+           // concerned so these types can't be handled for now.
+           unless(hasType(pointerType(pointee(hasLocalQualifiers())))),
+
+           // FIXME: Handle function pointers. For now we ignore them because
+           // the replacement replaces the entire type specifier source range
+           // which includes the identifier.
+           unless(
+             hasType(
+               pointsTo(
+                 pointsTo(
+                   parenType(innerType(functionType()))
+                 )
+               )
+             )
+           )
+         ).bind(DeclWithNewId);
 }

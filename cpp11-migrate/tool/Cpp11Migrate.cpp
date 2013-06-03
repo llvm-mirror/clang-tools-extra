@@ -15,8 +15,12 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "Transforms.h"
-#include "Transform.h"
+#include "Core/Transforms.h"
+#include "Core/Transform.h"
+#include "LoopConvert/LoopConvert.h"
+#include "UseNullptr/UseNullptr.h"
+#include "UseAuto/UseAuto.h"
+#include "AddOverride/AddOverride.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
@@ -46,6 +50,25 @@ static cl::opt<bool>
 SummaryMode("summary", cl::desc("Print transform summary"),
             cl::init(false));
 
+// TODO: Remove cl::Hidden when functionality for acknowledging include/exclude
+// options are implemented in the tool.
+static cl::opt<std::string>
+IncludePaths("include", cl::Hidden,
+             cl::desc("Comma seperated list of paths to consider to be "
+                      "transformed"));
+static cl::opt<std::string>
+ExcludePaths("exclude", cl::Hidden,
+             cl::desc("Comma seperated list of paths that can not "
+                      "be transformed"));
+static cl::opt<std::string>
+IncludeFromFile("include-from", cl::Hidden, cl::value_desc("filename"),
+                cl::desc("File containing a list of paths to consider to "
+                         "be transformed"));
+static cl::opt<std::string>
+ExcludeFromFile("exclude-from", cl::Hidden, cl::value_desc("filename"),
+                cl::desc("File containing a list of paths that can not be "
+                         "transforms"));
+
 class EndSyntaxArgumentsAdjuster : public ArgumentsAdjuster {
   CommandLineArguments Adjust(const CommandLineArguments &Args) {
     CommandLineArguments AdjustedArgs = Args;
@@ -59,7 +82,19 @@ int main(int argc, const char **argv) {
   llvm::sys::PrintStackTraceOnErrorSignal();
   Transforms TransformManager;
 
-  TransformManager.createTransformOpts();
+  TransformManager.registerTransform(
+      "loop-convert", "Make use of range-based for loops where possible",
+      &ConstructTransform<LoopConvertTransform>);
+  TransformManager.registerTransform(
+      "use-nullptr", "Make use of nullptr keyword where possible",
+      &ConstructTransform<UseNullptrTransform>);
+  TransformManager.registerTransform(
+      "use-auto", "Use of 'auto' type specifier",
+      &ConstructTransform<UseAutoTransform>);
+  TransformManager.registerTransform(
+      "add-override", "Make use of override specifier where possible",
+      &ConstructTransform<AddOverrideTransform>);
+  // Add more transform options here.
 
   // This causes options to be parsed.
   CommonOptionsParser OptionsParser(argc, argv);

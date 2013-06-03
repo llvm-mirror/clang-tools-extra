@@ -180,6 +180,18 @@ int test_function_return6() {
   // CHECK: return g_null;
 }
 
+int *test_function_return_cast1() {
+  return(int)0;
+  // CHECK: return nullptr;
+}
+
+int *test_function_return_cast2() {
+  #define RET return
+  RET(int)0;
+  // CHECK: RET nullptr;
+  #undef RET
+}
+
 // Test parentheses expressions resulting in a nullptr.
 int *test_parentheses_expression1() {
   return(0);
@@ -221,6 +233,8 @@ struct Bam {
 
 void ambiguous_function(int *a) {}
 void ambiguous_function(float *a) {}
+void const_ambiguous_function(const int *p) {}
+void const_ambiguous_function(const float *p) {}
 
 void test_explicit_cast_ambiguous1() {
   ambiguous_function((int*)0);
@@ -250,4 +264,27 @@ void test_explicit_cast_ambiguous5() {
   // Test for ambiguous overloaded operators
   k = (int*)0;
   // CHECK: k = (int*)nullptr;
+}
+
+void test_const_pointers_abiguous() {
+  const_ambiguous_function((int*)0);
+  // CHECK: const_ambiguous_function((int*)nullptr);
+}
+
+// Test where the implicit cast to null is surrounded by another implict cast
+// with possible explict casts in-between.
+void test_const_pointers() {
+  const int *const_p1 = 0;
+  // CHECK: const int *const_p1 = nullptr;
+  const int *const_p2 = NULL;
+  // CHECK: const int *const_p2 = nullptr;
+  const int *const_p3 = (int)0;
+  // CHECK: const int *const_p3 = nullptr;
+  const int *const_p4 = (int)0.0f;
+  // CHECK: const int *const_p4 = nullptr;
+  const int *const_p5 = (int*)0;
+  // CHECK: const int *const_p5 = (int*)nullptr;
+  int *t;
+  const int *const_p6 = static_cast<int*>(t ? t : static_cast<int*>(0));
+  // CHECK: const int *const_p6 = static_cast<int*>(t ? t : static_cast<int*>(nullptr));
 }
