@@ -1,4 +1,4 @@
-//===-- AddOverride/AddOverrideActions.cpp - add C++11 override-*- C++ -*-===//
+//===-- AddOverride/AddOverrideActions.cpp - add C++11 override -----------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,20 +7,22 @@
 //
 //===----------------------------------------------------------------------===//
 ///
-///  \file
-///  \brief This file contains the definition of the AddOverrideFixer class
-///  which is used as an ASTMatcher callback.
+/// \file
+/// \brief This file contains the definition of the AddOverrideFixer class
+/// which is used as an ASTMatcher callback.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "AddOverrideActions.h"
 #include "AddOverrideMatchers.h"
+#include "Core/Transform.h"
 
 #include "clang/Basic/CharInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Lex/Lexer.h"
+#include "clang/Lex/Preprocessor.h"
 
 using namespace clang::ast_matchers;
 using namespace clang::tooling;
@@ -60,8 +62,7 @@ void AddOverrideFixer::run(const MatchFinder::MatchResult &Result) {
   if (const FunctionDecl *TemplateMethod = M->getTemplateInstantiationPattern())
     M = cast<CXXMethodDecl>(TemplateMethod);
 
-  // Check that the method declaration is in the main file
-  if (!SM.isFromMainFile(M->getLocStart()))
+  if (!Owner.isFileModifiable(SM, M->getLocStart()))
     return;
 
   // First check that there isn't already an override attribute.
@@ -85,6 +86,15 @@ void AddOverrideFixer::run(const MatchFinder::MatchResult &Result) {
     StartLoc = SM.getSpellingLoc(M->getLocEnd());
     StartLoc = Lexer::getLocForEndOfToken(StartLoc, 0, SM, LangOptions());
   }
-  Replace.insert(tooling::Replacement(SM, StartLoc, 0, " override"));
+
+  std::string ReplacementText = " override";
+  if (DetectMacros) {
+    assert(PP != 0 && "No access to Preprocessor object for macro detection");
+    clang::TokenValue Tokens[] = { PP->getIdentifierInfo("override") };
+    llvm::StringRef MacroName = PP->getLastMacroWithSpelling(StartLoc, Tokens);
+    if (!MacroName.empty())
+      ReplacementText = (" " + MacroName).str();
+  }
+  Replace.insert(tooling::Replacement(SM, StartLoc, 0, ReplacementText));
   ++AcceptedChanges;
 }

@@ -12,8 +12,9 @@
 /// to handle the include and exclude command line options.
 ///
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_INCLUDEEXCLUDEINFO_H
-#define LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_INCLUDEEXCLUDEINFO_H
+
+#ifndef CPP11_MIGRATE_INCLUDEEXCLUDEINFO_H
+#define CPP11_MIGRATE_INCLUDEEXCLUDEINFO_H
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/system_error.h"
@@ -41,11 +42,11 @@ public:
 
   /// \brief Determine if the given path is in the list of include paths but
   /// not in the list of exclude paths.
-  bool isFileIncluded(llvm::StringRef FilePath);
+  bool isFileIncluded(llvm::StringRef FilePath) const;
 
 private:
   std::vector<std::string> IncludeList;
   std::vector<std::string> ExcludeList;
 };
 
-#endif // LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_INCLUDEEXCLUDEINFO_H
+#endif // CPP11_MIGRATE_INCLUDEEXCLUDEINFO_H

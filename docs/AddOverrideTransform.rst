@@ -25,9 +25,19 @@ For example:
     void h() const override;
   };
 
+Using Expands-to-Override Macros
+================================
+
+Like LLVM's ``LLVM_OVERRIDE``, several projects have macros that conditionally
+expand to the ``override`` keyword when compiling with C++11 features enabled.
+To maintain compatibility with non-C++11 builds, the Add-Override Transform
+supports detection and use of these macros instead of using the ``override``
+keyword directly. Specify ``-override-macros`` on the command line to the
+Migrator to enable this behavior.
+
 
 Known Limitations
------------------
+=================
 * This transform will not insert the override keyword if a method is
   pure. At the moment it's not possible to track down the pure
   specifier location.

@@ -1,4 +1,4 @@
-//===-- Core/IncludeExcludeInfo.cpp - IncludeExclude class impl -*- C++ -*-===//
+//===-- Core/IncludeExcludeInfo.cpp - IncludeExclude class impl -----------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// \brief This file provides the implemention of the IncludeExcludeInfo class
+/// \brief This file provides the implementation of the IncludeExcludeInfo class
 /// to handle the include and exclude command line options.
 ///
 //===----------------------------------------------------------------------===//
@@ -58,10 +58,18 @@ error_code parseCLInput(StringRef Line, std::vector<std::string> &List,
                                             E = Tokens.end();
        I != E; ++I) {
     // Convert each path to its absolute path.
-    SmallString<64> AbsolutePath = I->rtrim();
-    if (error_code Err = sys::fs::make_absolute(AbsolutePath))
+    SmallString<64> Path = I->rtrim();
+    if (error_code Err = sys::fs::make_absolute(Path))
       return Err;
-    List.push_back(std::string(AbsolutePath.str()));
+
+    // sys::fs::make_absolute will turn "." into "<pwd>/.". Need to strip "/."
+    // off or it interferes with prefix checking.
+    if (Path.endswith("/."))
+      List.push_back(Path.slice(0, Path.size() - 2).str());
+    else
+      List.push_back(Path.str());
+
+    llvm::errs() << "Parse: " <<List.back() << "\n";
   }
   return error_code::success();
 }
@@ -103,11 +111,11 @@ error_code IncludeExcludeInfo::readListFromFile(StringRef IncludeListFile,
   return error_code::success();
 }
 
-bool IncludeExcludeInfo::isFileIncluded(StringRef FilePath) {
+bool IncludeExcludeInfo::isFileIncluded(StringRef FilePath) const {
   bool InIncludeList = false;
 
-  for (std::vector<std::string>::iterator I = IncludeList.begin(),
-                                          E = IncludeList.end();
+  for (std::vector<std::string>::const_iterator I = IncludeList.begin(),
+                                                E = IncludeList.end();
        I != E; ++I)
     if ((InIncludeList = fileHasPathPrefix(FilePath, *I)))
       break;
@@ -116,8 +124,8 @@ bool IncludeExcludeInfo::isFileIncluded(StringRef FilePath) {
   if (!InIncludeList)
     return false;
 
-  for (std::vector<std::string>::iterator I = ExcludeList.begin(),
-                                          E = ExcludeList.end();
+  for (std::vector<std::string>::const_iterator I = ExcludeList.begin(),
+                                                E = ExcludeList.end();
        I != E; ++I)
     if (fileHasPathPrefix(FilePath, *I))
       return false;

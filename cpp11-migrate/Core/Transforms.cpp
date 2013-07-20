@@ -1,4 +1,4 @@
-//===-- cpp11-migrate/Transforms.cpp - class Transforms Impl ----*- C++ -*-===//
+//===-- Core/Transforms.cpp - class Transforms Impl -----------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -17,6 +17,8 @@
 
 namespace cl = llvm::cl;
 
+static cl::OptionCategory TransformCategory("Transforms");
+
 Transforms::~Transforms() {
   for (std::vector<Transform*>::iterator I = ChosenTransforms.begin(),
        E = ChosenTransforms.end(); I != E; ++I) {
@@ -32,14 +34,17 @@ void Transforms::registerTransform(llvm::StringRef OptName,
                                    llvm::StringRef Description,
                                    TransformCreator Creator) {
   Options.push_back(OptionVec::value_type(
-      new cl::opt<bool>(OptName.data(), cl::desc(Description.data())), Creator));
+      new cl::opt<bool>(OptName.data(), cl::desc(Description.data()),
+                        cl::cat(TransformCategory)),
+      Creator));
 }
 
-void Transforms::createSelectedTransforms() {
+void
+Transforms::createSelectedTransforms(const TransformOptions &GlobalOptions) {
   for (OptionVec::iterator I = Options.begin(),
        E = Options.end(); I != E; ++I) {
     if (*I->first) {
-      ChosenTransforms.push_back(I->second());
+      ChosenTransforms.push_back(I->second(GlobalOptions));
     }
   }
 }

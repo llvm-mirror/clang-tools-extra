@@ -1,4 +1,4 @@
-//===-- LoopConvert/LoopConvert.cpp - C++11 for-loop migration --*- C++ -*-===//
+//===-- UseNullptr/UseNullptr.cpp - C++11 nullptr migration ---------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -17,7 +17,6 @@
 #include "NullptrActions.h"
 #include "NullptrMatchers.h"
 #include "clang/Frontend/FrontendActions.h"
-#include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Tooling/Tooling.h"
 
@@ -25,39 +24,25 @@ using clang::ast_matchers::MatchFinder;
 using namespace clang::tooling;
 using namespace clang;
 
-int UseNullptrTransform::apply(const FileContentsByPath &InputStates,
-                               RiskLevel MaxRisk,
+int UseNullptrTransform::apply(FileOverrides &InputStates,
                                const CompilationDatabase &Database,
-                               const std::vector<std::string> &SourcePaths,
-                               FileContentsByPath &ResultStates) {
-  RefactoringTool UseNullptrTool(Database, SourcePaths);
-
-  for (FileContentsByPath::const_iterator I = InputStates.begin(),
-       E = InputStates.end();
-       I != E; ++I) {
-    UseNullptrTool.mapVirtualFile(I->first, I->second);
-  }
+                               const std::vector<std::string> &SourcePaths) {
+  ClangTool UseNullptrTool(Database, SourcePaths);
 
   unsigned AcceptedChanges = 0;
 
   MatchFinder Finder;
-  NullptrFixer Fixer(UseNullptrTool.getReplacements(),
-                     AcceptedChanges,
-                     MaxRisk);
+  NullptrFixer Fixer(getReplacements(), AcceptedChanges, Options().MaxRiskLevel,
+                     /*Owner=*/ *this);
 
   Finder.addMatcher(makeCastSequenceMatcher(), &Fixer);
 
-  if (int result = UseNullptrTool.run(newFrontendActionFactory(&Finder))) {
+  setOverrides(InputStates);
+
+  if (int result = UseNullptrTool.run(createActionFactory(Finder))) {
     llvm::errs() << "Error encountered during translation.\n";
     return result;
   }
-
-  RewriterContainer Rewrite(UseNullptrTool.getFiles(), InputStates);
-
-  // FIXME: Do something if some replacements didn't get applied?
-  UseNullptrTool.applyAllReplacements(Rewrite.getRewriter());
-
-  collectResults(Rewrite.getRewriter(), InputStates, ResultStates);
 
   setAcceptedChanges(AcceptedChanges);
 

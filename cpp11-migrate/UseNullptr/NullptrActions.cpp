@@ -1,4 +1,4 @@
-//===-- nullptr-convert/NullptrActions.cpp - Matcher callback -------------===//
+//===-- UseNullptr/NullptrActions.cpp - Matcher callback ------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,10 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 ///
-///  \file
-///  \brief This file contains the definition of the NullptrFixer class which is
-///  used as an ASTMatcher callback. Also within this file is a helper AST
-///  visitor class used to identify sequences of explicit casts.
+/// \file
+/// \brief This file contains the definition of the NullptrFixer class which is
+/// used as an ASTMatcher callback. Also within this file is a helper AST
+/// visitor class used to identify sequences of explicit casts.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -26,19 +26,22 @@
 using namespace clang::ast_matchers;
 using namespace clang::tooling;
 using namespace clang;
+namespace cl = llvm::cl;
 
 namespace {
 
 const char *NullMacroName = "NULL";
 
-static llvm::cl::opt<std::string> UserNullMacroNames(
-    "user-null-macros", llvm::cl::desc("Comma-separated list of user-defined "
-                                       "macro names that behave like NULL"),
-    llvm::cl::init(""));
+static cl::opt<std::string>
+UserNullMacroNames("user-null-macros",
+                   cl::desc("Comma-separated list of user-defined "
+                            "macro names that behave like NULL"),
+                   cl::cat(TransformsOptionsCategory), cl::init(""));
 
 bool isReplaceableRange(SourceLocation StartLoc, SourceLocation EndLoc,
-                        const SourceManager &SM) {
-  return SM.isFromSameFile(StartLoc, EndLoc) && SM.isFromMainFile(StartLoc);
+                        const SourceManager &SM, const Transform &Owner) {
+  return SM.isFromSameFile(StartLoc, EndLoc) &&
+         Owner.isFileModifiable(SM, StartLoc);
 }
 
 /// \brief Replaces the provided range with the text "nullptr", but only if
@@ -152,10 +155,10 @@ class CastSequenceVisitor : public RecursiveASTVisitor<CastSequenceVisitor> {
 public:
   CastSequenceVisitor(tooling::Replacements &R, ASTContext &Context,
                       const UserMacroNames &UserNullMacros,
-                      unsigned &AcceptedChanges)
+                      unsigned &AcceptedChanges, const Transform &Owner)
       : Replace(R), SM(Context.getSourceManager()), Context(Context),
         UserNullMacros(UserNullMacros), AcceptedChanges(AcceptedChanges),
-        FirstSubExpr(0), PruneSubtree(false) {}
+        Owner(Owner), FirstSubExpr(0), PruneSubtree(false) {}
 
   bool TraverseStmt(Stmt *S) {
     // Stop traversing down the tree if requested.
@@ -191,7 +194,7 @@ public:
       if (SM.isMacroArgExpansion(StartLoc) && SM.isMacroArgExpansion(EndLoc)) {
         SourceLocation FileLocStart = SM.getFileLoc(StartLoc),
                        FileLocEnd = SM.getFileLoc(EndLoc);
-        if (isReplaceableRange(FileLocStart, FileLocEnd, SM) &&
+        if (isReplaceableRange(FileLocStart, FileLocEnd, SM, Owner) &&
             allArgUsesValid(C)) {
           ReplaceWithNullptr(Replace, SM, FileLocStart, FileLocEnd);
           ++AcceptedChanges;
@@ -214,7 +217,7 @@ public:
         EndLoc = SM.getFileLoc(EndLoc);
       }
 
-      if (!isReplaceableRange(StartLoc, EndLoc, SM)) {
+      if (!isReplaceableRange(StartLoc, EndLoc, SM, Owner)) {
         return skipSubTree();
       }
       ReplaceWithNullptr(Replace, SM, StartLoc, EndLoc);
@@ -419,14 +422,16 @@ private:
   ASTContext &Context;
   const UserMacroNames &UserNullMacros;
   unsigned &AcceptedChanges;
+  const Transform &Owner;
   Expr *FirstSubExpr;
   bool PruneSubtree;
 };
 } // namespace
 
 NullptrFixer::NullptrFixer(clang::tooling::Replacements &Replace,
-                           unsigned &AcceptedChanges, RiskLevel)
-    : Replace(Replace), AcceptedChanges(AcceptedChanges) {
+                           unsigned &AcceptedChanges, RiskLevel,
+                           const Transform &Owner)
+    : Replace(Replace), AcceptedChanges(AcceptedChanges), Owner(Owner) {
   if (!UserNullMacroNames.empty()) {
     llvm::StringRef S = UserNullMacroNames;
     S.split(UserNullMacros, ",");
@@ -441,6 +446,6 @@ void NullptrFixer::run(const ast_matchers::MatchFinder::MatchResult &Result) {
   // null-to-pointer cast within use CastSequenceVisitor to identify sequences
   // of explicit casts that can be converted into 'nullptr'.
   CastSequenceVisitor Visitor(Replace, *Result.Context, UserNullMacros,
-                              AcceptedChanges);
+                              AcceptedChanges, Owner);
   Visitor.TraverseStmt(const_cast<CastExpr *>(NullCast));
 }

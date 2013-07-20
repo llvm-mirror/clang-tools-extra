@@ -1,4 +1,4 @@
-//===-- cpp11-migrate/Transforms.h - class Transforms Def'n -----*- C++ -*-===//
+//===-- Core/Transforms.h - class Transforms Def'n --------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,11 +13,13 @@
 /// transformations to the user and applying requested transforms.
 ///
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_TRANSFORMS_H
-#define LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_TRANSFORMS_H
+
+#ifndef CPP11_MIGRATE_TRANSFORMS_H
+#define CPP11_MIGRATE_TRANSFORMS_H
 
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/StringRef.h"
+
 #include <vector>
 
 // Forward declarations
@@ -27,11 +29,12 @@ class Option;
 } // namespace cl
 } // namespace llvm
 class Transform;
+struct TransformOptions;
 
-typedef Transform *(*TransformCreator)();
+typedef Transform *(*TransformCreator)(const TransformOptions &);
 template <typename T>
-Transform *ConstructTransform() {
-  return new T();
+Transform *ConstructTransform(const TransformOptions &Options) {
+  return new T(Options);
 }
 
 /// \brief Class encapsulating the creation of command line bool options
@@ -55,7 +58,7 @@ public:
   /// \brief Instantiate all transforms that were selected on the command line.
   ///
   /// Call *after* parsing options.
-  void createSelectedTransforms();
+  void createSelectedTransforms(const TransformOptions &Options);
 
   /// \brief Return an iterator to the start of a container of instantiated
   /// transforms.
@@ -74,4 +77,4 @@ private:
   OptionVec Options;
 };
 
-#endif // LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_TRANSFORMS_H
+#endif // CPP11_MIGRATE_TRANSFORMS_H

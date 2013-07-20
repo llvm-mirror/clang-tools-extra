@@ -1,4 +1,4 @@
-//===-- LoopConvert/LoopActions.cpp - C++11 For loop migration --*- C++ -*-===//
+//===-- LoopConvert/LoopActions.cpp - C++11 For loop migration ------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,6 +12,7 @@
 /// for loops.
 ///
 //===----------------------------------------------------------------------===//
+
 #include "LoopActions.h"
 #include "LoopMatchers.h"
 #include "VariableNaming.h"
@@ -1030,7 +1031,7 @@ void LoopFixer::run(const MatchFinder::MatchResult &Result) {
   ASTContext *Context = Result.Context;
   const ForStmt *TheLoop = Nodes.getStmtAs<ForStmt>(LoopName);
 
-  if (!Context->getSourceManager().isFromMainFile(TheLoop->getForLoc()))
+  if (!Owner.isFileModifiable(Context->getSourceManager(),TheLoop->getForLoc()))
     return;
 
   // Check that we have exactly one index variable and at most one end variable.

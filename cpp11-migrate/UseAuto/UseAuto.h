@@ -14,8 +14,9 @@
 /// situations.
 ///
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_USE_AUTO_H
-#define LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_USE_AUTO_H
+
+#ifndef CPP11_MIGRATE_USE_AUTO_H
+#define CPP11_MIGRATE_USE_AUTO_H
 
 #include "Core/Transform.h"
 #include "llvm/Support/Compiler.h"
@@ -29,14 +30,13 @@
 /// p2 are not handled by this transform.
 class UseAutoTransform : public Transform {
 public:
-  UseAutoTransform() : Transform("UseAuto") {}
+  UseAutoTransform(const TransformOptions &Options)
+      : Transform("UseAuto", Options) {}
 
   /// \see Transform::run().
-  virtual int apply(const FileContentsByPath &InputStates,
-                    RiskLevel MaxRiskLEvel,
+  virtual int apply(FileOverrides &InputStates,
                     const clang::tooling::CompilationDatabase &Database,
-                    const std::vector<std::string> &SourcePaths,
-                    FileContentsByPath &ResultStates) LLVM_OVERRIDE;
+                    const std::vector<std::string> &SourcePaths) LLVM_OVERRIDE;
 };
 
-#endif // LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_USE_AUTO_H
+#endif // CPP11_MIGRATE_USE_AUTO_H

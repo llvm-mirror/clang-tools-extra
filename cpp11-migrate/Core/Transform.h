@@ -1,4 +1,4 @@
-//===-- cpp11-migrate/Transform.h - Transform Base Class Def'n --*- C++ -*-===//
+//===-- Core/Transform.h - Transform Base Class Def'n -----------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -8,25 +8,22 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// \brief This file provides the definition for the base Transform class from
+/// \brief This file provides the declaration for the base Transform class from
 /// which all transforms must subclass.
 ///
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_TRANSFORM_H
-#define LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_TRANSFORM_H
+
+#ifndef CPP11_MIGRATE_TRANSFORM_H
+#define CPP11_MIGRATE_TRANSFORM_H
+
+#include "Core/IncludeExcludeInfo.h"
+#include "clang/Tooling/Refactoring.h"
+#include "llvm/ADT/OwningPtr.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Timer.h"
 
 #include <string>
 #include <vector>
-
-// For RewriterContainer
-#include "clang/Rewrite/Core/Rewriter.h"
-#include "clang/Basic/LangOptions.h"
-#include "clang/Basic/DiagnosticOptions.h"
-#include "clang/Frontend/TextDiagnosticPrinter.h"
-#include "clang/Basic/SourceManager.h"
-#include "llvm/Support/raw_ostream.h"
-////
-
 
 /// \brief Description of the riskiness of actions that can be taken by
 /// transforms.
@@ -43,74 +40,57 @@ enum RiskLevel {
 
 // Forward declarations
 namespace clang {
+class CompilerInstance;
 namespace tooling {
 class CompilationDatabase;
+class FrontendActionFactory;
 } // namespace tooling
+namespace ast_matchers {
+class MatchFinder;
+} // namespace ast_matchers
 } // namespace clang
 
-/// \brief The key is the path of a file, which is mapped to a
-/// buffer with the possibly modified contents of that file.
-typedef std::map<std::string, std::string> FileContentsByPath;
+class FileOverrides;
 
-/// \brief In \p Results place copies of the buffers resulting from applying
-/// all rewrites represented by \p Rewrite.
-///
-/// \p Results is made up of pairs {filename, buffer contents}. Pairs are
-/// simply appended to \p Results.
-void collectResults(clang::Rewriter &Rewrite,
-                    const FileContentsByPath &InputStates,
-                    FileContentsByPath &Results);
+/// \brief To group transforms' options together when printing the help.
+extern llvm::cl::OptionCategory TransformsOptionsCategory;
 
-/// \brief Class for containing a Rewriter instance and all of
-/// its lifetime dependencies.
-///
-/// Subclasses of Transform using RefactoringTools will need to create
-/// Rewriters in order to apply Replacements and get the resulting buffer.
-/// Rewriter requires some objects to exist at least as long as it does so this
-/// class contains instances of those objects.
-///
-/// FIXME: These objects should really come from somewhere more global instead
-/// of being recreated for every Transform subclass, especially diagnostics.
-class RewriterContainer {
-public:
-  RewriterContainer(clang::FileManager &Files,
-                    const FileContentsByPath &InputStates)
-    : DiagOpts(new clang::DiagnosticOptions()),
-      DiagnosticPrinter(llvm::errs(), DiagOpts.getPtr()),
-      Diagnostics(llvm::IntrusiveRefCntPtr<clang::DiagnosticIDs>(
-                    new clang::DiagnosticIDs()),
-                  DiagOpts.getPtr(), &DiagnosticPrinter, false),
-      Sources(Diagnostics, Files),
-      Rewrite(Sources, DefaultLangOptions) {
+/// \brief Container for global options affecting all transforms.
+struct TransformOptions {
+  /// \brief Enable the use of performance timers.
+  bool EnableTiming;
 
-    // Overwrite source manager's file contents with data from InputStates
-    for (FileContentsByPath::const_iterator I = InputStates.begin(),
-                                            E = InputStates.end();
-         I != E; ++I) {
-      Sources.overrideFileContents(Files.getFile(I->first),
-                                   llvm::MemoryBuffer::getMemBuffer(I->second));
-    }
-  }
+  /// \brief Allow changes to headers included from the main source file.
+  /// Transform sub-classes should use ModifiableHeaders to determine which
+  /// headers are modifiable and which are not.
+  bool EnableHeaderModifications;
 
-  clang::Rewriter &getRewriter() { return Rewrite; }
+  /// \brief Contains information on which headers are safe to transform and
+  /// which aren't.
+  IncludeExcludeInfo ModifiableHeaders;
 
-private:
-  clang::LangOptions DefaultLangOptions;
-  llvm::IntrusiveRefCntPtr<clang::DiagnosticOptions> DiagOpts;
-  clang::TextDiagnosticPrinter DiagnosticPrinter;
-  clang::DiagnosticsEngine Diagnostics;
-  clang::SourceManager Sources;
-  clang::Rewriter Rewrite;
+  /// \brief Maximum allowed level of risk.
+  RiskLevel MaxRiskLevel;
 };
 
 /// \brief Abstract base class for all C++11 migration transforms.
+///
+/// Subclasses must call createActionFactory() to create a
+/// FrontendActionFactory to pass to ClangTool::run(). Subclasses are also
+/// responsible for calling setOverrides() before calling ClangTool::run().
+///
+/// If timing is enabled (see TransformOptions), per-source performance timing
+/// is recorded and stored in a TimingVec for later access with timing_begin()
+/// and timing_end().
 class Transform {
 public:
-  Transform(llvm::StringRef Name) : Name(Name) {
-    Reset();
-  }
+  /// \brief Constructor
+  /// \param Name Name of the transform for human-readable purposes (e.g. -help
+  /// text)
+  /// \param Options Global options that affect all Transforms.
+  Transform(llvm::StringRef Name, const TransformOptions &Options);
 
-  virtual ~Transform() {}
+  virtual ~Transform();
 
   /// \brief Apply a transform to all files listed in \p SourcePaths.
   ///
@@ -119,11 +99,9 @@ public:
   /// SourcePaths and should take precedence over content of files on disk.
   /// Upon return, \p ResultStates shall contain the result of performing this
   /// transform on the files listed in \p SourcePaths.
-  virtual int apply(const FileContentsByPath &InputStates,
-                    RiskLevel MaxRiskLevel,
+  virtual int apply(FileOverrides &InputStates,
                     const clang::tooling::CompilationDatabase &Database,
-                    const std::vector<std::string> &SourcePaths,
-                    FileContentsByPath &ResultStates) = 0;
+                    const std::vector<std::string> &SourcePaths) = 0;
 
   /// \brief Query if changes were made during the last call to apply().
   bool getChangesMade() const { return AcceptedChanges > 0; }
@@ -156,7 +134,40 @@ public:
     DeferredChanges = 0;
   }
 
+  /// \brief Tests if the file containing \a Loc is allowed to be modified by
+  /// the Migrator.
+  bool isFileModifiable(const clang::SourceManager &SM,
+                        const clang::SourceLocation &Loc) const;
+
+  /// \brief Called before parsing a translation unit for a FrontendAction.
+  ///
+  /// Transform uses this function to apply file overrides and start
+  /// performance timers. Subclasses overriding this function must call it
+  /// before returning.
+  virtual bool handleBeginSource(clang::CompilerInstance &CI,
+                                 llvm::StringRef Filename);
+
+  /// \brief Called after FrontendAction has been run over a translation unit.
+  ///
+  /// Transform uses this function to stop performance timers. Subclasses
+  /// overriding this function must call it before returning. A call to
+  /// handleEndSource() for a given translation unit is expected to be called
+  /// immediately after the corresponding handleBeginSource() call.
+  virtual void handleEndSource();
+
+  /// \brief Performance timing data is stored as a vector of pairs. Pairs are
+  /// formed of:
+  /// \li Name of source file.
+  /// \li Elapsed time.
+  typedef std::vector<std::pair<std::string, llvm::TimeRecord> > TimingVec;
+
+  /// \brief Return an iterator to the start of collected timing data.
+  TimingVec::const_iterator timing_begin() const { return Timings.begin(); }
+  /// \brief Return an iterator to the start of collected timing data.
+  TimingVec::const_iterator timing_end() const { return Timings.end(); }
+
 protected:
+
   void setAcceptedChanges(unsigned Changes) {
     AcceptedChanges = Changes;
   }
@@ -167,11 +178,48 @@ protected:
     DeferredChanges = Changes;
   }
 
+  /// \brief Allows subclasses to manually add performance timer data.
+  ///
+  /// \p Label should probably include the source file name somehow as the
+  /// duration info is simply added to the vector of timing data which holds
+  /// data for all sources processed by this transform.
+  void addTiming(llvm::StringRef Label, llvm::TimeRecord Duration);
+
+  /// \brief Provide access for subclasses to the TransformOptions they were
+  /// created with.
+  const TransformOptions &Options() { return GlobalOptions; }
+
+  /// \brief Provide access for subclasses for the container to store
+  /// translation unit replacements.
+  clang::tooling::Replacements &getReplacements() { return Replace; }
+
+  /// \brief Affords a subclass to provide file contents overrides before
+  /// applying frontend actions.
+  ///
+  /// It is an error not to call this function before calling ClangTool::run()
+  /// with the factory provided by createActionFactory().
+  void setOverrides(FileOverrides &Overrides) {
+    this->Overrides = &Overrides;
+  }
+
+  /// \brief Subclasses must call this function to create a
+  /// FrontendActionFactory to pass to ClangTool.
+  ///
+  /// The factory returned by this function is responsible for calling back to
+  /// Transform to call handleBeginSource() and handleEndSource().
+  clang::tooling::FrontendActionFactory *
+      createActionFactory(clang::ast_matchers::MatchFinder &Finder);
+
 private:
   const std::string Name;
+  const TransformOptions &GlobalOptions;
+  FileOverrides *Overrides;
+  clang::tooling::Replacements Replace;
+  std::string CurrentSource;
+  TimingVec Timings;
   unsigned AcceptedChanges;
   unsigned RejectedChanges;
   unsigned DeferredChanges;
 };
 
-#endif // LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_TRANSFORM_H
+#endif // CPP11_MIGRATE_TRANSFORM_H
