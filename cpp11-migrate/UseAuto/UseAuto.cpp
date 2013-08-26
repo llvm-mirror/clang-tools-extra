@@ -20,38 +20,51 @@ using clang::ast_matchers::MatchFinder;
 using namespace clang;
 using namespace clang::tooling;
 
-int UseAutoTransform::apply(const FileContentsByPath &InputStates,
-                            RiskLevel MaxRisk,
+int UseAutoTransform::apply(FileOverrides &InputStates,
                             const clang::tooling::CompilationDatabase &Database,
-                            const std::vector<std::string> &SourcePaths,
-                            FileContentsByPath &ResultStates) {
-  RefactoringTool UseAutoTool(Database, SourcePaths);
-
-  for (FileContentsByPath::const_iterator I = InputStates.begin(),
-                                          E = InputStates.end();
-       I != E; ++I)
-    UseAutoTool.mapVirtualFile(I->first, I->second);
+                            const std::vector<std::string> &SourcePaths) {
+  ClangTool UseAutoTool(Database, SourcePaths);
 
   unsigned AcceptedChanges = 0;
 
   MatchFinder Finder;
-  UseAutoFixer Fixer(UseAutoTool.getReplacements(), AcceptedChanges, MaxRisk);
+  IteratorReplacer ReplaceIterators(getReplacements(), AcceptedChanges,
+                                    Options().MaxRiskLevel, /*Owner=*/ *this);
+  NewReplacer ReplaceNew(getReplacements(), AcceptedChanges,
+                         Options().MaxRiskLevel, /*Owner=*/ *this);
 
-  Finder.addMatcher(makeIteratorMatcher(), &Fixer);
+  Finder.addMatcher(makeIteratorDeclMatcher(), &ReplaceIterators);
+  Finder.addMatcher(makeDeclWithNewMatcher(), &ReplaceNew);
 
-  if (int Result = UseAutoTool.run(newFrontendActionFactory(&Finder))) {
+  setOverrides(InputStates);
+
+  if (int Result = UseAutoTool.run(createActionFactory(Finder))) {
     llvm::errs() << "Error encountered during translation.\n";
     return Result;
   }
-
-  RewriterContainer Rewrite(UseAutoTool.getFiles(), InputStates);
-
-  // FIXME: Do something if some replacements didn't get applied?
-  UseAutoTool.applyAllReplacements(Rewrite.getRewriter());
-
-  collectResults(Rewrite.getRewriter(), InputStates, ResultStates);
 
   setAcceptedChanges(AcceptedChanges);
 
   return 0;
 }
+
+struct UseAutoFactory : TransformFactory {
+  UseAutoFactory() {
+    Since.Clang = Version(2, 9);
+    Since.Gcc = Version(4, 4);
+    Since.Icc = Version(12);
+    Since.Msvc = Version(10);
+  }
+
+  Transform *createTransform(const TransformOptions &Opts) LLVM_OVERRIDE {
+    return new UseAutoTransform(Opts);
+  }
+};
+
+// Register the factory using this statically initialized variable.
+static TransformFactoryRegistry::Add<UseAutoFactory>
+X("use-auto", "Use of 'auto' type specifier");
+
+// This anchor is used to force the linker to link in the generated object file
+// and thus register the factory.
+volatile int UseAutoTransformAnchorSource = 0;

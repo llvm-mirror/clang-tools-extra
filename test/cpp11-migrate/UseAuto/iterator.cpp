@@ -1,6 +1,12 @@
 // RUN: grep -Ev "// *[A-Z-]+:" %s > %t.cpp
 // RUN: cpp11-migrate -use-auto %t.cpp -- --std=c++11 -I %S/Inputs
 // RUN: FileCheck -input-file=%t.cpp %s
+//
+// RUN: grep -Ev "// *[A-Z-]+:" %s > %t.cpp
+// RUN: cpp11-migrate -use-auto %t.cpp -- --std=c++11 -I %S/Inputs \
+// RUN:   -DUSE_INLINE_NAMESPACE=1
+// RUN: FileCheck -input-file=%t.cpp %s
+
 
 #define CONTAINER array
 #include "test_std_container.h"
@@ -156,5 +162,17 @@ int main(int argc, char **argv) {
     // CHECK: auto I = MapFind.find("foo");
   }
 
+  // Test for declaration lists
+  {
+    // Ensusre declaration lists that matches the declaration type with written
+    // no-list initializer are transformed.
+    std::vector<int>::iterator I = Vec.begin(), E = Vec.end();
+    // CHECK: auto I = Vec.begin(), E = Vec.end();
+
+    // Declaration lists with non-initialized variables should not be
+    // transformed.
+    std::vector<int>::iterator J = Vec.begin(), K;
+    // CHECK: std::vector<int>::iterator J = Vec.begin(), K;
+  }
   return 0;
 }

@@ -7,18 +7,22 @@
 //
 //===----------------------------------------------------------------------===//
 ///
-///  \file
-///  \brief This file contains the implementation for matcher-generating
-///  functions and custom AST_MATCHERs.
+/// \file
+/// \brief This file contains the implementation for matcher-generating
+/// functions and custom AST_MATCHERs.
 ///
 //===----------------------------------------------------------------------===//
+
 #include "UseAutoMatchers.h"
+#include "Core/CustomMatchers.h"
 #include "clang/AST/ASTContext.h"
 
 using namespace clang::ast_matchers;
 using namespace clang;
 
-const char *DeclNodeId = "decl";
+const char *IteratorDeclStmtId = "iterator_decl";
+const char *DeclWithNewId = "decl_new";
+const char *NewExprId = "new_expr";
 
 namespace clang {
 namespace ast_matchers {
@@ -120,7 +124,7 @@ AST_MATCHER(NamedDecl, hasStdIteratorName) {
 ///
 /// \c recordDecl(hasStdContainerName()) matches \c vector and \c forward_list
 /// but not \c my_vec.
-AST_MATCHER_P(NamedDecl, hasStdContainerName, bool, WithStd) {
+AST_MATCHER(NamedDecl, hasStdContainerName) {
   static const char *ContainerNames[] = {
     "array",
     "deque",
@@ -143,13 +147,8 @@ AST_MATCHER_P(NamedDecl, hasStdContainerName, bool, WithStd) {
     "stack"
   };
 
-  for (unsigned int i = 0;
-       i < llvm::array_lengthof(ContainerNames);
-       ++i) {
-    std::string Name(ContainerNames[i]);
-    if (WithStd)
-      Name = "std::" + Name;
-    if (hasName(Name).matches(Node, Finder, Builder))
+  for (unsigned int i = 0; i < llvm::array_lengthof(ContainerNames); ++i) {
+    if (hasName(ContainerNames[i]).matches(Node, Finder, Builder))
       return true;
   }
   return false;
@@ -167,7 +166,7 @@ TypeMatcher typedefIterator() {
              allOf(
                namedDecl(hasStdIteratorName()),
                hasDeclContext(
-                 recordDecl(hasStdContainerName(true))
+                 recordDecl(hasStdContainerName(), isFromStdNamespace())
                )
              )
            )
@@ -182,7 +181,7 @@ TypeMatcher nestedIterator() {
              allOf(
                namedDecl(hasStdIteratorName()),
                hasDeclContext(
-                 recordDecl(hasStdContainerName(true))
+                 recordDecl(hasStdContainerName(), isFromStdNamespace())
                )
              )
            )
@@ -198,18 +197,15 @@ TypeMatcher iteratorFromUsingDeclaration() {
            allOf(
              // Unwrap the nested name specifier to test for
              // one of the standard containers.
-             hasQualifier(allOf(
+             hasQualifier(
                specifiesType(
                  templateSpecializationType(
                    hasDeclaration(
-                     namedDecl(hasStdContainerName(false))
+                     namedDecl(hasStdContainerName(), isFromStdNamespace())
                    )
                  )
-               ),
-               hasPrefix(
-                 specifiesNamespace(hasName("std"))
                )
-             )),
+             ),
              // The named type is what comes after the final
              // '::' in the type. It should name one of the
              // standard iterator names.
@@ -230,18 +226,55 @@ TypeMatcher iteratorFromUsingDeclaration() {
 }
 } // namespace
 
-DeclarationMatcher makeIteratorMatcher() {
-  return varDecl(allOf(
-                   hasWrittenNonListInitializer(),
-                   unless(hasType(autoType())),
-                   hasType(
-                     isSugarFor(
-                       anyOf(
-                         typedefIterator(),
-                         nestedIterator(),
-                         iteratorFromUsingDeclaration()
-                       )
-                     )
-                   )
-                 )).bind(DeclNodeId);
+// \brief This matcher returns delaration statements that contain variable
+// declarations with written non-list initializer for standard iterators.
+StatementMatcher makeIteratorDeclMatcher() {
+  return declStmt(
+    // At least one varDecl should be a child of the declStmt to ensure it's a
+    // declaration list and avoid matching other declarations
+    // e.g. using directives.
+    has(varDecl()),
+    unless(has(varDecl(
+      anyOf(
+        unless(hasWrittenNonListInitializer()),
+        hasType(autoType()),
+        unless(hasType(
+          isSugarFor(
+            anyOf(
+              typedefIterator(),
+              nestedIterator(),
+              iteratorFromUsingDeclaration()
+            )
+          )
+        ))
+      )
+    )))
+  ).bind(IteratorDeclStmtId);
+}
+
+StatementMatcher makeDeclWithNewMatcher() {
+  return declStmt(
+    has(varDecl()),
+    unless(has(varDecl(
+      anyOf(
+        unless(hasInitializer(
+          ignoringParenImpCasts(newExpr())
+        )),
+        // FIXME: TypeLoc information is not reliable where CV qualifiers are
+        // concerned so these types can't be handled for now.
+        hasType(pointerType(pointee(hasCanonicalType(hasLocalQualifiers())))),
+
+        // FIXME: Handle function pointers. For now we ignore them because
+        // the replacement replaces the entire type specifier source range
+        // which includes the identifier.
+        hasType(
+          pointsTo(
+            pointsTo(
+              parenType(innerType(functionType()))
+            )
+          )
+        )
+      )
+    )))
+   ).bind(DeclWithNewId);
 }

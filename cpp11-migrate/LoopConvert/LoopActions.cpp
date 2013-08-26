@@ -1,4 +1,4 @@
-//===-- LoopConvert/LoopActions.cpp - C++11 For loop migration --*- C++ -*-===//
+//===-- LoopConvert/LoopActions.cpp - C++11 For loop migration ------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -12,6 +12,7 @@
 /// for loops.
 ///
 //===----------------------------------------------------------------------===//
+
 #include "LoopActions.h"
 #include "LoopMatchers.h"
 #include "VariableNaming.h"
@@ -72,7 +73,9 @@ class ForLoopIndexUseVisitor
     Context(Context), IndexVar(IndexVar), EndVar(EndVar),
     ContainerExpr(ContainerExpr), ArrayBoundExpr(ArrayBoundExpr),
     ContainerNeedsDereference(ContainerNeedsDereference),
-    OnlyUsedAsIndex(true),  AliasDecl(NULL), ConfidenceLevel(RL_Safe) {
+    OnlyUsedAsIndex(true),  AliasDecl(NULL), ConfidenceLevel(RL_Safe),
+    NextStmtParent(NULL), CurrStmtParent(NULL), ReplaceWithAliasUse(false),
+    AliasFromForInit(false) {
      if (ContainerExpr) {
        addComponent(ContainerExpr);
        llvm::FoldingSetNodeID ID;
@@ -123,6 +126,17 @@ class ForLoopIndexUseVisitor
     return ConfidenceLevel.getRiskLevel();
   }
 
+  /// \brief Indicates if the alias declaration was in a place where it cannot
+  /// simply be removed but rather replaced with a use of the alias variable.
+  /// For example, variables declared in the condition of an if, switch, or for
+  /// stmt.
+  bool aliasUseRequired() const { return ReplaceWithAliasUse; }
+
+  /// \brief Indicates if the alias declaration came from the init clause of a
+  /// nested for loop. SourceRanges provided by Clang for DeclStmts in this
+  /// case need to be adjusted.
+  bool aliasFromForInit() const { return AliasFromForInit; }
+
  private:
   /// Typedef used in CRTP functions.
   typedef RecursiveASTVisitor<ForLoopIndexUseVisitor> VisitorBase;
@@ -136,6 +150,7 @@ class ForLoopIndexUseVisitor
   bool TraverseUnaryDeref(UnaryOperator *Uop);
   bool VisitDeclRefExpr(DeclRefExpr *E);
   bool VisitDeclStmt(DeclStmt *S);
+  bool TraverseStmt(Stmt *S);
 
   /// \brief Add an expression to the list of expressions on which the container
   /// expression depends.
@@ -172,6 +187,19 @@ class ForLoopIndexUseVisitor
   /// of the loop element, lower our confidence level.
   llvm::SmallVector<
       std::pair<const Expr *, llvm::FoldingSetNodeID>, 16> DependentExprs;
+
+  /// The parent-in-waiting. Will become the real parent once we traverse down
+  /// one level in the AST.
+  const Stmt *NextStmtParent;
+  /// The actual parent of a node when Visit*() calls are made. Only the
+  /// parentage of DeclStmt's to possible iteration/selection statements is of
+  /// importance.
+  const Stmt *CurrStmtParent;
+
+  /// \see aliasUseRequired().
+  bool ReplaceWithAliasUse;
+  /// \see aliasFromForInit().
+  bool AliasFromForInit;
 };
 
 /// \brief Obtain the original source code text from a SourceRange.
@@ -722,9 +750,35 @@ bool ForLoopIndexUseVisitor::VisitDeclRefExpr(DeclRefExpr *E) {
 /// See the comments for isAliasDecl.
 bool ForLoopIndexUseVisitor::VisitDeclStmt(DeclStmt *S) {
   if (!AliasDecl && S->isSingleDecl() &&
-      isAliasDecl(S->getSingleDecl(), IndexVar))
-      AliasDecl = S;
+      isAliasDecl(S->getSingleDecl(), IndexVar)) {
+    AliasDecl = S;
+    if (CurrStmtParent) {
+      if (isa<IfStmt>(CurrStmtParent) ||
+          isa<WhileStmt>(CurrStmtParent) ||
+          isa<SwitchStmt>(CurrStmtParent))
+        ReplaceWithAliasUse = true;
+      else if (isa<ForStmt>(CurrStmtParent)) {
+        if (cast<ForStmt>(CurrStmtParent)->getConditionVariableDeclStmt() == S)
+          ReplaceWithAliasUse = true;
+        else
+          // It's assumed S came the for loop's init clause.
+          AliasFromForInit = true;
+      }
+    }
+  }
+
   return true;
+}
+
+bool ForLoopIndexUseVisitor::TraverseStmt(Stmt *S) {
+  // All this pointer swapping is a mechanism for tracking immediate parentage
+  // of Stmts.
+  const Stmt *OldNextParent = NextStmtParent;
+  CurrStmtParent = NextStmtParent;
+  NextStmtParent = S;
+  bool Result = VisitorBase::TraverseStmt(S);
+  NextStmtParent = OldNextParent;
+  return Result;
 }
 
 //// \brief Apply the source transformations necessary to migrate the loop!
@@ -733,9 +787,13 @@ void LoopFixer::doConversion(ASTContext *Context,
                              const VarDecl *MaybeContainer,
                              StringRef ContainerString,
                              const UsageResult &Usages,
-                             const DeclStmt *AliasDecl, const ForStmt *TheLoop,
+                             const DeclStmt *AliasDecl,
+                             bool AliasUseRequired,
+                             bool AliasFromForInit,
+                             const ForStmt *TheLoop,
                              bool ContainerNeedsDereference,
-                             bool DerefByValue) {
+                             bool DerefByValue,
+                             bool DerefByConstRef) {
   std::string VarName;
   bool VarNameFromAlias = Usages.size() == 1 && AliasDecl;
   bool AliasVarIsRef = false;
@@ -747,9 +805,19 @@ void LoopFixer::doConversion(ASTContext *Context,
 
     // We keep along the entire DeclStmt to keep the correct range here.
     const SourceRange &ReplaceRange = AliasDecl->getSourceRange();
-    Replace->insert(
-        Replacement(Context->getSourceManager(),
-                    CharSourceRange::getTokenRange(ReplaceRange), ""));
+
+    std::string ReplacementText;
+    if (AliasUseRequired)
+      ReplacementText = VarName;
+    else if (AliasFromForInit)
+      // FIXME: Clang includes the location of the ';' but only for DeclStmt's
+      // in a for loop's init clause. Need to put this ';' back while removing
+      // the declaration of the alias variable. This is probably a bug.
+      ReplacementText = ";";
+
+    Replace->insert(Replacement(Context->getSourceManager(),
+                                CharSourceRange::getTokenRange(ReplaceRange),
+                                ReplacementText));
     // No further replacements are made to the loop, since the iterator or index
     // was used exactly once - in the initialization of AliasVar.
   } else {
@@ -783,8 +851,11 @@ void LoopFixer::doConversion(ASTContext *Context,
     // to 'T&&'.
     if (DerefByValue)
       AutoRefType = Context->getRValueReferenceType(AutoRefType);
-    else
+    else {
+      if (DerefByConstRef)
+        AutoRefType = Context->getConstType(AutoRefType);
       AutoRefType = Context->getLValueReferenceType(AutoRefType);
+    }
   }
 
   std::string MaybeDereference = ContainerNeedsDereference ? "*" : "";
@@ -913,6 +984,7 @@ void LoopFixer::findAndVerifyUsages(ASTContext *Context,
                                     const Expr *BoundExpr,
                                     bool ContainerNeedsDereference,
                                     bool DerefByValue,
+                                    bool DerefByConstRef,
                                     const ForStmt *TheLoop,
                                     Confidence ConfidenceLevel) {
   ForLoopIndexUseVisitor Finder(Context, LoopVar, EndVar, ContainerExpr,
@@ -945,9 +1017,9 @@ void LoopFixer::findAndVerifyUsages(ASTContext *Context,
     return;
 
   doConversion(Context, LoopVar, getReferencedVariable(ContainerExpr),
-               ContainerString, Finder.getUsages(),
-               Finder.getAliasDecl(), TheLoop, ContainerNeedsDereference,
-               DerefByValue);
+               ContainerString, Finder.getUsages(), Finder.getAliasDecl(),
+               Finder.aliasUseRequired(), Finder.aliasFromForInit(), TheLoop,
+               ContainerNeedsDereference, DerefByValue, DerefByConstRef);
   ++*AcceptedChanges;
 }
 
@@ -959,7 +1031,7 @@ void LoopFixer::run(const MatchFinder::MatchResult &Result) {
   ASTContext *Context = Result.Context;
   const ForStmt *TheLoop = Nodes.getStmtAs<ForStmt>(LoopName);
 
-  if (!Context->getSourceManager().isFromMainFile(TheLoop->getForLoc()))
+  if (!Owner.isFileModifiable(Context->getSourceManager(),TheLoop->getForLoc()))
     return;
 
   // Check that we have exactly one index variable and at most one end variable.
@@ -985,14 +1057,67 @@ void LoopFixer::run(const MatchFinder::MatchResult &Result) {
     ConfidenceLevel.lowerTo(RL_Reasonable);
 
   const Expr *ContainerExpr = NULL;
+  bool DerefByValue = false;
+  bool DerefByConstRef = false;
   bool ContainerNeedsDereference = false;
   // FIXME: Try to put most of this logic inside a matcher. Currently, matchers
   // don't allow the right-recursive checks in digThroughConstructors.
-  if (FixerKind == LFK_Iterator)
+  if (FixerKind == LFK_Iterator) {
     ContainerExpr = findContainer(Context, LoopVar->getInit(),
                                   EndVar ? EndVar->getInit() : EndCall,
                                   &ContainerNeedsDereference);
-  else if (FixerKind == LFK_PseudoArray) {
+
+    QualType InitVarType = InitVar->getType();
+    QualType CanonicalInitVarType = InitVarType.getCanonicalType();
+
+    const CXXMemberCallExpr *BeginCall =
+        Nodes.getNodeAs<CXXMemberCallExpr>(BeginCallName);
+    assert(BeginCall != 0 && "Bad Callback. No begin call expression.");
+    QualType CanonicalBeginType =
+        BeginCall->getMethodDecl()->getResultType().getCanonicalType();
+
+    if (CanonicalBeginType->isPointerType() &&
+        CanonicalInitVarType->isPointerType()) {
+      QualType BeginPointeeType = CanonicalBeginType->getPointeeType();
+      QualType InitPointeeType = CanonicalInitVarType->getPointeeType();
+      // If the initializer and the variable are both pointers check if the
+      // un-qualified pointee types match otherwise we don't use auto.
+      if (!Context->hasSameUnqualifiedType(InitPointeeType, BeginPointeeType))
+        return;
+    } else {
+      // Check for qualified types to avoid conversions from non-const to const
+      // iterator types.
+      if (!Context->hasSameType(CanonicalInitVarType, CanonicalBeginType))
+        return;
+    }
+
+    DerefByValue = Nodes.getNodeAs<QualType>(DerefByValueResultName) != 0;
+    if (!DerefByValue) {
+      if (const QualType *DerefType =
+              Nodes.getNodeAs<QualType>(DerefByRefResultName)) {
+        // A node will only be bound with DerefByRefResultName if we're dealing
+        // with a user-defined iterator type. Test the const qualification of
+        // the reference type.
+        DerefByConstRef = (*DerefType)->getAs<ReferenceType>()->getPointeeType()
+            .isConstQualified();
+      } else {
+        // By nature of the matcher this case is triggered only for built-in
+        // iterator types (i.e. pointers).
+        assert(isa<PointerType>(CanonicalInitVarType) &&
+               "Non-class iterator type is not a pointer type");
+        QualType InitPointeeType = CanonicalInitVarType->getPointeeType();
+        QualType BeginPointeeType = CanonicalBeginType->getPointeeType();
+        // If the initializer and variable have both the same type just use auto
+        // otherwise we test for const qualification of the pointed-at type.
+        if (!Context->hasSameType(InitPointeeType, BeginPointeeType))
+          DerefByConstRef = InitPointeeType.isConstQualified();
+      }
+    } else {
+      // If the de-referece operator return by value then test for the canonical
+      // const qualification of the init variable type.
+      DerefByConstRef = CanonicalInitVarType.isConstQualified();
+    }
+  } else if (FixerKind == LFK_PseudoArray) {
     if (!EndCall)
       return;
     ContainerExpr = EndCall->getImplicitObjectArgument();
@@ -1005,9 +1130,7 @@ void LoopFixer::run(const MatchFinder::MatchResult &Result) {
   if (!ContainerExpr && !BoundExpr)
     return;
 
-  bool DerefByValue = Nodes.getNodeAs<QualType>(DerefByValueResultName) != 0;
-
   findAndVerifyUsages(Context, LoopVar, EndVar, ContainerExpr, BoundExpr,
-                      ContainerNeedsDereference, DerefByValue, TheLoop,
-                      ConfidenceLevel);
+                      ContainerNeedsDereference, DerefByValue, DerefByConstRef,
+                      TheLoop, ConfidenceLevel);
 }

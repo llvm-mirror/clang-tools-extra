@@ -6,7 +6,7 @@ Use-Auto Transform
 
 The Use-Auto Transform is responsible for using the ``auto`` type specifier for
 variable declarations to *improve code readability and maintainability*. The
-transform is enabled with the :option:`-loop-convert` option of
+transform is enabled with the :option:`-use-auto` option of
 :program:`cpp11-migrate`. For example:
 
 .. code-block:: c++
@@ -131,7 +131,7 @@ following conditions are satisfied:
   deduced as``std::initializer_list``.
 
 Known Limitations
------------------
+=================
 * If the initializer is an explicit conversion constructor, the transform will
   not replace the type specifier even though it would be safe to do so.
 * User-defined iterators are not handled at this time.

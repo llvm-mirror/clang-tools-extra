@@ -23,7 +23,7 @@
 // Usage:   modularize [-prefix (optional header path prefix)]
 //   (include-files_list) [(front-end-options) ...]
 //
-// Note that unless a "-prefex (header path)" option is specified,
+// Note that unless a "-prefix (header path)" option is specified,
 // non-absolute file paths in the header list file will be relative
 // to the header list file directory.  Use -prefix to specify a different
 // directory.
@@ -35,15 +35,65 @@
 // Modularize will do normal parsing, reporting normal errors and warnings,
 // but will also report special error messages like the following:
 //
-// error: '(symbol)' defined at both (file):(row):(column) and
-//  (file):(row):(column)
+//   error: '(symbol)' defined at multiple locations:
+//       (file):(row):(column)
+//       (file):(row):(column)
 //
-// error: header '(file)' has different contents dependening on how it was
-//   included
+//   error: header '(file)' has different contents depending on how it was
+//     included
 //
 // The latter might be followed by messages like the following:
 //
-// note: '(symbol)' in (file) at (row):(column) not always provided
+//   note: '(symbol)' in (file) at (row):(column) not always provided
+//
+// Checks will also be performed for macro expansions, defined(macro)
+// expressions, and preprocessor conditional directives that evaluate
+// inconsistently, and can produce error messages like the following:
+//
+//   (...)/SubHeader.h:11:5:
+//   #if SYMBOL == 1
+//       ^
+//   error: Macro instance 'SYMBOL' has different values in this header,
+//          depending on how it was included.
+//     'SYMBOL' expanded to: '1' with respect to these inclusion paths:
+//       (...)/Header1.h
+//         (...)/SubHeader.h
+//   (...)/SubHeader.h:3:9:
+//   #define SYMBOL 1
+//             ^
+//   Macro defined here.
+//     'SYMBOL' expanded to: '2' with respect to these inclusion paths:
+//       (...)/Header2.h
+//           (...)/SubHeader.h
+//   (...)/SubHeader.h:7:9:
+//   #define SYMBOL 2
+//             ^
+//   Macro defined here.
+//
+// See PreprocessorTracker.cpp for additional details.
+//
+// Current problems:
+//
+// Modularize has problems with C++:
+//
+// 1. Modularize doesn't distinguish class of the same name in
+// different namespaces.  The result is erroneous duplicate definition errors.
+//
+// 2. Modularize doesn't distinguish between a regular class and a template
+// class of the same name.
+//
+// Other problems:
+//
+// 3. There seem to be a lot of spurious "not always provided" messages,
+// and many duplicates of these.
+//
+// 4. There are some legitimate uses of preprocessor macros that
+// modularize will flag as errors, such as repeatedly #include'ing
+// a file and using interleaving defined/undefined macros
+// to change declarations in the included file.  Is there a way
+// to address this?  Maybe have modularize accept a list of macros
+// to ignore.  Otherwise you can just exclude the file, after checking
+// for legitimate errors.
 //
 // Future directions:
 //
@@ -52,13 +102,23 @@
 //
 // Some ideas:
 //
-// 1. Try to figure out the preprocessor conditional directives that
-// contribute to problems.
+// 1. Fix the C++ and other problems.
 //
-// 2. Check for correct and consistent usage of extern "C" {} and other
+// 2. Add options to disable any of the checks, in case
+// there is some problem with them, or the messages get too verbose.
+//
+// 3. Try to figure out the preprocessor conditional directives that
+// contribute to problems and tie them to the inconsistent definitions.
+//
+// 4. Check for correct and consistent usage of extern "C" {} and other
 // directives. Warn about #include inside extern "C" {}.
 //
-// 3. What else?
+// 5. To support headers that depend on other headers to be included first
+// add support for a dependency list to the header list input.
+// I.e.: header.h: dependent1.h dependent2.h
+// (Implement using clang's "-include" option"?)
+//
+// 6. What else?
 //
 // General clean-up and refactoring:
 //
@@ -89,10 +149,12 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include "PreprocessorTracker.h"
 
 using namespace clang::tooling;
 using namespace clang;
 using namespace llvm;
+using namespace Modularize;
 
 // Option to specify a file name for a list of header files to check.
 cl::opt<std::string>
@@ -100,8 +162,9 @@ ListFileName(cl::Positional,
              cl::desc("<name of file containing list of headers to check>"));
 
 // Collect all other arguments, which will be passed to the front end.
-cl::list<std::string> CC1Arguments(
-    cl::ConsumeAfter, cl::desc("<arguments to be passed to front end>..."));
+cl::list<std::string>
+CC1Arguments(cl::ConsumeAfter,
+             cl::desc("<arguments to be passed to front end>..."));
 
 // Option to specify a prefix to be prepended to the header names.
 cl::opt<std::string> HeaderPrefix(
@@ -112,16 +175,16 @@ cl::opt<std::string> HeaderPrefix(
         " the files are considered to be relative to the header list file."));
 
 // Read the header list file and collect the header file names.
-error_code GetHeaderFileNames(SmallVectorImpl<std::string> &headerFileNames,
-                              StringRef listFileName, StringRef headerPrefix) {
+error_code getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
+                              StringRef ListFileName, StringRef HeaderPrefix) {
 
   // By default, use the path component of the list file name.
-  SmallString<256> headerDirectory(listFileName);
-  sys::path::remove_filename(headerDirectory);
+  SmallString<256> HeaderDirectory(ListFileName);
+  sys::path::remove_filename(HeaderDirectory);
 
   // Get the prefix if we have one.
-  if (headerPrefix.size() != 0)
-    headerDirectory = headerPrefix;
+  if (HeaderPrefix.size() != 0)
+    HeaderDirectory = HeaderPrefix;
 
   // Read the header list file into a buffer.
   OwningPtr<MemoryBuffer> listBuffer;
@@ -130,27 +193,27 @@ error_code GetHeaderFileNames(SmallVectorImpl<std::string> &headerFileNames,
   }
 
   // Parse the header list into strings.
-  SmallVector<StringRef, 32> strings;
-  listBuffer->getBuffer().split(strings, "\n", -1, false);
+  SmallVector<StringRef, 32> Strings;
+  listBuffer->getBuffer().split(Strings, "\n", -1, false);
 
   // Collect the header file names from the string list.
-  for (SmallVectorImpl<StringRef>::iterator I = strings.begin(),
-                                            E = strings.end();
+  for (SmallVectorImpl<StringRef>::iterator I = Strings.begin(),
+                                            E = Strings.end();
        I != E; ++I) {
-    StringRef line = (*I).trim();
+    StringRef Line = (*I).trim();
     // Ignore comments and empty lines.
-    if (line.empty() || (line[0] == '#'))
+    if (Line.empty() || (Line[0] == '#'))
       continue;
-    SmallString<256> headerFileName;
+    SmallString<256> HeaderFileName;
     // Prepend header file name prefix if it's not absolute.
-    if (sys::path::is_absolute(line))
-      headerFileName = line;
+    if (sys::path::is_absolute(Line))
+      HeaderFileName = Line;
     else {
-      headerFileName = headerDirectory;
-      sys::path::append(headerFileName, line);
+      HeaderFileName = HeaderDirectory;
+      sys::path::append(HeaderFileName, Line);
     }
     // Save the resulting header file path.
-    headerFileNames.push_back(headerFileName.str());
+    HeaderFileNames.push_back(HeaderFileName.str());
   }
 
   return error_code::success();
@@ -203,7 +266,6 @@ struct Location {
   friend bool operator>=(const Location &X, const Location &Y) {
     return !(X < Y);
   }
-
 };
 
 struct Entry {
@@ -313,13 +375,14 @@ public:
 
     CurHeaderContents.clear();
   }
+
 private:
   DenseMap<const FileEntry *, HeaderContents> CurHeaderContents;
   DenseMap<const FileEntry *, HeaderContents> AllHeaderContents;
 };
 
-class CollectEntitiesVisitor :
-    public RecursiveASTVisitor<CollectEntitiesVisitor> {
+class CollectEntitiesVisitor
+    : public RecursiveASTVisitor<CollectEntitiesVisitor> {
 public:
   CollectEntitiesVisitor(SourceManager &SM, EntityMap &Entities)
       : SM(SM), Entities(Entities) {}
@@ -372,6 +435,7 @@ public:
     Entities.add(Name, isa<TagDecl>(ND) ? Entry::EK_Tag : Entry::EK_Value, Loc);
     return true;
   }
+
 private:
   SourceManager &SM;
   EntityMap &Entities;
@@ -379,8 +443,14 @@ private:
 
 class CollectEntitiesConsumer : public ASTConsumer {
 public:
-  CollectEntitiesConsumer(EntityMap &Entities, Preprocessor &PP)
-      : Entities(Entities), PP(PP) {}
+  CollectEntitiesConsumer(EntityMap &Entities,
+                          PreprocessorTracker &preprocessorTracker,
+                          Preprocessor &PP, StringRef InFile)
+      : Entities(Entities), PPTracker(preprocessorTracker), PP(PP) {
+    PPTracker.handlePreprocessorEntry(PP, InFile);
+  }
+
+  ~CollectEntitiesConsumer() { PPTracker.handlePreprocessorExit(); }
 
   virtual void HandleTranslationUnit(ASTContext &Ctx) {
     SourceManager &SM = Ctx.getSourceManager();
@@ -403,38 +473,50 @@ public:
     // Merge header contents.
     Entities.mergeCurHeaderContents();
   }
+
 private:
   EntityMap &Entities;
+  PreprocessorTracker &PPTracker;
   Preprocessor &PP;
 };
 
 class CollectEntitiesAction : public SyntaxOnlyAction {
 public:
-  CollectEntitiesAction(EntityMap &Entities) : Entities(Entities) {}
+  CollectEntitiesAction(EntityMap &Entities,
+                        PreprocessorTracker &preprocessorTracker)
+      : Entities(Entities), PPTracker(preprocessorTracker) {}
+
 protected:
-  virtual clang::ASTConsumer *
-  CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
-    return new CollectEntitiesConsumer(Entities, CI.getPreprocessor());
+  virtual clang::ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
+                                                StringRef InFile) {
+    return new CollectEntitiesConsumer(Entities, PPTracker,
+                                       CI.getPreprocessor(), InFile);
   }
+
 private:
   EntityMap &Entities;
+  PreprocessorTracker &PPTracker;
 };
 
 class ModularizeFrontendActionFactory : public FrontendActionFactory {
 public:
-  ModularizeFrontendActionFactory(EntityMap &Entities) : Entities(Entities) {}
+  ModularizeFrontendActionFactory(EntityMap &Entities,
+                                  PreprocessorTracker &preprocessorTracker)
+      : Entities(Entities), PPTracker(preprocessorTracker) {}
 
   virtual CollectEntitiesAction *create() {
-    return new CollectEntitiesAction(Entities);
+    return new CollectEntitiesAction(Entities, PPTracker);
   }
+
 private:
   EntityMap &Entities;
+  PreprocessorTracker &PPTracker;
 };
 
-int main(int argc, const char **argv) {
+int main(int Argc, const char **Argv) {
 
   // This causes options to be parsed.
-  cl::ParseCommandLineOptions(argc, argv, "modularize.\n");
+  cl::ParseCommandLineOptions(Argc, Argv, "modularize.\n");
 
   // No go if we have no header list file.
   if (ListFileName.size() == 0) {
@@ -444,9 +526,9 @@ int main(int argc, const char **argv) {
 
   // Get header file names.
   SmallVector<std::string, 32> Headers;
-  if (error_code ec = GetHeaderFileNames(Headers, ListFileName, HeaderPrefix)) {
-    errs() << argv[0] << ": error: Unable to get header list '" << ListFileName
-           << "': " << ec.message() << '\n';
+  if (error_code EC = getHeaderFileNames(Headers, ListFileName, HeaderPrefix)) {
+    errs() << Argv[0] << ": error: Unable to get header list '" << ListFileName
+           << "': " << EC.message() << '\n';
     return 1;
   }
 
@@ -457,19 +539,23 @@ int main(int argc, const char **argv) {
   Compilations.reset(
       new FixedCompilationDatabase(Twine(PathBuf), CC1Arguments));
 
+  // Create preprocessor tracker, to watch for macro and conditional problems.
+  OwningPtr<PreprocessorTracker> PPTracker(PreprocessorTracker::create());
+
   // Parse all of the headers, detecting duplicates.
   EntityMap Entities;
   ClangTool Tool(*Compilations, Headers);
-  int HadErrors = Tool.run(new ModularizeFrontendActionFactory(Entities));
+  int HadErrors =
+      Tool.run(new ModularizeFrontendActionFactory(Entities, *PPTracker));
 
   // Create a place to save duplicate entity locations, separate bins per kind.
   typedef SmallVector<Location, 8> LocationArray;
   typedef SmallVector<LocationArray, Entry::EK_NumberOfKinds> EntryBinArray;
   EntryBinArray EntryBins;
-  int kindIndex;
-  for (kindIndex = 0; kindIndex < Entry::EK_NumberOfKinds; ++kindIndex) {
-    LocationArray array;
-    EntryBins.push_back(array);
+  int KindIndex;
+  for (KindIndex = 0; KindIndex < Entry::EK_NumberOfKinds; ++KindIndex) {
+    LocationArray Array;
+    EntryBins.push_back(Array);
   }
 
   // Check for the same entity being defined in multiple places.
@@ -489,15 +575,15 @@ int main(int argc, const char **argv) {
       EntryBins[E->second[I].Kind].push_back(E->second[I].Loc);
     }
     // Report any duplicate entity definition errors.
-    int kindIndex = 0;
+    int KindIndex = 0;
     for (EntryBinArray::iterator DI = EntryBins.begin(), DE = EntryBins.end();
-         DI != DE; ++DI, ++kindIndex) {
-      int eCount = DI->size();
+         DI != DE; ++DI, ++KindIndex) {
+      int ECount = DI->size();
       // If only 1 occurance, skip;
-      if (eCount <= 1)
+      if (ECount <= 1)
         continue;
       LocationArray::iterator FI = DI->begin();
-      StringRef kindName = Entry::getKindName((Entry::EntryKind) kindIndex);
+      StringRef kindName = Entry::getKindName((Entry::EntryKind)KindIndex);
       errs() << "error: " << kindName << " '" << E->first()
              << "' defined at multiple locations:\n";
       for (LocationArray::iterator FE = DI->end(); FI != FE; ++FI) {
@@ -507,6 +593,16 @@ int main(int argc, const char **argv) {
       HadErrors = 1;
     }
   }
+
+  // Complain about macro instance in header files that differ based on how
+  // they are included.
+  if (PPTracker->reportInconsistentMacros(errs()))
+    HadErrors = 1;
+
+  // Complain about preprocessor conditional directives in header files that
+  // differ based on how they are included.
+  if (PPTracker->reportInconsistentConditionals(errs()))
+    HadErrors = 1;
 
   // Complain about any headers that have contents that differ based on how
   // they are included.
@@ -523,11 +619,12 @@ int main(int argc, const char **argv) {
 
     HadErrors = 1;
     errs() << "error: header '" << H->first->getName()
-           << "' has different contents dependening on how it was included\n";
+           << "' has different contents depending on how it was included.\n";
     for (unsigned I = 0, N = H->second.size(); I != N; ++I) {
-      errs() << "note: '" << H->second[I].Name << "' in " << H->second[I]
-          .Loc.File->getName() << " at " << H->second[I].Loc.Line << ":"
-             << H->second[I].Loc.Column << " not always provided\n";
+      errs() << "note: '" << H->second[I].Name << "' in "
+             << H->second[I].Loc.File->getName() << " at "
+             << H->second[I].Loc.Line << ":" << H->second[I].Loc.Column
+             << " not always provided\n";
     }
   }
 

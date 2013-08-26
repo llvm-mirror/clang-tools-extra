@@ -15,8 +15,9 @@
 /// convertible in the matcher callback.
 ///
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_LOOP_MATCHERS_H
-#define LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_LOOP_MATCHERS_H
+
+#ifndef CPP11_MIGRATE_LOOP_MATCHERS_H
+#define CPP11_MIGRATE_LOOP_MATCHERS_H
 
 #include "clang/ASTMatchers/ASTMatchers.h"
 
@@ -27,13 +28,15 @@ extern const char ConditionVarName[];
 extern const char ConditionEndVarName[];
 extern const char IncrementVarName[];
 extern const char InitVarName[];
+extern const char BeginCallName[];
 extern const char EndExprName[];
 extern const char EndCallName[];
 extern const char EndVarName[];
 extern const char DerefByValueResultName[];
+extern const char DerefByRefResultName[];
 
 clang::ast_matchers::StatementMatcher makeArrayLoopMatcher();
 clang::ast_matchers::StatementMatcher makeIteratorLoopMatcher();
 clang::ast_matchers::StatementMatcher makePseudoArrayLoopMatcher();
 
-#endif // LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_LOOP_MATCHERS_H
+#endif // CPP11_MIGRATE_LOOP_MATCHERS_H

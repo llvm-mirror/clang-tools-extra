@@ -12,11 +12,12 @@
 /// for loops.
 ///
 //===----------------------------------------------------------------------===//
-#ifndef LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_LOOP_ACTIONS_H
-#define LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_LOOP_ACTIONS_H
+
+#ifndef CPP11_MIGRATE_LOOP_ACTIONS_H
+#define CPP11_MIGRATE_LOOP_ACTIONS_H
 
 #include "StmtAncestor.h"
-#include "Transform.h"
+#include "Core/Transform.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
@@ -39,20 +40,20 @@ enum LoopFixerKind {
 /// convert the for loop, if possible.
 class LoopFixer : public clang::ast_matchers::MatchFinder::MatchCallback {
  public:
-  LoopFixer(StmtAncestorASTVisitor *ParentFinder,
-            clang::tooling::Replacements *Replace,
-            StmtGeneratedVarNameMap *GeneratedDecls,
-            ReplacedVarsMap *ReplacedVarRanges,
-            unsigned *AcceptedChanges, unsigned *DeferredChanges,
-            unsigned *RejectedChanges,
-            RiskLevel MaxRisk,
-            LoopFixerKind FixerKind) :
-  ParentFinder(ParentFinder), Replace(Replace),
-  GeneratedDecls(GeneratedDecls), ReplacedVarRanges(ReplacedVarRanges),
-  AcceptedChanges(AcceptedChanges), DeferredChanges(DeferredChanges),
-  RejectedChanges(RejectedChanges),
-  MaxRisk(MaxRisk), FixerKind(FixerKind)  { }
-  virtual void run(const clang::ast_matchers::MatchFinder::MatchResult &Result);
+   LoopFixer(StmtAncestorASTVisitor *ParentFinder,
+             clang::tooling::Replacements *Replace,
+             StmtGeneratedVarNameMap *GeneratedDecls,
+             ReplacedVarsMap *ReplacedVarRanges, unsigned *AcceptedChanges,
+             unsigned *DeferredChanges, unsigned *RejectedChanges,
+             RiskLevel MaxRisk, LoopFixerKind FixerKind, const Transform &Owner)
+       : ParentFinder(ParentFinder), Replace(Replace),
+         GeneratedDecls(GeneratedDecls), ReplacedVarRanges(ReplacedVarRanges),
+         AcceptedChanges(AcceptedChanges), DeferredChanges(DeferredChanges),
+         RejectedChanges(RejectedChanges), MaxRisk(MaxRisk),
+         FixerKind(FixerKind), Owner(Owner) {}
+
+   virtual void
+       run(const clang::ast_matchers::MatchFinder::MatchResult &Result);
 
  private:
   StmtAncestorASTVisitor *ParentFinder;
@@ -64,6 +65,7 @@ class LoopFixer : public clang::ast_matchers::MatchFinder::MatchCallback {
   unsigned *RejectedChanges;
   RiskLevel MaxRisk;
   LoopFixerKind FixerKind;
+  const Transform &Owner;
 
   /// \brief Computes the changes needed to convert a given for loop, and
   /// applies it.
@@ -73,9 +75,12 @@ class LoopFixer : public clang::ast_matchers::MatchFinder::MatchCallback {
                     llvm::StringRef ContainerString,
                     const UsageResult &Usages,
                     const clang::DeclStmt *AliasDecl,
+                    bool AliasUseRequired,
+                    bool AliasFromForInit,
                     const clang::ForStmt *TheLoop,
                     bool ContainerNeedsDereference,
-                    bool DerefByValue);
+                    bool DerefByValue,
+                    bool DerefByConstRef);
 
   /// \brief Given a loop header that would be convertible, discover all usages
   /// of the index variable and convert the loop if possible.
@@ -86,6 +91,7 @@ class LoopFixer : public clang::ast_matchers::MatchFinder::MatchCallback {
                            const clang::Expr *BoundExpr,
                            bool ContainerNeedsDereference,
                            bool DerefByValue,
+                           bool DerefByConstRef,
                            const clang::ForStmt *TheLoop,
                            Confidence ConfidenceLevel);
 
@@ -98,4 +104,4 @@ class LoopFixer : public clang::ast_matchers::MatchFinder::MatchCallback {
                                               const clang::ForStmt *TheLoop);
 };
 
-#endif // LLVM_TOOLS_CLANG_TOOLS_EXTRA_CPP11_MIGRATE_LOOP_ACTIONS_H
+#endif // CPP11_MIGRATE_LOOP_ACTIONS_H
