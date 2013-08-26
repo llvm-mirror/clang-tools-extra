@@ -7,7 +7,16 @@ cpp11-migrate Usage
 ``<source#>`` specifies the path to the source to migrate. This path may be
 relative to the current directory.
 
-At least one transform must be enabled.
+By default all transformations are applied. There are two ways to enable a
+subset of the transformations:
+
+1. Explicitly, by referring to the transform options directly, see
+   :ref:`transform-specific-command-line-options`.
+2. Implicitly, based on the compilers to support, see
+   :ref:`-for-compilers=\<string\> <for-compilers-option>`.
+
+If both ways of specifying transforms are used only explicitly specified
+transformations that are supported by the given compilers will be applied.
 
 General Command Line Options
 ============================
@@ -66,6 +75,43 @@ General Command Line Options
   earlier transforms are already caught when subsequent transforms parse the
   file.
 
+.. option:: -format-style=<string>
+
+  After all transformations have been applied, reformat the changes using the
+  style ``string`` given as argument to the option. The style can be a builtin
+  style, one of LLVM, Google, Chromium, Mozilla; or a YAML configuration file.
+
+  If you want a place to start for using your own custom configuration file,
+  ClangFormat_ can generate a file with ``clang-format -dump-config``.
+
+  Example:
+
+  .. code-block:: c++
+    :emphasize-lines: 10-12,18
+
+      // file.cpp
+      for (std::vector<int>::const_iterator I = my_container.begin(),
+                                            E = my_container.end();
+           I != E; ++I) {
+        std::cout << *I << std::endl;
+      }
+
+      // No reformatting:
+      //     cpp11-migrate -use-auto file.cpp --
+      for (auto I = my_container.begin(),
+                                            E = my_container.end();
+           I != E; ++I) {
+        std::cout << *I << std::endl;
+      }
+
+      // With reformatting enabled:
+      //     cpp11-migrate -format-style=LLVM -use-auto file.cpp --
+      for (auto I = my_container.begin(), E = my_container.end(); I != E; ++I) {
+        std::cout << *I << std::endl;
+      }
+
+.. _ClangFormat: http://clang.llvm.org/docs/ClangFormat.html
+
 .. option:: -summary
 
   Displays a summary of the number of changes each transform made or could have
@@ -75,6 +121,54 @@ General Command Line Options
   **Deferred** changes are those that might be possible but they might conflict
   with other accepted changes. Re-applying the transform will resolve deferred
   changes.
+
+.. _for-compilers-option:
+
+.. option:: -for-compilers=<string>
+
+  Select transforms targeting the intersection of language features supported by
+  the given compilers.
+
+  Four compilers are supported. The transforms are enabled according to this
+  table:
+
+  ===============  =====  ===  ====  ====
+  Transforms       clang  gcc  icc   mscv
+  ===============  =====  ===  ====  ====
+  AddOverride (1)  3.0    4.7  14    8
+  LoopConvert      3.0    4.6  13    11
+  ReplaceAutoPtr   3.0    4.6  13    11
+  UseAuto          2.9    4.4  12    10
+  UseNullptr       3.0    4.6  12.1  10
+  ===============  =====  ===  ====  ====
+
+  (1): if *-override-macros* is provided it's assumed that the macros are C++11
+  aware and the transform is enabled without regard to the supported compilers.
+
+  The structure of the argument to the `-for-compilers` option is
+  **<compiler>-<major ver>[.<minor ver>]** where **<compiler>** is one of the
+  compilers from the above table.
+
+  Some examples:
+
+  1. To support `Clang >= 3.0`, `gcc >= 4.6` and `MSVC >= 11`:
+
+     ``cpp11-migrate -for-compilers=clang-3.0,gcc-4.6,msvc-11 <args..>``
+
+     Enables LoopConvert, ReplaceAutoPtr, UseAuto, UseNullptr.
+
+  2. To support `icc >= 12` while using a C++11-aware macro for the `override`
+     virtual specifier:
+
+     ``cpp11-migrate -for-compilers=icc-12 -override-macros <args..>``
+
+     Enables AddOverride and UseAuto.
+
+  .. warning::
+
+    If your version of Clang depends on the GCC headers (e.g: when `libc++` is
+    not used), then you probably want to add the GCC version to the targeted
+    platforms as well.
 
 .. option:: -perf[=<directory>]
 
@@ -86,6 +180,8 @@ General Command Line Options
 
   The time recorded for a transform includes parsing and creating source code
   replacements.
+
+.. _transform-specific-command-line-options:
 
 Transform-Specific Command Line Options
 =======================================

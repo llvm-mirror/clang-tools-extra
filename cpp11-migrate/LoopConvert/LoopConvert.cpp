@@ -66,3 +66,24 @@ int LoopConvertTransform::apply(FileOverrides &InputStates,
 
   return 0;
 }
+
+struct LoopConvertFactory : TransformFactory {
+  LoopConvertFactory() {
+    Since.Clang = Version(3, 0);
+    Since.Gcc = Version(4, 6);
+    Since.Icc = Version(13);
+    Since.Msvc = Version(11);
+  }
+
+  Transform *createTransform(const TransformOptions &Opts) LLVM_OVERRIDE {
+    return new LoopConvertTransform(Opts);
+  }
+};
+
+// Register the factory using this statically initialized variable.
+static TransformFactoryRegistry::Add<LoopConvertFactory>
+X("loop-convert", "Make use of range-based for loops where possible");
+
+// This anchor is used to force the linker to link in the generated object file
+// and thus register the factory.
+volatile int LoopConvertTransformAnchorSource = 0;

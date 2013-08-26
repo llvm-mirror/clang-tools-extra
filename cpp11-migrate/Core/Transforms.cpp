@@ -20,31 +20,52 @@ namespace cl = llvm::cl;
 static cl::OptionCategory TransformCategory("Transforms");
 
 Transforms::~Transforms() {
-  for (std::vector<Transform*>::iterator I = ChosenTransforms.begin(),
-       E = ChosenTransforms.end(); I != E; ++I) {
+  for (std::vector<Transform *>::iterator I = ChosenTransforms.begin(),
+                                          E = ChosenTransforms.end();
+       I != E; ++I)
     delete *I;
-  }
-  for (OptionVec::iterator I = Options.begin(),
-       E = Options.end(); I != E; ++I) {
-    delete I->first;
-  }
+
+  for (OptionMap::iterator I = Options.begin(), E = Options.end(); I != E; ++I)
+    delete I->getValue();
 }
 
-void Transforms::registerTransform(llvm::StringRef OptName,
-                                   llvm::StringRef Description,
-                                   TransformCreator Creator) {
-  Options.push_back(OptionVec::value_type(
-      new cl::opt<bool>(OptName.data(), cl::desc(Description.data()),
-                        cl::cat(TransformCategory)),
-      Creator));
+void Transforms::registerTransforms() {
+  for (TransformFactoryRegistry::iterator I = TransformFactoryRegistry::begin(),
+                                          E = TransformFactoryRegistry::end();
+       I != E; ++I)
+    Options[I->getName()] = new cl::opt<bool>(
+        I->getName(), cl::desc(I->getDesc()), cl::cat(TransformCategory));
+}
+
+bool Transforms::hasAnyExplicitOption() const {
+  for (OptionMap::const_iterator I = Options.begin(), E = Options.end(); I != E;
+       ++I)
+    if (*I->second)
+      return true;
+  return false;
 }
 
 void
-Transforms::createSelectedTransforms(const TransformOptions &GlobalOptions) {
-  for (OptionVec::iterator I = Options.begin(),
-       E = Options.end(); I != E; ++I) {
-    if (*I->first) {
-      ChosenTransforms.push_back(I->second(GlobalOptions));
-    }
+Transforms::createSelectedTransforms(const TransformOptions &GlobalOptions,
+                                     const CompilerVersions &RequiredVersions) {
+  // if at least one transform is set explicitly on the command line, do not
+  // enable non-explicit ones
+  bool EnableAllTransformsByDefault = !hasAnyExplicitOption();
+
+  for (TransformFactoryRegistry::iterator I = TransformFactoryRegistry::begin(),
+                                          E = TransformFactoryRegistry::end();
+       I != E; ++I) {
+    bool ExplicitlyEnabled = *Options[I->getName()];
+    bool OptionEnabled = EnableAllTransformsByDefault || ExplicitlyEnabled;
+
+    if (!OptionEnabled)
+      continue;
+
+    llvm::OwningPtr<TransformFactory> Factory(I->instantiate());
+    if (Factory->supportsCompilers(RequiredVersions))
+      ChosenTransforms.push_back(Factory->createTransform(GlobalOptions));
+    else if (ExplicitlyEnabled)
+      llvm::errs() << "note: " << '-' << I->getName()
+                   << ": transform not available for specified compilers\n";
   }
 }

@@ -7,28 +7,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Utility.h"
 #include "Core/IncludeExcludeInfo.h"
 #include "gtest/gtest.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include <fstream>
 
-// FIXME: copied from unittests/Support/Path.cpp
-#define ASSERT_NO_ERROR(x)                                                     \
-  if (llvm::error_code ASSERT_NO_ERROR_ec = x) {                               \
-    llvm::SmallString<128> MessageStorage;                                     \
-    llvm::raw_svector_ostream Message(MessageStorage);                         \
-    Message << #x ": did not return errc::success.\n"                          \
-            << "error number: " << ASSERT_NO_ERROR_ec.value() << "\n"          \
-            << "error message: " << ASSERT_NO_ERROR_ec.message() << "\n";      \
-    GTEST_FATAL_FAILURE_(MessageStorage.c_str());                              \
-  } else {                                                                     \
-  }
-
 TEST(IncludeExcludeTest, ParseString) {
   IncludeExcludeInfo IEManager;
   llvm::error_code Err = IEManager.readListFromString(
-      /*include=*/ "a,b/b2,c/c2",
+      /*include=*/ "a,b/b2,c/c2,d/../d2/../d3",
       /*exclude=*/ "a/af.cpp,a/a2,b/b2/b2f.cpp,c/c2");
 
   ASSERT_EQ(Err, llvm::error_code::success());
@@ -37,11 +26,14 @@ TEST(IncludeExcludeTest, ParseString) {
   // transform. Files are not safe to transform by default.
   EXPECT_FALSE(IEManager.isFileIncluded("f.cpp"));
   EXPECT_FALSE(IEManager.isFileIncluded("b/dir/f.cpp"));
+  EXPECT_FALSE(IEManager.isFileIncluded("d/f.cpp"));
+  EXPECT_FALSE(IEManager.isFileIncluded("d2/f.cpp"));
 
   // If the file appears on only the include list then it is safe to transform.
   EXPECT_TRUE(IEManager.isFileIncluded("a/f.cpp"));
   EXPECT_TRUE(IEManager.isFileIncluded("a/dir/f.cpp"));
   EXPECT_TRUE(IEManager.isFileIncluded("b/b2/f.cpp"));
+  EXPECT_TRUE(IEManager.isFileIncluded("d3/f.cpp"));
 
   // If the file appears on both the include or exclude list then it is not
   // safe to transform.
@@ -49,6 +41,38 @@ TEST(IncludeExcludeTest, ParseString) {
   EXPECT_FALSE(IEManager.isFileIncluded("a/a2/f.cpp"));
   EXPECT_FALSE(IEManager.isFileIncluded("a/a2/dir/f.cpp"));
   EXPECT_FALSE(IEManager.isFileIncluded("b/b2/b2f.cpp"));
+  EXPECT_FALSE(IEManager.isFileIncluded("c/c2/c3/f.cpp"));
+
+#ifdef LLVM_ON_WIN32
+  // Check for cases when the path separators are different between the path
+  // that was read and the path that we are checking for. This can happen on
+  // windows where lit provides "\" and the test has "/".
+  ASSERT_NO_ERROR(IEManager.readListFromString(
+        /*include=*/ "C:\\foo,a\\b/c,a/../b\\c/..\\d",
+        /*exclude=*/ "C:\\bar"
+        ));
+  EXPECT_TRUE(IEManager.isFileIncluded("C:/foo/code.h"));
+  EXPECT_FALSE(IEManager.isFileIncluded("C:/bar/code.h"));
+  EXPECT_TRUE(IEManager.isFileIncluded("a/b\\c/code.h"));
+  EXPECT_FALSE(IEManager.isFileIncluded("b\\c/code.h"));
+  EXPECT_TRUE(IEManager.isFileIncluded("b/d\\code.h"));
+#endif
+}
+
+TEST(IncludeExcludeTest, ParseStringCases) {
+  IncludeExcludeInfo IEManager;
+  llvm::error_code Err = IEManager.readListFromString(
+      /*include=*/  "a/.,b/b2/,c/c2/c3/../../c4/,d/d2/./d3/,/e/e2/.",
+      /*exclude=*/ "");
+
+  ASSERT_EQ(Err, llvm::error_code::success());
+
+  EXPECT_TRUE(IEManager.isFileIncluded("a/f.cpp"));
+  EXPECT_TRUE(IEManager.isFileIncluded("b/b2/f.cpp"));
+  EXPECT_TRUE(IEManager.isFileIncluded("c/c4/f.cpp"));
+  EXPECT_TRUE(IEManager.isFileIncluded("d/d2/d3/f.cpp"));
+  EXPECT_TRUE(IEManager.isFileIncluded("/e/e2/f.cpp"));
+
   EXPECT_FALSE(IEManager.isFileIncluded("c/c2/c3/f.cpp"));
 }
 

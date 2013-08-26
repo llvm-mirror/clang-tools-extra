@@ -30,6 +30,7 @@ class Option;
 } // namespace llvm
 class Transform;
 struct TransformOptions;
+struct CompilerVersions;
 
 typedef Transform *(*TransformCreator)(const TransformOptions &);
 template <typename T>
@@ -48,17 +49,17 @@ public:
 
   ~Transforms();
 
-  /// \brief Registers a transform causing the transform to be made available
-  /// on the command line.
+  /// \brief Registers all available transforms causing them to be made
+  /// available on the command line.
   ///
   /// Be sure to register all transforms *before* parsing command line options.
-  void registerTransform(llvm::StringRef OptName, llvm::StringRef Description,
-                         TransformCreator Creator);
+  void registerTransforms();
 
   /// \brief Instantiate all transforms that were selected on the command line.
   ///
   /// Call *after* parsing options.
-  void createSelectedTransforms(const TransformOptions &Options);
+  void createSelectedTransforms(const TransformOptions &Options,
+                                const CompilerVersions &RequiredVersions);
 
   /// \brief Return an iterator to the start of a container of instantiated
   /// transforms.
@@ -69,12 +70,13 @@ public:
   const_iterator end() const { return ChosenTransforms.end(); }
 
 private:
-  typedef std::vector<std::pair<llvm::cl::opt<bool>*, TransformCreator> >
-    OptionVec;
+  bool hasAnyExplicitOption() const;
+
+  typedef llvm::StringMap<llvm::cl::opt<bool> *> OptionMap;
 
 private:
   TransformVec ChosenTransforms;
-  OptionVec Options;
+  OptionMap Options;
 };
 
 #endif // CPP11_MIGRATE_TRANSFORMS_H

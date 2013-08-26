@@ -8,15 +8,19 @@ include_directories(${CPP11_MIGRATE_SOURCE_DIR})
 
 add_extra_unittest(Cpp11MigrateTests
   FileOverridesTest.cpp
+  ReformattingTest.cpp
   IncludeExcludeTest.cpp
   PerfSupportTest.cpp
+  ReplacementsYamlTest.cpp
   TransformTest.cpp
   UniqueHeaderNameTest.cpp
   )
 
 target_link_libraries(Cpp11MigrateTests
   migrateCore
+  clangFormat
   clangTooling
   clangBasic
   clangASTMatchers
+  clangRewriteFrontend
   )

@@ -47,3 +47,24 @@ int UseAutoTransform::apply(FileOverrides &InputStates,
 
   return 0;
 }
+
+struct UseAutoFactory : TransformFactory {
+  UseAutoFactory() {
+    Since.Clang = Version(2, 9);
+    Since.Gcc = Version(4, 4);
+    Since.Icc = Version(12);
+    Since.Msvc = Version(10);
+  }
+
+  Transform *createTransform(const TransformOptions &Opts) LLVM_OVERRIDE {
+    return new UseAutoTransform(Opts);
+  }
+};
+
+// Register the factory using this statically initialized variable.
+static TransformFactoryRegistry::Add<UseAutoFactory>
+X("use-auto", "Use of 'auto' type specifier");
+
+// This anchor is used to force the linker to link in the generated object file
+// and thus register the factory.
+volatile int UseAutoTransformAnchorSource = 0;

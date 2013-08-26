@@ -48,3 +48,24 @@ int UseNullptrTransform::apply(FileOverrides &InputStates,
 
   return 0;
 }
+
+struct UseNullptrFactory : TransformFactory {
+  UseNullptrFactory() {
+    Since.Clang = Version(3, 0);
+    Since.Gcc = Version(4, 6);
+    Since.Icc = Version(12, 1);
+    Since.Msvc = Version(10);
+  }
+
+  Transform *createTransform(const TransformOptions &Opts) LLVM_OVERRIDE {
+    return new UseNullptrTransform(Opts);
+  }
+};
+
+// Register the factory using this statically initialized variable.
+static TransformFactoryRegistry::Add<UseNullptrFactory>
+X("use-nullptr", "Make use of nullptr keyword where possible");
+
+// This anchor is used to force the linker to link in the generated object file
+// and thus register the factory.
+volatile int UseNullptrTransformAnchorSource = 0;

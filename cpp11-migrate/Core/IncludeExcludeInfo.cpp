@@ -22,6 +22,9 @@
 
 using namespace llvm;
 
+/// A string type to represent paths.
+typedef SmallString<64> PathString;
+
 namespace {
 /// \brief Helper function to determine whether a file has the same path
 /// prefix as \a Path.
@@ -29,7 +32,7 @@ namespace {
 /// \a Path must be an absolute path.
 bool fileHasPathPrefix(StringRef File, StringRef Path) {
   // Converts File to its absolute path.
-  SmallString<64> AbsoluteFile = File;
+  PathString AbsoluteFile = File;
   sys::fs::make_absolute(AbsoluteFile);
 
   // Convert path strings to sys::path to iterate over each of its directories.
@@ -40,12 +43,41 @@ bool fileHasPathPrefix(StringRef File, StringRef Path) {
   while (FileI != FileE && PathI != PathE) {
     // If the strings aren't equal then the two paths aren't contained within
     // each other.
-    if (!FileI->equals(*PathI))
+    bool IsSeparator = ((FileI->size() == 1) && (PathI->size() == 1) &&
+                        sys::path::is_separator((*FileI)[0]) &&
+                        sys::path::is_separator((*PathI)[0]));
+    if (!FileI->equals(*PathI) && !IsSeparator)
       return false;
     ++FileI;
     ++PathI;
   }
   return true;
+}
+
+/// \brief Helper function for removing relative operators from a given
+/// path i.e. "..", ".".
+/// \a Path must be a absolute path.
+std::string removeRelativeOperators(StringRef Path) {
+  sys::path::const_iterator PathI = sys::path::begin(Path);
+  sys::path::const_iterator PathE = sys::path::end(Path);
+  SmallVector<StringRef, 16> PathT;
+  while (PathI != PathE) {
+    if (PathI->equals("..")) {
+      // Test if we have reached the root then Path is invalid.
+      if (PathT.empty())
+        return "";
+      PathT.pop_back();
+    } else if (!PathI->equals("."))
+      PathT.push_back(*PathI);
+    ++PathI;
+  }
+  // Rebuild the new path.
+  PathString NewPath;
+  for (SmallVectorImpl<StringRef>::iterator I = PathT.begin(), E = PathT.end();
+       I != E; ++I) {
+    llvm::sys::path::append(NewPath, *I);
+  }
+  return NewPath.str();
 }
 
 /// \brief Helper function to tokenize a string of paths and populate
@@ -58,16 +90,16 @@ error_code parseCLInput(StringRef Line, std::vector<std::string> &List,
                                             E = Tokens.end();
        I != E; ++I) {
     // Convert each path to its absolute path.
-    SmallString<64> Path = I->rtrim();
+    PathString Path = I->rtrim();
     if (error_code Err = sys::fs::make_absolute(Path))
       return Err;
-
-    // sys::fs::make_absolute will turn "." into "<pwd>/.". Need to strip "/."
-    // off or it interferes with prefix checking.
-    if (Path.endswith("/."))
-      List.push_back(Path.slice(0, Path.size() - 2).str());
+    // Remove relative operators from the path.
+    std::string AbsPath = removeRelativeOperators(Path);
+    // Add only non-empty paths to the list.
+    if (!AbsPath.empty())
+      List.push_back(AbsPath);
     else
-      List.push_back(Path.str());
+      llvm::errs() << "Unable to parse input path: " << *I << "\n";
 
     llvm::errs() << "Parse: " <<List.back() << "\n";
   }
@@ -119,6 +151,7 @@ bool IncludeExcludeInfo::isFileIncluded(StringRef FilePath) const {
        I != E; ++I)
     if ((InIncludeList = fileHasPathPrefix(FilePath, *I)))
       break;
+
   // If file is not in the list of included paths then it is not necessary
   // to check the excluded path list.
   if (!InIncludeList)
