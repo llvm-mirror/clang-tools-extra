@@ -16,7 +16,6 @@
 #include "AddOverride.h"
 #include "AddOverrideActions.h"
 #include "AddOverrideMatchers.h"
-
 #include "clang/Frontend/CompilerInstance.h"
 
 using clang::ast_matchers::MatchFinder;
@@ -70,7 +69,7 @@ struct AddOverrideFactory : TransformFactory {
     }
   }
 
-  Transform *createTransform(const TransformOptions &Opts) LLVM_OVERRIDE {
+  Transform *createTransform(const TransformOptions &Opts) override {
     return new AddOverrideTransform(Opts);
   }
 };

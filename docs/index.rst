@@ -16,7 +16,10 @@ Contents
    :maxdepth: 1
 
    clang-modernize
+   clang-tidy
    modularize
+   module-map-checker
+   pp-trace
 
 
 Doxygen Documentation
@@ -42,4 +45,3 @@ Indices and tables
 
 * :ref:`genindex`
 * :ref:`search`
-

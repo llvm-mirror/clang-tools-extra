@@ -31,8 +31,8 @@ bool ReplacementHandling::findClangApplyReplacements(const char *Argv0) {
     return true;
 
   static int StaticSymbol;
-  CARPath = fs::getMainExecutable(Argv0, &StaticSymbol);
-  SmallString<128> TestPath = path::parent_path(CARPath);
+  std::string ClangModernizePath = fs::getMainExecutable(Argv0, &StaticSymbol);
+  SmallString<128> TestPath = path::parent_path(ClangModernizePath);
   path::append(TestPath, "clang-apply-replacements");
   if (fs::can_execute(Twine(TestPath)))
     CARPath = TestPath.str();
@@ -74,7 +74,7 @@ bool ReplacementHandling::serializeReplacements(
 
     std::string ErrorInfo;
     raw_fd_ostream ReplacementsFile(ReplacementsFileName.c_str(), ErrorInfo,
-                                    fs::F_Binary);
+                                    fs::F_None);
     if (!ErrorInfo.empty()) {
       errs() << "Error opening file: " << ErrorInfo << "\n";
       Errors = true;

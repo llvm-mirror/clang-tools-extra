@@ -8,11 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Core/IncludeDirectives.h"
-#include "gtest/gtest.h"
 #include "common/VirtualFileHelper.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "llvm/Support/Path.h"
+#include "gtest/gtest.h"
 
 using namespace llvm;
 using namespace clang;
@@ -83,7 +83,7 @@ public:
 
 private:
   virtual bool BeginSourceFileAction(CompilerInstance &CI,
-                                     StringRef FileName) LLVM_OVERRIDE {
+                                     StringRef FileName) override {
     if (!PreprocessOnlyAction::BeginSourceFileAction(CI, FileName))
       return false;
     VFHelper.mapVirtualFiles(CI.getSourceManager());
@@ -95,7 +95,7 @@ private:
     return true;
   }
 
-  virtual void EndSourceFileAction() LLVM_OVERRIDE {
+  virtual void EndSourceFileAction() override {
     const tooling::Replacement &Replace =
         FileIncludes->addAngledInclude(FileToModify, Include);
     if (Replace.isApplicable())
@@ -105,7 +105,7 @@ private:
   StringRef Include;
   VirtualFileHelper VFHelper;
   tooling::Replacements &Replaces;
-  OwningPtr<IncludeDirectives> FileIncludes;
+  std::unique_ptr<IncludeDirectives> FileIncludes;
   std::string FileToModify;
   // if non-null, add the include directives in this file instead of the main
   // file.

@@ -59,7 +59,7 @@ collectReplacementsFromDirectory(const llvm::StringRef Directory,
 
     TURFiles.push_back(I->path());
 
-    OwningPtr<MemoryBuffer> Out;
+    std::unique_ptr<MemoryBuffer> Out;
     error_code BufferError = MemoryBuffer::getFile(I->path(), Out);
     if (BufferError) {
       errs() << "Error reading " << I->path() << ": " << BufferError.message()
@@ -67,8 +67,7 @@ collectReplacementsFromDirectory(const llvm::StringRef Directory,
       continue;
     }
 
-    yaml::Input YIn(Out->getBuffer());
-    YIn.setDiagHandler(&eatDiagnostics);
+    yaml::Input YIn(Out->getBuffer(), NULL, &eatDiagnostics);
     tooling::TranslationUnitReplacements TU;
     YIn >> TU;
     if (YIn.error()) {
@@ -248,7 +247,7 @@ bool writeFiles(const clang::Rewriter &Rewrites) {
 
     std::string ErrorInfo;
 
-    llvm::raw_fd_ostream FileStream(FileName, ErrorInfo);
+    llvm::raw_fd_ostream FileStream(FileName, ErrorInfo, llvm::sys::fs::F_Text);
     if (!ErrorInfo.empty()) {
       errs() << "Warning: Could not write to " << FileName << "\n";
       continue;

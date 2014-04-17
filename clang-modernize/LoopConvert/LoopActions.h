@@ -16,8 +16,8 @@
 #ifndef CLANG_MODERNIZE_LOOP_ACTIONS_H
 #define CLANG_MODERNIZE_LOOP_ACTIONS_H
 
-#include "StmtAncestor.h"
 #include "Core/Transform.h"
+#include "StmtAncestor.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
@@ -53,7 +53,7 @@ struct TUTrackingInfo {
   /// \}
 
 private:
-  llvm::OwningPtr<StmtAncestorASTVisitor> ParentFinder;
+  std::unique_ptr<StmtAncestorASTVisitor> ParentFinder;
   StmtGeneratedVarNameMap GeneratedDecls;
   ReplacedVarsMap ReplacedVars;
 };

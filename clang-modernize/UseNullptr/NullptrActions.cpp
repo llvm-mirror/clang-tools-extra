@@ -16,10 +16,8 @@
 
 #include "NullptrActions.h"
 #include "NullptrMatchers.h"
-
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
-
 #include "clang/Basic/CharInfo.h"
 #include "clang/Lex/Lexer.h"
 
@@ -31,12 +29,6 @@ namespace cl = llvm::cl;
 namespace {
 
 const char *NullMacroName = "NULL";
-
-static cl::opt<std::string>
-UserNullMacroNames("user-null-macros",
-                   cl::desc("Comma-separated list of user-defined "
-                            "macro names that behave like NULL"),
-                   cl::cat(TransformsOptionsCategory), cl::init(""));
 
 bool isReplaceableRange(SourceLocation StartLoc, SourceLocation EndLoc,
                         const SourceManager &SM, const Transform &Owner) {
@@ -428,13 +420,12 @@ private:
 };
 } // namespace
 
-NullptrFixer::NullptrFixer(unsigned &AcceptedChanges, RiskLevel,
+NullptrFixer::NullptrFixer(unsigned &AcceptedChanges,
+                           llvm::ArrayRef<llvm::StringRef> UserMacros,
                            Transform &Owner)
     : AcceptedChanges(AcceptedChanges), Owner(Owner) {
-  if (!UserNullMacroNames.empty()) {
-    llvm::StringRef S = UserNullMacroNames;
-    S.split(UserNullMacros, ",");
-  }
+  UserNullMacros.insert(UserNullMacros.begin(), UserMacros.begin(),
+                        UserMacros.end());
   UserNullMacros.insert(UserNullMacros.begin(), llvm::StringRef(NullMacroName));
 }
 

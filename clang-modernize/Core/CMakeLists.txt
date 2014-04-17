@@ -7,11 +7,12 @@ add_clang_library(modernizeCore
   IncludeExcludeInfo.cpp
   PerfSupport.cpp
   IncludeDirectives.cpp
-  )
-target_link_libraries(modernizeCore
-  clangFormat
-  clangTooling
-  clangBasic
+
+  LINK_LIBS
+  clangAST
   clangASTMatchers
-  clangRewriteFrontend
+  clangBasic
+  clangFrontend
+  clangLex
+  clangTooling
   )

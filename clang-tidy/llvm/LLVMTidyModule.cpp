@@ -12,11 +12,11 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PPCallbacks.h"
+#include "clang/Lex/Preprocessor.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang::ast_matchers;
@@ -24,8 +24,7 @@ using namespace clang::ast_matchers;
 namespace clang {
 namespace tidy {
 
-void
-NamespaceCommentCheck::registerMatchers(ast_matchers::MatchFinder *Finder) {
+void NamespaceCommentCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(namespaceDecl().bind("namespace"), this);
 }
 
@@ -40,14 +39,14 @@ void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
   // FIXME: Check that this namespace is "long".
   if (Tok.is(tok::comment)) {
     // FIXME: Check comment content.
+    // FIXME: Check comment placement on the same line.
     return;
   }
   std::string Fix = " // namespace";
   if (!ND->isAnonymousNamespace())
     Fix = Fix.append(" ").append(ND->getNameAsString());
 
-  Context->Diag(ND->getLocation(),
-                "namespace not terminated with a closing comment")
+  diag(ND->getLocation(), "namespace not terminated with a closing comment")
       << FixItHint::CreateInsertion(ND->getRBraceLoc().getLocWithOffset(1),
                                     Fix);
 }
@@ -55,35 +54,31 @@ void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
 namespace {
 class IncludeOrderPPCallbacks : public PPCallbacks {
 public:
-  explicit IncludeOrderPPCallbacks(ClangTidyContext &Context)
-      : Context(Context) {}
+  explicit IncludeOrderPPCallbacks(IncludeOrderCheck &Check) : Check(Check) {}
 
-  virtual void InclusionDirective(SourceLocation HashLoc,
-                                  const Token &IncludeTok, StringRef FileName,
-                                  bool IsAngled, CharSourceRange FilenameRange,
-                                  const FileEntry *File, StringRef SearchPath,
-                                  StringRef RelativePath,
-                                  const Module *Imported) {
+  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
+                          StringRef FileName, bool IsAngled,
+                          CharSourceRange FilenameRange, const FileEntry *File,
+                          StringRef SearchPath, StringRef RelativePath,
+                          const Module *Imported) override {
     // FIXME: This is a dummy implementation to show how to get at preprocessor
     // information. Implement a real include order check.
-    Context.Diag(HashLoc, "This is an include");
+    Check.diag(HashLoc, "This is an include");
   }
 
 private:
-  ClangTidyContext &Context;
+  IncludeOrderCheck &Check;
 };
 } // namespace
 
 void IncludeOrderCheck::registerPPCallbacks(CompilerInstance &Compiler) {
   Compiler.getPreprocessor()
-      .addPPCallbacks(new IncludeOrderPPCallbacks(*Context));
+      .addPPCallbacks(new IncludeOrderPPCallbacks(*this));
 }
 
 class LLVMModule : public ClangTidyModule {
 public:
-  virtual ~LLVMModule() {}
-
-  virtual void addCheckFactories(ClangTidyCheckFactories &CheckFactories) {
+  void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.addCheckFactory(
         "llvm-include-order", new ClangTidyCheckFactory<IncludeOrderCheck>());
     CheckFactories.addCheckFactory(

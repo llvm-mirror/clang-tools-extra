@@ -26,7 +26,7 @@ namespace tidy {
 /// this subclass in \c ClangTidyModule::addCheckFactories().
 class CheckFactoryBase {
 public:
-  virtual ~CheckFactoryBase();
+  virtual ~CheckFactoryBase() {}
   virtual ClangTidyCheck *createCheck() = 0;
 };
 
@@ -36,13 +36,15 @@ public:
 /// For example, if have a clang-tidy check like:
 /// \code
 /// class MyTidyCheck : public ClangTidyCheck {
-///   virtual void registerMatchers(ast_matchers::MatchFinder *Finder) { .. }
+///   void registerMatchers(ast_matchers::MatchFinder *Finder) override {
+///     ..
+///   }
 /// };
 /// \endcode
 /// you can register it with:
 /// \code
 /// class MyModule : public ClangTidyModule {
-///   virtual void addCheckFactories(ClangTidyCheckFactories &CheckFactories) {
+///   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
 ///     CheckFactories.addCheckFactory(
 ///         "myproject-my-check", new ClangTidyCheckFactory<MyTidyCheck>());
 ///   }
@@ -50,7 +52,7 @@ public:
 /// \endcode
 template <typename T> class ClangTidyCheckFactory : public CheckFactoryBase {
 public:
-  virtual ClangTidyCheck *createCheck() { return new T; }
+  ClangTidyCheck *createCheck() override { return new T; }
 };
 
 class ClangTidyCheckFactories;
@@ -84,12 +86,16 @@ public:
   /// store them in \p Checks.
   ///
   /// The caller takes ownership of the return \c ClangTidyChecks.
-  void createChecks(StringRef CheckRegexString,
+  void createChecks(ChecksFilter &Filter,
                     SmallVectorImpl<ClangTidyCheck *> &Checks);
 
+  typedef std::map<std::string, CheckFactoryBase *> FactoryMap;
+  FactoryMap::const_iterator begin() const { return Factories.begin(); }
+  FactoryMap::const_iterator end() const { return Factories.end(); }
+  bool empty() const { return Factories.empty(); }
+
 private:
-  StringRef FilterRegex;
-  std::map<std::string, CheckFactoryBase *> Factories;
+  FactoryMap Factories;
 };
 
 } // end namespace tidy

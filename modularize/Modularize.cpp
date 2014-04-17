@@ -90,6 +90,25 @@
 //
 // See PreprocessorTracker.cpp for additional details.
 //
+// Modularize also has an option ("-module-map-path=module.map") that will
+// skip the checks, and instead act as a module.map generation assistant,
+// generating a module map file based on the header list.  An optional
+// "-root-module=(rootName)" argument can specify a root module to be
+// created in the generated module.map file.  Note that you will likely
+// need to edit this file to suit the needs of your headers.
+//
+// An example command line for generating a module.map file:
+//
+//   modularize -module-map-path=module.map -root-module=myroot headerlist.txt
+//
+// Note that if the headers in the header list have partial paths, sub-modules
+// will be created for the subdirectires involved, assuming that the
+// subdirectories contain headers to be grouped into a module, but still with
+// individual modules for the headers in the subdirectory.
+//
+// See the ModuleAssistant.cpp file comments for additional details about the
+// implementation of the assistant mode.
+//
 // Future directions:
 //
 // Basically, we want to add new checks for whatever we can check with respect
@@ -123,6 +142,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Modularize.h"
+#include "PreprocessorTracker.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -133,9 +154,6 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
-#include "llvm/ADT/OwningPtr.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/Config/config.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
@@ -150,7 +168,6 @@
 #include <iterator>
 #include <string>
 #include <vector>
-#include "PreprocessorTracker.h"
 
 using namespace clang;
 using namespace clang::driver;
@@ -178,8 +195,24 @@ cl::opt<std::string> HeaderPrefix(
         " If not specified,"
         " the files are considered to be relative to the header list file."));
 
-typedef SmallVector<std::string, 4> DependentsVector;
-typedef StringMap<DependentsVector> DependencyMap;
+// Option for assistant mode, telling modularize to output a module map
+// based on the headers list, and where to put it.
+cl::opt<std::string> ModuleMapPath(
+    "module-map-path", cl::init(""),
+    cl::desc("Turn on module map output and specify output path or file name."
+             " If no path is specified and if prefix option is specified,"
+             " use prefix for file path."));
+
+// Option for assistant mode, telling modularize to output a module map
+// based on the headers list, and where to put it.
+cl::opt<std::string>
+RootModule("root-module", cl::init(""),
+           cl::desc("Specify the name of the root module."));
+
+// Save the program name for error messages.
+const char *Argv0;
+// Save the command line for comments.
+std::string CommandLine;
 
 // Read the header list file and collect the header file names and
 // optional dependencies.
@@ -197,7 +230,7 @@ error_code getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
     HeaderDirectory = HeaderPrefix;
 
   // Read the header list file into a buffer.
-  OwningPtr<MemoryBuffer> listBuffer;
+  std::unique_ptr<MemoryBuffer> listBuffer;
   if (error_code ec = MemoryBuffer::getFile(ListFileName, listBuffer)) {
     return ec;
   }
@@ -256,7 +289,7 @@ error_code getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
 
 // Helper function for finding the input file in an arguments list.
 std::string findInputFile(const CommandLineArguments &CLArgs) {
-  OwningPtr<OptTable> Opts(createDriverOptTable());
+  std::unique_ptr<OptTable> Opts(createDriverOptTable());
   const unsigned IncludedFlagsBitmask = options::CC1Option;
   unsigned MissingArgIndex, MissingArgCount;
   SmallVector<const char *, 256> Argv;
@@ -264,7 +297,7 @@ std::string findInputFile(const CommandLineArguments &CLArgs) {
                                             E = CLArgs.end();
        I != E; ++I)
     Argv.push_back(I->c_str());
-  OwningPtr<InputArgList> Args(
+  std::unique_ptr<InputArgList> Args(
       Opts->ParseArgs(Argv.data(), Argv.data() + Argv.size(), MissingArgIndex,
                       MissingArgCount, IncludedFlagsBitmask));
   std::vector<std::string> Inputs = Args->getAllArgValues(OPT_INPUT);
@@ -651,6 +684,16 @@ private:
 
 int main(int Argc, const char **Argv) {
 
+  // Save program name for error messages.
+  Argv0 = Argv[0];
+
+  // Save program arguments for use in module.map comment.
+  CommandLine = sys::path::stem(sys::path::filename(Argv0));
+  for (int ArgIndex = 1; ArgIndex < Argc; ArgIndex++) {
+    CommandLine.append(" ");
+    CommandLine.append(Argv[ArgIndex]);
+  }
+
   // This causes options to be parsed.
   cl::ParseCommandLineOptions(Argc, Argv, "modularize.\n");
 
@@ -670,15 +713,23 @@ int main(int Argc, const char **Argv) {
     return 1;
   }
 
+  // If we are in assistant mode, output the module map and quit.
+  if (ModuleMapPath.length() != 0) {
+    if (!createModuleMap(ModuleMapPath, Headers, Dependencies, HeaderPrefix,
+                         RootModule))
+      return 1; // Failed.
+    return 0;   // Success - Skip checks in assistant mode.
+  }
+
   // Create the compilation database.
   SmallString<256> PathBuf;
   sys::fs::current_path(PathBuf);
-  OwningPtr<CompilationDatabase> Compilations;
+  std::unique_ptr<CompilationDatabase> Compilations;
   Compilations.reset(
       new FixedCompilationDatabase(Twine(PathBuf), CC1Arguments));
 
   // Create preprocessor tracker, to watch for macro and conditional problems.
-  OwningPtr<PreprocessorTracker> PPTracker(PreprocessorTracker::create());
+  std::unique_ptr<PreprocessorTracker> PPTracker(PreprocessorTracker::create());
 
   // Parse all of the headers, detecting duplicates.
   EntityMap Entities;
@@ -701,7 +752,7 @@ int main(int Argc, const char **Argv) {
   // Check for the same entity being defined in multiple places.
   for (EntityMap::iterator E = Entities.begin(), EEnd = Entities.end();
        E != EEnd; ++E) {
-    // If only one occurance, exit early.
+    // If only one occurrence, exit early.
     if (E->second.size() == 1)
       continue;
     // Clear entity locations.
@@ -719,7 +770,7 @@ int main(int Argc, const char **Argv) {
     for (EntryBinArray::iterator DI = EntryBins.begin(), DE = EntryBins.end();
          DI != DE; ++DI, ++KindIndex) {
       int ECount = DI->size();
-      // If only 1 occurance, skip;
+      // If only 1 occurrence of this entity, skip it, as we only report duplicates.
       if (ECount <= 1)
         continue;
       LocationArray::iterator FI = DI->begin();

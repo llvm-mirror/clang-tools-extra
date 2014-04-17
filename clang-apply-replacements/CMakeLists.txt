@@ -1,19 +1,14 @@
 set(LLVM_LINK_COMPONENTS
-  ${LLVM_TARGETS_TO_BUILD}
-  asmparser
-  bitreader
-  support
-  mc
+  Support
   )
 
 add_clang_library(clangApplyReplacements
   lib/Tooling/ApplyReplacements.cpp
-  )
-target_link_libraries(clangApplyReplacements
-  clangTooling
+
+  LINK_LIBS
   clangBasic
-  clangRewriteFrontend
-  clangFormat
+  clangRewriteCore
+  clangTooling
   )
 
 include_directories(

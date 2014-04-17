@@ -15,9 +15,9 @@
 #include "PerfSupport.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/Process.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/raw_ostream.h"
 
 void collectSourcePerfData(const Transform &T, SourcePerfData &Data) {
   for (Transform::TimingVec::const_iterator I = T.timing_begin(),
@@ -51,7 +51,8 @@ void writePerfDataJSON(
      << ".json";
 
   std::string ErrorInfo;
-  llvm::raw_fd_ostream FileStream(SS.str().c_str(), ErrorInfo);
+  llvm::raw_fd_ostream FileStream(SS.str().c_str(), ErrorInfo,
+                                  llvm::sys::fs::F_Text);
   FileStream << "{\n";
   FileStream << "  \"Sources\" : [\n";
   for (SourcePerfData::const_iterator I = TimingResults.begin(),

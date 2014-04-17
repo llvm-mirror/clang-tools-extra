@@ -14,9 +14,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "PassByValueActions.h"
-#include "PassByValueMatchers.h"
 #include "Core/IncludeDirectives.h"
 #include "Core/Transform.h"
+#include "PassByValueMatchers.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
@@ -74,7 +74,7 @@ static bool paramReferredExactlyOnce(const CXXConstructorDecl *Ctor,
   return Visitor.hasExactlyOneUsageIn(Ctor);
 }
 
-/// \brief Find all references to \p ParamDecl accross all of the
+/// \brief Find all references to \p ParamDecl across all of the
 /// redeclarations of \p Ctor.
 static void
 collectParamDecls(const CXXConstructorDecl *Ctor, const ParmVarDecl *ParamDecl,
@@ -98,7 +98,7 @@ void ConstructorParamReplacer::run(const MatchFinder::MatchResult &Result) {
       Result.Nodes.getNodeAs<CXXCtorInitializer>(PassByValueInitializerId);
   assert(Ctor && ParamDecl && Initializer && "Bad Callback, missing node.");
 
-  // Check this now to avoid unecessary work. The param locations are checked
+  // Check this now to avoid unnecessary work. The param locations are checked
   // later.
   if (!Owner.isFileModifiable(SM, Initializer->getSourceLocation()))
     return;

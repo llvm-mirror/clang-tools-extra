@@ -217,7 +217,7 @@ int main(int argc, char **argv) {
   // Determine a formatting style from options.
   format::FormatStyle FormatStyle;
   if (DoFormat)
-    FormatStyle = format::getStyle(FormatStyleOpt, FormatStyleConfig);
+    FormatStyle = format::getStyle(FormatStyleOpt, FormatStyleConfig, "LLVM");
 
   TUReplacements TUs;
   TUReplacementFiles TURFiles;
@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
 
   // Remove the TUReplacementFiles (triggered by "remove-change-desc-files"
   // command line option) when exiting main().
-  OwningPtr<ScopedFileRemover> Remover;
+  std::unique_ptr<ScopedFileRemover> Remover;
   if (RemoveTUReplacementFiles)
     Remover.reset(new ScopedFileRemover(TURFiles, Diagnostics));
 
@@ -272,7 +272,8 @@ int main(int argc, char **argv) {
 
     // Write new file to disk
     std::string ErrorInfo;
-    llvm::raw_fd_ostream FileStream(I->getKey().str().c_str(), ErrorInfo);
+    llvm::raw_fd_ostream FileStream(I->getKey().str().c_str(), ErrorInfo,
+                                    llvm::sys::fs::F_Text);
     if (!ErrorInfo.empty()) {
       llvm::errs() << "Could not open " << I->getKey() << " for writing\n";
       continue;
