@@ -7,7 +7,7 @@
 //
 //===--------------------------------------------------------------------===//
 //
-// The Basic Idea
+// The Basic Idea (Macro and Conditional Checking)
 //
 // Basically we install a PPCallbacks-derived object to track preprocessor
 // activity, namely when a header file is entered/exited, when a macro
@@ -49,7 +49,17 @@
 //             ^
 //   Macro defined here.
 //
-// Design and Implementation Details
+// The Basic Idea ('Extern "C/C++" {}' Or 'namespace {}') With Nested
+// '#include' Checking)
+//
+// To check for '#include' directives nested inside 'Extern "C/C++" {}'
+// or 'namespace {}' blocks, we keep track of the '#include' directives
+// while running the preprocessor, and later during a walk of the AST
+// we call a function to check for any '#include' directies inside
+// an 'Extern "C/C++" {}' or 'namespace {}' block, given its source
+// range.
+//
+// Design and Implementation Details (Macro and Conditional Checking)
 //
 // A PreprocessorTrackerImpl class implements the PreprocessorTracker
 // interface. It uses a PreprocessorCallbacks class derived from PPCallbacks
@@ -76,7 +86,7 @@
 // the expanded macro value, a PPItemKey representing the file/line/column
 // where the macro was defined, a handle to a string representing the source
 // line containing the macro definition, and a vector of InclusionPathHandle
-// values that represents the hierarchies of include files for each case 
+// values that represents the hierarchies of include files for each case
 // where the particular header containing the macro reference was referenced
 // or included.
 
@@ -189,7 +199,7 @@
 // has two ConditionalExpansionInstance objects, it means there was a
 // conflict, meaning the conditional expression evaluated differently in
 // one or more cases.
-// 
+//
 // After modularize has performed all the compilations, it enters a phase
 // of error reporting. This new feature adds to this reporting phase calls
 // to the PreprocessorTracker's reportInconsistentMacros and
@@ -205,6 +215,22 @@
 // to make clearer the separate reporting phases, I could add an output
 // message marking the phases.
 //
+// Design and Implementation Details ('Extern "C/C++" {}' Or
+// 'namespace {}') With Nested '#include' Checking)
+//
+// We override the InclusionDirective in PPCallbacks to record information
+// about each '#include' directive encountered during preprocessing.
+// We co-opt the PPItemKey class to store the information about each
+// '#include' directive, including the source file name containing the
+// directive, the name of the file being included, and the source line
+// and column of the directive.  We store these object in a vector,
+// after first check to see if an entry already exists.
+//
+// Later, while the AST is being walked for other checks, we provide
+// visit handlers for 'extern "C/C++" {}' and 'namespace (name) {}'
+// blocks, checking to see if any '#include' directives occurred
+// within the blocks, reporting errors if any found.
+//
 // Future Directions
 //
 // We probably should add options to disable any of the checks, in case
@@ -219,12 +245,12 @@
 //===--------------------------------------------------------------------===//
 
 #include "clang/Lex/LexDiagnostic.h"
+#include "PreprocessorTracker.h"
 #include "clang/Lex/MacroArgs.h"
 #include "clang/Lex/PPCallbacks.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/StringPool.h"
 #include "llvm/ADT/SmallSet.h"
-#include "PreprocessorTracker.h"
+#include "llvm/Support/StringPool.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace Modularize {
 
@@ -285,7 +311,7 @@ std::string getSourceString(clang::Preprocessor &PP, clang::SourceRange Range) {
   return llvm::StringRef(BeginPtr, Length).trim().str();
 }
 
-// Retrieve source line from file image.
+// Retrieve source line from file image given a location.
 std::string getSourceLine(clang::Preprocessor &PP, clang::SourceLocation Loc) {
   const llvm::MemoryBuffer *MemBuffer =
       PP.getSourceManager().getBuffer(PP.getSourceManager().getFileID(Loc));
@@ -305,6 +331,39 @@ std::string getSourceLine(clang::Preprocessor &PP, clang::SourceLocation Loc) {
       break;
     }
     EndPtr++;
+  }
+  size_t Length = EndPtr - BeginPtr;
+  return llvm::StringRef(BeginPtr, Length).str();
+}
+
+// Retrieve source line from file image given a file ID and line number.
+std::string getSourceLine(clang::Preprocessor &PP, clang::FileID FileID,
+                          int Line) {
+  const llvm::MemoryBuffer *MemBuffer = PP.getSourceManager().getBuffer(FileID);
+  const char *Buffer = MemBuffer->getBufferStart();
+  const char *BufferEnd = MemBuffer->getBufferEnd();
+  const char *BeginPtr = Buffer;
+  const char *EndPtr = BufferEnd;
+  int LineCounter = 1;
+  if (Line == 1)
+    BeginPtr = Buffer;
+  else {
+    while (Buffer < BufferEnd) {
+      if (*Buffer == '\n') {
+        if (++LineCounter == Line) {
+          BeginPtr = Buffer++ + 1;
+          break;
+        }
+      }
+      Buffer++;
+    }
+  }
+  while (Buffer < BufferEnd) {
+    if (*Buffer == '\n') {
+      EndPtr = Buffer;
+      break;
+    }
+    Buffer++;
   }
   size_t Length = EndPtr - BeginPtr;
   return llvm::StringRef(BeginPtr, Length).str();
@@ -469,6 +528,12 @@ std::string getExpandedString(clang::Preprocessor &PP,
   }
   return Expanded;
 }
+
+// ConditionValueKind strings.
+const char *
+ConditionValueKindStrings[] = {
+  "(not evaluated)", "false", "true"
+};
 
 // We need some operator overloads for string handles.
 bool operator==(const StringHandle &H1, const StringHandle &H2) {
@@ -669,7 +734,7 @@ public:
 // for use in telling the user the nested include path to the header.
 class ConditionalExpansionInstance {
 public:
-  ConditionalExpansionInstance(bool ConditionValue, InclusionPathHandle H)
+  ConditionalExpansionInstance(clang::PPCallbacks::ConditionValueKind ConditionValue, InclusionPathHandle H)
       : ConditionValue(ConditionValue) {
     InclusionPathHandles.push_back(H);
   }
@@ -694,7 +759,7 @@ public:
   }
 
   // A flag representing the evaluated condition value.
-  bool ConditionValue;
+  clang::PPCallbacks::ConditionValueKind ConditionValue;
   // The header inclusion path handles for all the instances.
   std::vector<InclusionPathHandle> InclusionPathHandles;
 };
@@ -709,7 +774,8 @@ public:
 class ConditionalTracker {
 public:
   ConditionalTracker(clang::tok::PPKeywordKind DirectiveKind,
-                     bool ConditionValue, StringHandle ConditionUnexpanded,
+                     clang::PPCallbacks::ConditionValueKind ConditionValue,
+                     StringHandle ConditionUnexpanded,
                      InclusionPathHandle InclusionPathHandle)
       : DirectiveKind(DirectiveKind), ConditionUnexpanded(ConditionUnexpanded) {
     addConditionalExpansionInstance(ConditionValue, InclusionPathHandle);
@@ -718,7 +784,7 @@ public:
 
   // Find a matching condition expansion instance.
   ConditionalExpansionInstance *
-  findConditionalExpansionInstance(bool ConditionValue) {
+  findConditionalExpansionInstance(clang::PPCallbacks::ConditionValueKind ConditionValue) {
     for (std::vector<ConditionalExpansionInstance>::iterator
              I = ConditionalExpansionInstances.begin(),
              E = ConditionalExpansionInstances.end();
@@ -732,7 +798,7 @@ public:
 
   // Add a conditional expansion instance.
   void
-  addConditionalExpansionInstance(bool ConditionValue,
+  addConditionalExpansionInstance(clang::PPCallbacks::ConditionValueKind ConditionValue,
                                   InclusionPathHandle InclusionPathHandle) {
     ConditionalExpansionInstances.push_back(
         ConditionalExpansionInstance(ConditionValue, InclusionPathHandle));
@@ -765,6 +831,14 @@ public:
   ~PreprocessorCallbacks() {}
 
   // Overridden handlers.
+  void InclusionDirective(clang::SourceLocation HashLoc,
+                          const clang::Token &IncludeTok,
+                          llvm::StringRef FileName, bool IsAngled,
+                          clang::CharSourceRange FilenameRange,
+                          const clang::FileEntry *File,
+                          llvm::StringRef SearchPath,
+                          llvm::StringRef RelativePath,
+                          const clang::Module *Imported);
   void FileChanged(clang::SourceLocation Loc,
                    clang::PPCallbacks::FileChangeReason Reason,
                    clang::SrcMgr::CharacteristicKind FileType,
@@ -775,9 +849,9 @@ public:
   void Defined(const clang::Token &MacroNameTok,
                const clang::MacroDirective *MD, clang::SourceRange Range);
   void If(clang::SourceLocation Loc, clang::SourceRange ConditionRange,
-          bool ConditionResult);
+          clang::PPCallbacks::ConditionValueKind ConditionResult);
   void Elif(clang::SourceLocation Loc, clang::SourceRange ConditionRange,
-            bool ConditionResult, clang::SourceLocation IfLoc);
+            clang::PPCallbacks::ConditionValueKind ConditionResult, clang::SourceLocation IfLoc);
   void Ifdef(clang::SourceLocation Loc, const clang::Token &MacroNameTok,
              const clang::MacroDirective *MD);
   void Ifndef(clang::SourceLocation Loc, const clang::Token &MacroNameTok,
@@ -820,6 +894,70 @@ public:
   }
   // Handle exiting a preprocessing session.
   void handlePreprocessorExit() { HeaderStack.clear(); }
+
+  // Handle include directive.
+  // This function is called every time an include directive is seen by the
+  // preprocessor, for the purpose of later checking for 'extern "" {}' or
+  // "namespace {}" blocks containing #include directives.
+  void handleIncludeDirective(llvm::StringRef DirectivePath, int DirectiveLine,
+                              int DirectiveColumn, llvm::StringRef TargetPath) {
+    HeaderHandle CurrentHeaderHandle = findHeaderHandle(DirectivePath);
+    StringHandle IncludeHeaderHandle = addString(TargetPath);
+    for (std::vector<PPItemKey>::const_iterator I = IncludeDirectives.begin(),
+                                                E = IncludeDirectives.end();
+         I != E; ++I) {
+      // If we already have an entry for this directive, return now.
+      if ((I->File == CurrentHeaderHandle) && (I->Line == DirectiveLine))
+        return;
+    }
+    PPItemKey IncludeDirectiveItem(IncludeHeaderHandle, CurrentHeaderHandle,
+                                   DirectiveLine, DirectiveColumn);
+    IncludeDirectives.push_back(IncludeDirectiveItem);
+  }
+
+  // Check for include directives within the given source line range.
+  // Report errors if any found.  Returns true if no include directives
+  // found in block.
+  bool checkForIncludesInBlock(clang::Preprocessor &PP,
+                               clang::SourceRange BlockSourceRange,
+                               const char *BlockIdentifierMessage,
+                               llvm::raw_ostream &OS) {
+    clang::SourceLocation BlockStartLoc = BlockSourceRange.getBegin();
+    clang::SourceLocation BlockEndLoc = BlockSourceRange.getEnd();
+    // Use block location to get FileID of both the include directive
+    // and block statement.
+    clang::FileID FileID = PP.getSourceManager().getFileID(BlockStartLoc);
+    std::string SourcePath = getSourceLocationFile(PP, BlockStartLoc);
+    HeaderHandle SourceHandle = findHeaderHandle(SourcePath);
+    int BlockStartLine, BlockStartColumn, BlockEndLine, BlockEndColumn;
+    bool returnValue = true;
+    getSourceLocationLineAndColumn(PP, BlockStartLoc, BlockStartLine,
+                                   BlockStartColumn);
+    getSourceLocationLineAndColumn(PP, BlockEndLoc, BlockEndLine,
+                                   BlockEndColumn);
+    for (std::vector<PPItemKey>::const_iterator I = IncludeDirectives.begin(),
+                                                E = IncludeDirectives.end();
+         I != E; ++I) {
+      // If we find an entry within the block, report an error.
+      if ((I->File == SourceHandle) && (I->Line >= BlockStartLine) &&
+          (I->Line < BlockEndLine)) {
+        returnValue = false;
+        OS << SourcePath << ":" << I->Line << ":" << I->Column << ":\n";
+        OS << getSourceLine(PP, FileID, I->Line) << "\n";
+        if (I->Column > 0)
+          OS << std::string(I->Column - 1, ' ') << "^\n";
+        OS << "error: Include directive within " << BlockIdentifierMessage
+           << ".\n";
+        OS << SourcePath << ":" << BlockStartLine << ":" << BlockStartColumn
+           << ":\n";
+        OS << getSourceLine(PP, BlockStartLoc) << "\n";
+        if (BlockStartColumn > 0)
+          OS << std::string(BlockStartColumn - 1, ' ') << "^\n";
+        OS << "The \"" << BlockIdentifierMessage << "\" block is here.\n";
+      }
+    }
+    return returnValue;
+  }
 
   // Handle entering a header source file.
   void handleHeaderEntry(clang::Preprocessor &PP, llvm::StringRef HeaderPath) {
@@ -1007,7 +1145,7 @@ public:
   addConditionalExpansionInstance(clang::Preprocessor &PP, HeaderHandle H,
                                   clang::SourceLocation InstanceLoc,
                                   clang::tok::PPKeywordKind DirectiveKind,
-                                  bool ConditionValue,
+                                  clang::PPCallbacks::ConditionValueKind ConditionValue,
                                   llvm::StringRef ConditionUnexpanded,
                                   InclusionPathHandle InclusionPathHandle) {
     // Ignore header guards, assuming the header guard is the only conditional.
@@ -1023,8 +1161,7 @@ public:
           getSourceLine(PP, InstanceLoc) + "\n";
       ConditionalExpansions[InstanceKey] =
           ConditionalTracker(DirectiveKind, ConditionValue,
-                             ConditionUnexpandedHandle,
-                             InclusionPathHandle);
+                             ConditionUnexpandedHandle, InclusionPathHandle);
     } else {
       // We've seen the conditional before.  Get its tracker.
       ConditionalTracker &CondTracker = I->second;
@@ -1134,7 +1271,7 @@ public:
            IMT != EMT; ++IMT) {
         ConditionalExpansionInstance &MacroInfo = *IMT;
         OS << "  '" << *CondTracker.ConditionUnexpanded << "' expanded to: '"
-           << (MacroInfo.ConditionValue ? "true" : "false")
+           << ConditionValueKindStrings[MacroInfo.ConditionValue]
            << "' with respect to these inclusion paths:\n";
         // Walk all the inclusion path hierarchies.
         for (std::vector<InclusionPathHandle>::iterator
@@ -1177,6 +1314,7 @@ private:
   std::vector<HeaderInclusionPath> InclusionPaths;
   InclusionPathHandle CurrentInclusionPathHandle;
   llvm::SmallSet<HeaderHandle, 128> HeadersInThisCompile;
+  std::vector<PPItemKey> IncludeDirectives;
   MacroExpansionMap MacroExpansions;
   ConditionalExpansionMap ConditionalExpansions;
   bool InNestedHeader;
@@ -1194,6 +1332,20 @@ PreprocessorTracker *PreprocessorTracker::create() {
 
 // Preprocessor callbacks for modularize.
 
+// Handle include directive.
+void PreprocessorCallbacks::InclusionDirective(
+    clang::SourceLocation HashLoc, const clang::Token &IncludeTok,
+    llvm::StringRef FileName, bool IsAngled,
+    clang::CharSourceRange FilenameRange, const clang::FileEntry *File,
+    llvm::StringRef SearchPath, llvm::StringRef RelativePath,
+    const clang::Module *Imported) {
+  int DirectiveLine, DirectiveColumn;
+  std::string HeaderPath = getSourceLocationFile(PP, HashLoc);
+  getSourceLocationLineAndColumn(PP, HashLoc, DirectiveLine, DirectiveColumn);
+  PPTracker.handleIncludeDirective(HeaderPath, DirectiveLine, DirectiveColumn,
+                                   FileName);
+}
+
 // Handle file entry/exit.
 void PreprocessorCallbacks::FileChanged(
     clang::SourceLocation Loc, clang::PPCallbacks::FileChangeReason Reason,
@@ -1202,14 +1354,12 @@ void PreprocessorCallbacks::FileChanged(
   case EnterFile:
     PPTracker.handleHeaderEntry(PP, getSourceLocationFile(PP, Loc));
     break;
-  case ExitFile:
-    {
-      const clang::FileEntry *F =
+  case ExitFile: {
+    const clang::FileEntry *F =
         PP.getSourceManager().getFileEntryForID(PrevFID);
-      if (F != NULL)
-        PPTracker.handleHeaderExit(F->getName());
-    }
-    break;
+    if (F != NULL)
+      PPTracker.handleHeaderExit(F->getName());
+  } break;
   case SystemHeaderPragma:
   case RenameFile:
     break;
@@ -1251,7 +1401,7 @@ void PreprocessorCallbacks::Defined(const clang::Token &MacroNameTok,
 
 void PreprocessorCallbacks::If(clang::SourceLocation Loc,
                                clang::SourceRange ConditionRange,
-                               bool ConditionResult) {
+                               clang::PPCallbacks::ConditionValueKind ConditionResult) {
   std::string Unexpanded(getSourceString(PP, ConditionRange));
   PPTracker.addConditionalExpansionInstance(
       PP, PPTracker.getCurrentHeaderHandle(), Loc, clang::tok::pp_if,
@@ -1260,7 +1410,7 @@ void PreprocessorCallbacks::If(clang::SourceLocation Loc,
 
 void PreprocessorCallbacks::Elif(clang::SourceLocation Loc,
                                  clang::SourceRange ConditionRange,
-                                 bool ConditionResult,
+                                 clang::PPCallbacks::ConditionValueKind ConditionResult,
                                  clang::SourceLocation IfLoc) {
   std::string Unexpanded(getSourceString(PP, ConditionRange));
   PPTracker.addConditionalExpansionInstance(
@@ -1271,7 +1421,8 @@ void PreprocessorCallbacks::Elif(clang::SourceLocation Loc,
 void PreprocessorCallbacks::Ifdef(clang::SourceLocation Loc,
                                   const clang::Token &MacroNameTok,
                                   const clang::MacroDirective *MD) {
-  bool IsDefined = (MD != 0);
+  clang::PPCallbacks::ConditionValueKind IsDefined =
+    (MD != 0 ? clang::PPCallbacks::CVK_True : clang::PPCallbacks::CVK_False );
   PPTracker.addConditionalExpansionInstance(
       PP, PPTracker.getCurrentHeaderHandle(), Loc, clang::tok::pp_ifdef,
       IsDefined, PP.getSpelling(MacroNameTok),
@@ -1281,7 +1432,8 @@ void PreprocessorCallbacks::Ifdef(clang::SourceLocation Loc,
 void PreprocessorCallbacks::Ifndef(clang::SourceLocation Loc,
                                    const clang::Token &MacroNameTok,
                                    const clang::MacroDirective *MD) {
-  bool IsNotDefined = (MD == 0);
+  clang::PPCallbacks::ConditionValueKind IsNotDefined =
+    (MD == 0 ? clang::PPCallbacks::CVK_True : clang::PPCallbacks::CVK_False );
   PPTracker.addConditionalExpansionInstance(
       PP, PPTracker.getCurrentHeaderHandle(), Loc, clang::tok::pp_ifndef,
       IsNotDefined, PP.getSpelling(MacroNameTok),

@@ -47,12 +47,11 @@ FORCE:
 
 lit.site.cfg: FORCE
 	@echo "Making lit.site.cfg for Clang extra tools..."
-	@$(ECHOPATH) s=@LLVM_SOURCE_DIR@=$(LLVM_SRC_ROOT)=g > lit.tmp
-	@$(ECHOPATH) s=@LLVM_BINARY_DIR@=$(LLVM_OBJ_ROOT)=g >> lit.tmp
 	@$(ECHOPATH) s=@LLVM_TOOLS_DIR@=$(ToolDir)=g >> lit.tmp
 	@$(ECHOPATH) s=@LLVM_LIBS_DIR@=$(LibDir)=g >> lit.tmp
 	@$(ECHOPATH) s=@CLANG_TOOLS_SOURCE_DIR@=$(PROJ_SRC_DIR)/..=g >> lit.tmp
 	@$(ECHOPATH) s=@CLANG_TOOLS_BINARY_DIR@=$(PROJ_OBJ_DIR)/..=g >> lit.tmp
+	@$(ECHOPATH) s=@CLANG_TOOLS_DIR@=$(ToolDir)=g >> lit.tmp
 	@$(ECHOPATH) s=@TARGET_TRIPLE@=$(TARGET_TRIPLE)=g >> lit.tmp
 	@sed -f lit.tmp $(PROJ_SRC_DIR)/lit.site.cfg.in > $@
 	@-rm -f lit.tmp

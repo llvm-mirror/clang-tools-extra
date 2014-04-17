@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CLANG_TIDY_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CLANG_TIDY_H
 
+#include "ClangTidyDiagnosticConsumer.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceManager.h"
@@ -18,72 +19,11 @@
 namespace clang {
 
 class CompilerInstance;
-namespace ast_matchers {
-class MatchFinder;
-}
 namespace tooling {
 class CompilationDatabase;
 }
 
 namespace tidy {
-
-/// \brief A detected error complete with information to display diagnostic and
-/// automatic fix.
-///
-/// This is used as an intermediate format to transport Diagnostics without a
-/// dependency on a SourceManager.
-///
-/// FIXME: Make Diagnostics flexible enough to support this directly.
-struct ClangTidyError {
-  ClangTidyError(const SourceManager &Sources, SourceLocation Loc,
-                 StringRef Message, const tooling::Replacements &Fix);
-
-  std::string Message;
-  unsigned FileOffset;
-  std::string FilePath;
-  tooling::Replacements Fix;
-};
-
-/// \brief Every \c ClangTidyCheck reports errors through a \c DiagnosticEngine
-/// provided by this context.
-///
-/// A \c ClangTidyCheck always has access to the active context to report
-/// warnings like:
-/// \code
-/// Context->Diag(Loc, "Single-argument constructors must be explicit")
-///     << FixItHint::CreateInsertion(Loc, "explicit ");
-/// \endcode
-class ClangTidyContext {
-public:
-  ClangTidyContext(SmallVectorImpl<ClangTidyError> *Errors) : Errors(Errors) {}
-
-  /// \brief Report any errors detected using this method.
-  ///
-  /// This is still under heavy development and will likely change towards using
-  /// tablegen'd diagnostic IDs.
-  /// FIXME: Figure out a way to manage ID spaces.
-  DiagnosticBuilder Diag(SourceLocation Loc, StringRef Message);
-
-  /// \brief Sets the \c DiagnosticsEngine so that Diagnostics can be generated
-  /// correctly.
-  ///
-  /// This is called from the \c ClangTidyCheck base class.
-  void setDiagnosticsEngine(DiagnosticsEngine *Engine);
-
-  /// \brief Sets the \c SourceManager of the used \c DiagnosticsEngine.
-  ///
-  /// This is called from the \c ClangTidyCheck base class.
-  void setSourceManager(SourceManager *SourceMgr);
-
-private:
-  friend class ClangTidyDiagnosticConsumer; // Calls storeError().
-
-  /// \brief Store a \c ClangTidyError.
-  void storeError(const ClangTidyError &Error);
-
-  SmallVectorImpl<ClangTidyError> *Errors;
-  DiagnosticsEngine *DiagEngine;
-};
 
 /// \brief Base class for all clang-tidy checks.
 ///
@@ -135,15 +75,51 @@ public:
   /// \brief The infrastructure sets the context to \p Ctx with this function.
   void setContext(ClangTidyContext *Ctx) { Context = Ctx; }
 
-protected:
-  ClangTidyContext *Context;
+  /// \brief Add a diagnostic with the check's name.
+  DiagnosticBuilder diag(SourceLocation Loc, StringRef Description,
+                         DiagnosticIDs::Level Level = DiagnosticIDs::Warning);
+
+  /// \brief Sets the check name. Intended to be used by the clang-tidy
+  /// framework. Can be called only once.
+  void setName(StringRef Name);
 
 private:
-  virtual void run(const ast_matchers::MatchFinder::MatchResult &Result);
+  void run(const ast_matchers::MatchFinder::MatchResult &Result) override;
+  ClangTidyContext *Context;
+  std::string CheckName;
 };
 
+class ClangTidyCheckFactories;
+
+class ClangTidyASTConsumerFactory {
+public:
+  ClangTidyASTConsumerFactory(ClangTidyContext &Context);
+  ~ClangTidyASTConsumerFactory();
+
+  /// \brief Returns an ASTConsumer that runs the specified clang-tidy checks.
+  clang::ASTConsumer *CreateASTConsumer(clang::CompilerInstance &Compiler,
+                                        StringRef File);
+
+  /// \brief Get the list of enabled checks.
+  std::vector<std::string> getCheckNames();
+
+private:
+  typedef std::vector<std::pair<std::string, bool> > CheckersList;
+  CheckersList getCheckersControlList();
+
+  SmallVector<ClangTidyCheck *, 8> Checks;
+  ClangTidyContext &Context;
+  ast_matchers::MatchFinder Finder;
+  std::unique_ptr<ClangTidyCheckFactories> CheckFactories;
+};
+
+/// \brief Fills the list of check names that are enabled when the provided
+/// filters are applied.
+std::vector<std::string> getCheckNames(StringRef EnableChecksRegex,
+                                       StringRef DisableChecksRegex);
+
 /// \brief Run a set of clang-tidy checks on a set of files.
-void runClangTidy(StringRef CheckRegexString,
+void runClangTidy(StringRef EnableChecksRegex, StringRef DisableChecksRegex,
                   const tooling::CompilationDatabase &Compilations,
                   ArrayRef<std::string> Ranges,
                   SmallVectorImpl<ClangTidyError> *Errors);

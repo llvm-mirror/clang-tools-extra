@@ -18,6 +18,11 @@
 // Modularize takes as argument a file name for a file containing the
 // newline-separated list of headers to check with respect to each other.
 // Lines beginning with '#' and empty lines are ignored.
+// Header file names followed by a colon and other space-separated
+// file names will include those extra files as dependencies.
+// The file names can be relative or full paths, but must be on the
+// same line.
+//
 // Modularize also accepts regular front-end arguments.
 //
 // Usage:   modularize [-prefix (optional header path prefix)]
@@ -70,22 +75,54 @@
 //             ^
 //   Macro defined here.
 //
+// Checks will also be performed for '#include' directives that are
+// nested inside 'extern "C/C++" {}' or 'namespace (name) {}' blocks,
+// and can produce error message like the following:
+//
+// IncludeInExtern.h:2:3
+//   #include "Empty.h"
+//   ^
+// error: Include directive within extern "C" {}.
+// IncludeInExtern.h:1:1
+// extern "C" {
+// ^
+// The "extern "C" {}" block is here.
+//
 // See PreprocessorTracker.cpp for additional details.
 //
-// Current problems:
+// Modularize also has an option ("-module-map-path=module.map") that will
+// skip the checks, and instead act as a module.map generation assistant,
+// generating a module map file based on the header list.  An optional
+// "-root-module=(rootName)" argument can specify a root module to be
+// created in the generated module.map file.  Note that you will likely
+// need to edit this file to suit the needs of your headers.
 //
-// Modularize has problems with C++:
+// An example command line for generating a module.map file:
 //
-// 1. Modularize doesn't distinguish class of the same name in
-// different namespaces.  The result is erroneous duplicate definition errors.
+//   modularize -module-map-path=module.map -root-module=myroot headerlist.txt
 //
-// 2. Modularize doesn't distinguish between a regular class and a template
-// class of the same name.
+// Note that if the headers in the header list have partial paths, sub-modules
+// will be created for the subdirectires involved, assuming that the
+// subdirectories contain headers to be grouped into a module, but still with
+// individual modules for the headers in the subdirectory.
 //
-// Other problems:
+// See the ModuleAssistant.cpp file comments for additional details about the
+// implementation of the assistant mode.
 //
-// 3. There seem to be a lot of spurious "not always provided" messages,
-// and many duplicates of these.
+// Future directions:
+//
+// Basically, we want to add new checks for whatever we can check with respect
+// to checking headers for module'ability.
+//
+// Some ideas:
+//
+// 1. Omit duplicate "not always provided" messages
+//
+// 2. Add options to disable any of the checks, in case
+// there is some problem with them, or the messages get too verbose.
+//
+// 3. Try to figure out the preprocessor conditional directives that
+// contribute to problems and tie them to the inconsistent definitions.
 //
 // 4. There are some legitimate uses of preprocessor macros that
 // modularize will flag as errors, such as repeatedly #include'ing
@@ -95,30 +132,7 @@
 // to ignore.  Otherwise you can just exclude the file, after checking
 // for legitimate errors.
 //
-// Future directions:
-//
-// Basically, we want to add new checks for whatever we can check with respect
-// to checking headers for module'ability.
-//
-// Some ideas:
-//
-// 1. Fix the C++ and other problems.
-//
-// 2. Add options to disable any of the checks, in case
-// there is some problem with them, or the messages get too verbose.
-//
-// 3. Try to figure out the preprocessor conditional directives that
-// contribute to problems and tie them to the inconsistent definitions.
-//
-// 4. Check for correct and consistent usage of extern "C" {} and other
-// directives. Warn about #include inside extern "C" {}.
-//
-// 5. To support headers that depend on other headers to be included first
-// add support for a dependency list to the header list input.
-// I.e.: header.h: dependent1.h dependent2.h
-// (Implement using clang's "-include" option"?)
-//
-// 6. What else?
+// 5. What else?
 //
 // General clean-up and refactoring:
 //
@@ -128,18 +142,23 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Modularize.h"
+#include "PreprocessorTracker.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Driver/Options.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
-#include "llvm/ADT/OwningPtr.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/Config/config.h"
+#include "llvm/Option/Arg.h"
+#include "llvm/Option/ArgList.h"
+#include "llvm/Option/OptTable.h"
+#include "llvm/Option/Option.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -149,11 +168,13 @@
 #include <iterator>
 #include <string>
 #include <vector>
-#include "PreprocessorTracker.h"
 
-using namespace clang::tooling;
 using namespace clang;
+using namespace clang::driver;
+using namespace clang::driver::options;
+using namespace clang::tooling;
 using namespace llvm;
+using namespace llvm::opt;
 using namespace Modularize;
 
 // Option to specify a file name for a list of header files to check.
@@ -174,20 +195,42 @@ cl::opt<std::string> HeaderPrefix(
         " If not specified,"
         " the files are considered to be relative to the header list file."));
 
-// Read the header list file and collect the header file names.
-error_code getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
-                              StringRef ListFileName, StringRef HeaderPrefix) {
+// Option for assistant mode, telling modularize to output a module map
+// based on the headers list, and where to put it.
+cl::opt<std::string> ModuleMapPath(
+    "module-map-path", cl::init(""),
+    cl::desc("Turn on module map output and specify output path or file name."
+             " If no path is specified and if prefix option is specified,"
+             " use prefix for file path."));
 
+// Option for assistant mode, telling modularize to output a module map
+// based on the headers list, and where to put it.
+cl::opt<std::string>
+RootModule("root-module", cl::init(""),
+           cl::desc("Specify the name of the root module."));
+
+// Save the program name for error messages.
+const char *Argv0;
+// Save the command line for comments.
+std::string CommandLine;
+
+// Read the header list file and collect the header file names and
+// optional dependencies.
+error_code getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
+                              DependencyMap &Dependencies,
+                              StringRef ListFileName, StringRef HeaderPrefix) {
   // By default, use the path component of the list file name.
   SmallString<256> HeaderDirectory(ListFileName);
   sys::path::remove_filename(HeaderDirectory);
+  SmallString<256> CurrentDirectory;
+  sys::fs::current_path(CurrentDirectory);
 
   // Get the prefix if we have one.
   if (HeaderPrefix.size() != 0)
     HeaderDirectory = HeaderPrefix;
 
   // Read the header list file into a buffer.
-  OwningPtr<MemoryBuffer> listBuffer;
+  std::unique_ptr<MemoryBuffer> listBuffer;
   if (error_code ec = MemoryBuffer::getFile(ListFileName, listBuffer)) {
     return ec;
   }
@@ -200,24 +243,93 @@ error_code getHeaderFileNames(SmallVectorImpl<std::string> &HeaderFileNames,
   for (SmallVectorImpl<StringRef>::iterator I = Strings.begin(),
                                             E = Strings.end();
        I != E; ++I) {
-    StringRef Line = (*I).trim();
+    StringRef Line = I->trim();
     // Ignore comments and empty lines.
     if (Line.empty() || (Line[0] == '#'))
       continue;
+    std::pair<StringRef, StringRef> TargetAndDependents = Line.split(':');
     SmallString<256> HeaderFileName;
     // Prepend header file name prefix if it's not absolute.
-    if (sys::path::is_absolute(Line))
-      HeaderFileName = Line;
+    if (sys::path::is_absolute(TargetAndDependents.first))
+      llvm::sys::path::native(TargetAndDependents.first, HeaderFileName);
     else {
-      HeaderFileName = HeaderDirectory;
-      sys::path::append(HeaderFileName, Line);
+      if (HeaderDirectory.size() != 0)
+        HeaderFileName = HeaderDirectory;
+      else
+        HeaderFileName = CurrentDirectory;
+      sys::path::append(HeaderFileName, TargetAndDependents.first);
+      sys::path::native(HeaderFileName);
     }
-    // Save the resulting header file path.
+    // Handle optional dependencies.
+    DependentsVector Dependents;
+    SmallVector<StringRef, 4> DependentsList;
+    TargetAndDependents.second.split(DependentsList, " ", -1, false);
+    int Count = DependentsList.size();
+    for (int Index = 0; Index < Count; ++Index) {
+      SmallString<256> Dependent;
+      if (sys::path::is_absolute(DependentsList[Index]))
+        Dependent = DependentsList[Index];
+      else {
+        if (HeaderDirectory.size() != 0)
+          Dependent = HeaderDirectory;
+        else
+          Dependent = CurrentDirectory;
+        sys::path::append(Dependent, DependentsList[Index]);
+      }
+      sys::path::native(Dependent);
+      Dependents.push_back(Dependent.str());
+    }
+    // Save the resulting header file path and dependencies.
     HeaderFileNames.push_back(HeaderFileName.str());
+    Dependencies[HeaderFileName.str()] = Dependents;
   }
 
   return error_code::success();
 }
+
+// Helper function for finding the input file in an arguments list.
+std::string findInputFile(const CommandLineArguments &CLArgs) {
+  std::unique_ptr<OptTable> Opts(createDriverOptTable());
+  const unsigned IncludedFlagsBitmask = options::CC1Option;
+  unsigned MissingArgIndex, MissingArgCount;
+  SmallVector<const char *, 256> Argv;
+  for (CommandLineArguments::const_iterator I = CLArgs.begin(),
+                                            E = CLArgs.end();
+       I != E; ++I)
+    Argv.push_back(I->c_str());
+  std::unique_ptr<InputArgList> Args(
+      Opts->ParseArgs(Argv.data(), Argv.data() + Argv.size(), MissingArgIndex,
+                      MissingArgCount, IncludedFlagsBitmask));
+  std::vector<std::string> Inputs = Args->getAllArgValues(OPT_INPUT);
+  return Inputs.back();
+}
+
+// We provide this derivation to add in "-include (file)" arguments for header
+// dependencies.
+class AddDependenciesAdjuster : public ArgumentsAdjuster {
+public:
+  AddDependenciesAdjuster(DependencyMap &Dependencies)
+      : Dependencies(Dependencies) {}
+
+private:
+  // Callback for adjusting commandline arguments.
+  CommandLineArguments Adjust(const CommandLineArguments &Args) {
+    std::string InputFile = findInputFile(Args);
+    DependentsVector &FileDependents = Dependencies[InputFile];
+    int Count = FileDependents.size();
+    if (Count == 0)
+      return Args;
+    CommandLineArguments NewArgs(Args);
+    for (int Index = 0; Index < Count; ++Index) {
+      NewArgs.push_back("-include");
+      std::string File(std::string("\"") + FileDependents[Index] +
+                       std::string("\""));
+      NewArgs.push_back(FileDependents[Index]);
+    }
+    return NewArgs;
+  }
+  DependencyMap &Dependencies;
+};
 
 // FIXME: The Location class seems to be something that we might
 // want to design to be applicable to a wider range of tools, and stick it
@@ -384,8 +496,11 @@ private:
 class CollectEntitiesVisitor
     : public RecursiveASTVisitor<CollectEntitiesVisitor> {
 public:
-  CollectEntitiesVisitor(SourceManager &SM, EntityMap &Entities)
-      : SM(SM), Entities(Entities) {}
+  CollectEntitiesVisitor(SourceManager &SM, EntityMap &Entities,
+                         Preprocessor &PP, PreprocessorTracker &PPTracker,
+                         int &HadErrors)
+      : SM(SM), Entities(Entities), PP(PP), PPTracker(PPTracker),
+        HadErrors(HadErrors) {}
 
   bool TraverseStmt(Stmt *S) { return true; }
   bool TraverseType(QualType T) { return true; }
@@ -409,6 +524,40 @@ public:
   bool TraverseConstructorInitializer(CXXCtorInitializer *Init) { return true; }
   bool TraverseLambdaCapture(LambdaExpr::Capture C) { return true; }
 
+  // Check 'extern "*" {}' block for #include directives.
+  bool VisitLinkageSpecDecl(LinkageSpecDecl *D) {
+    // Bail if not a block.
+    if (!D->hasBraces())
+      return true;
+    SourceRange BlockRange = D->getSourceRange();
+    const char *LinkageLabel;
+    switch (D->getLanguage()) {
+    case LinkageSpecDecl::lang_c:
+      LinkageLabel = "extern \"C\" {}";
+      break;
+    case LinkageSpecDecl::lang_cxx:
+      LinkageLabel = "extern \"C++\" {}";
+      break;
+    }
+    if (!PPTracker.checkForIncludesInBlock(PP, BlockRange, LinkageLabel,
+                                           errs()))
+      HadErrors = 1;
+    return true;
+  }
+
+  // Check 'namespace (name) {}' block for #include directives.
+  bool VisitNamespaceDecl(const NamespaceDecl *D) {
+    SourceRange BlockRange = D->getSourceRange();
+    std::string Label("namespace ");
+    Label += D->getName();
+    Label += " {}";
+    if (!PPTracker.checkForIncludesInBlock(PP, BlockRange, Label.c_str(),
+                                           errs()))
+      HadErrors = 1;
+    return true;
+  }
+
+  // Collect definition entities.
   bool VisitNamedDecl(NamedDecl *ND) {
     // We only care about file-context variables.
     if (!ND->getDeclContext()->isFileContext())
@@ -418,13 +567,22 @@ public:
     if (isa<NamespaceDecl>(ND) || isa<UsingDirectiveDecl>(ND) ||
         isa<NamespaceAliasDecl>(ND) ||
         isa<ClassTemplateSpecializationDecl>(ND) || isa<UsingDecl>(ND) ||
-        isa<UsingShadowDecl>(ND) || isa<FunctionDecl>(ND) ||
-        isa<FunctionTemplateDecl>(ND) ||
+        isa<ClassTemplateDecl>(ND) || isa<TemplateTypeParmDecl>(ND) ||
+        isa<TypeAliasTemplateDecl>(ND) || isa<UsingShadowDecl>(ND) ||
+        isa<FunctionDecl>(ND) || isa<FunctionTemplateDecl>(ND) ||
         (isa<TagDecl>(ND) &&
          !cast<TagDecl>(ND)->isThisDeclarationADefinition()))
       return true;
 
-    std::string Name = ND->getNameAsString();
+    // Skip anonymous declarations.
+    if (!ND->getDeclName())
+      return true;
+
+    // Get the qualified name.
+    std::string Name;
+    llvm::raw_string_ostream OS(Name);
+    ND->printQualifiedName(OS);
+    OS.flush();
     if (Name.empty())
       return true;
 
@@ -439,14 +597,18 @@ public:
 private:
   SourceManager &SM;
   EntityMap &Entities;
+  Preprocessor &PP;
+  PreprocessorTracker &PPTracker;
+  int &HadErrors;
 };
 
 class CollectEntitiesConsumer : public ASTConsumer {
 public:
   CollectEntitiesConsumer(EntityMap &Entities,
                           PreprocessorTracker &preprocessorTracker,
-                          Preprocessor &PP, StringRef InFile)
-      : Entities(Entities), PPTracker(preprocessorTracker), PP(PP) {
+                          Preprocessor &PP, StringRef InFile, int &HadErrors)
+      : Entities(Entities), PPTracker(preprocessorTracker), PP(PP),
+        HadErrors(HadErrors) {
     PPTracker.handlePreprocessorEntry(PP, InFile);
   }
 
@@ -456,7 +618,7 @@ public:
     SourceManager &SM = Ctx.getSourceManager();
 
     // Collect declared entities.
-    CollectEntitiesVisitor(SM, Entities)
+    CollectEntitiesVisitor(SM, Entities, PP, PPTracker, HadErrors)
         .TraverseDecl(Ctx.getTranslationUnitDecl());
 
     // Collect macro definitions.
@@ -478,42 +640,59 @@ private:
   EntityMap &Entities;
   PreprocessorTracker &PPTracker;
   Preprocessor &PP;
+  int &HadErrors;
 };
 
 class CollectEntitiesAction : public SyntaxOnlyAction {
 public:
   CollectEntitiesAction(EntityMap &Entities,
-                        PreprocessorTracker &preprocessorTracker)
-      : Entities(Entities), PPTracker(preprocessorTracker) {}
+                        PreprocessorTracker &preprocessorTracker,
+                        int &HadErrors)
+      : Entities(Entities), PPTracker(preprocessorTracker),
+        HadErrors(HadErrors) {}
 
 protected:
   virtual clang::ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
                                                 StringRef InFile) {
     return new CollectEntitiesConsumer(Entities, PPTracker,
-                                       CI.getPreprocessor(), InFile);
+                                       CI.getPreprocessor(), InFile, HadErrors);
   }
 
 private:
   EntityMap &Entities;
   PreprocessorTracker &PPTracker;
+  int &HadErrors;
 };
 
 class ModularizeFrontendActionFactory : public FrontendActionFactory {
 public:
   ModularizeFrontendActionFactory(EntityMap &Entities,
-                                  PreprocessorTracker &preprocessorTracker)
-      : Entities(Entities), PPTracker(preprocessorTracker) {}
+                                  PreprocessorTracker &preprocessorTracker,
+                                  int &HadErrors)
+      : Entities(Entities), PPTracker(preprocessorTracker),
+        HadErrors(HadErrors) {}
 
   virtual CollectEntitiesAction *create() {
-    return new CollectEntitiesAction(Entities, PPTracker);
+    return new CollectEntitiesAction(Entities, PPTracker, HadErrors);
   }
 
 private:
   EntityMap &Entities;
   PreprocessorTracker &PPTracker;
+  int &HadErrors;
 };
 
 int main(int Argc, const char **Argv) {
+
+  // Save program name for error messages.
+  Argv0 = Argv[0];
+
+  // Save program arguments for use in module.map comment.
+  CommandLine = sys::path::stem(sys::path::filename(Argv0));
+  for (int ArgIndex = 1; ArgIndex < Argc; ArgIndex++) {
+    CommandLine.append(" ");
+    CommandLine.append(Argv[ArgIndex]);
+  }
 
   // This causes options to be parsed.
   cl::ParseCommandLineOptions(Argc, Argv, "modularize.\n");
@@ -524,29 +703,41 @@ int main(int Argc, const char **Argv) {
     return 1;
   }
 
-  // Get header file names.
+  // Get header file names and dependencies.
   SmallVector<std::string, 32> Headers;
-  if (error_code EC = getHeaderFileNames(Headers, ListFileName, HeaderPrefix)) {
+  DependencyMap Dependencies;
+  if (error_code EC = getHeaderFileNames(Headers, Dependencies, ListFileName,
+                                         HeaderPrefix)) {
     errs() << Argv[0] << ": error: Unable to get header list '" << ListFileName
            << "': " << EC.message() << '\n';
     return 1;
   }
 
+  // If we are in assistant mode, output the module map and quit.
+  if (ModuleMapPath.length() != 0) {
+    if (!createModuleMap(ModuleMapPath, Headers, Dependencies, HeaderPrefix,
+                         RootModule))
+      return 1; // Failed.
+    return 0;   // Success - Skip checks in assistant mode.
+  }
+
   // Create the compilation database.
   SmallString<256> PathBuf;
   sys::fs::current_path(PathBuf);
-  OwningPtr<CompilationDatabase> Compilations;
+  std::unique_ptr<CompilationDatabase> Compilations;
   Compilations.reset(
       new FixedCompilationDatabase(Twine(PathBuf), CC1Arguments));
 
   // Create preprocessor tracker, to watch for macro and conditional problems.
-  OwningPtr<PreprocessorTracker> PPTracker(PreprocessorTracker::create());
+  std::unique_ptr<PreprocessorTracker> PPTracker(PreprocessorTracker::create());
 
   // Parse all of the headers, detecting duplicates.
   EntityMap Entities;
   ClangTool Tool(*Compilations, Headers);
-  int HadErrors =
-      Tool.run(new ModularizeFrontendActionFactory(Entities, *PPTracker));
+  Tool.appendArgumentsAdjuster(new AddDependenciesAdjuster(Dependencies));
+  int HadErrors = 0;
+  HadErrors |= Tool.run(
+      new ModularizeFrontendActionFactory(Entities, *PPTracker, HadErrors));
 
   // Create a place to save duplicate entity locations, separate bins per kind.
   typedef SmallVector<Location, 8> LocationArray;
@@ -561,7 +752,7 @@ int main(int Argc, const char **Argv) {
   // Check for the same entity being defined in multiple places.
   for (EntityMap::iterator E = Entities.begin(), EEnd = Entities.end();
        E != EEnd; ++E) {
-    // If only one occurance, exit early.
+    // If only one occurrence, exit early.
     if (E->second.size() == 1)
       continue;
     // Clear entity locations.
@@ -579,7 +770,7 @@ int main(int Argc, const char **Argv) {
     for (EntryBinArray::iterator DI = EntryBins.begin(), DE = EntryBins.end();
          DI != DE; ++DI, ++KindIndex) {
       int ECount = DI->size();
-      // If only 1 occurance, skip;
+      // If only 1 occurrence of this entity, skip it, as we only report duplicates.
       if (ECount <= 1)
         continue;
       LocationArray::iterator FI = DI->begin();
