@@ -37,6 +37,25 @@ TEST(ExplicitConstructorCheckTest, OutOfLineDefinitions) {
                 "class C { C(int i); }; C::C(int i) {}"));
 }
 
+TEST(ExplicitConstructorCheckTest, RemoveExplicit) {
+  EXPECT_EQ("class A { A(const A&); };\n"
+            "class B { /*asdf*/  B(B&&); };\n"
+            "class C { /*asdf*/  C(const C&, int i = 0); };",
+            runCheckOnCode<ExplicitConstructorCheck>(
+                "class A { explicit    A(const A&); };\n"
+                "class B { explicit   /*asdf*/  B(B&&); };\n"
+                "class C { explicit/*asdf*/  C(const C&, int i = 0); };"));
+}
+
+TEST(ExplicitConstructorCheckTest, RemoveExplicitWithMacros) {
+  EXPECT_EQ(
+      "#define A(T) class T##Bar { explicit T##Bar(const T##Bar &b) {} };\n"
+      "A(Foo);",
+      runCheckOnCode<ExplicitConstructorCheck>(
+          "#define A(T) class T##Bar { explicit T##Bar(const T##Bar &b) {} };\n"
+          "A(Foo);"));
+}
+
 } // namespace test
 } // namespace tidy
 } // namespace clang

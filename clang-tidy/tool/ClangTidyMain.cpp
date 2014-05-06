@@ -34,11 +34,17 @@ static cl::opt<std::string> Checks(
 static cl::opt<std::string> DisableChecks(
     "disable-checks",
     cl::desc("Regular expression matching the names of the checks to disable."),
-    cl::init("(clang-analyzer-alpha.*" // To many false positives.
+    cl::init("(clang-analyzer-alpha.*" // Too many false positives.
              "|llvm-include-order"     // Not implemented yet.
              "|llvm-namespace-comment" // Not complete.
              "|google-.*)"),           // Doesn't apply to LLVM.
     cl::cat(ClangTidyCategory));
+static cl::opt<std::string> HeaderFilter(
+    "header-filter",
+    cl::desc("Regular expression matching the names of the headers to output\n"
+             "diagnostics from. Diagnostics from the main file of each\n"
+             "translation unit are always displayed."),
+    cl::init(""), cl::cat(ClangTidyCategory));
 static cl::opt<bool> Fix("fix", cl::desc("Fix detected errors if possible."),
                          cl::init(false), cl::cat(ClangTidyCategory));
 
@@ -46,21 +52,33 @@ static cl::opt<bool> ListChecks("list-checks",
                                 cl::desc("List all enabled checks and exit."),
                                 cl::init(false), cl::cat(ClangTidyCategory));
 
+static cl::opt<bool> AnalyzeTemporaryDtors(
+    "analyze-temporary-dtors",
+    cl::desc("Enable temporary destructor-aware analysis in clang-analyzer- "
+             "checks."),
+    cl::init(false),
+    cl::cat(ClangTidyCategory));
+
 int main(int argc, const char **argv) {
   CommonOptionsParser OptionsParser(argc, argv, ClangTidyCategory);
+
+  clang::tidy::ClangTidyOptions Options;
+  Options.EnableChecksRegex = Checks;
+  Options.DisableChecksRegex = DisableChecks;
+  Options.HeaderFilterRegex = HeaderFilter;
+  Options.AnalyzeTemporaryDtors = AnalyzeTemporaryDtors;
 
   // FIXME: Allow using --list-checks without positional arguments.
   if (ListChecks) {
     llvm::outs() << "Enabled checks:";
-    for (auto CheckName : clang::tidy::getCheckNames(Checks, DisableChecks))
+    for (auto CheckName : clang::tidy::getCheckNames(Options))
       llvm::outs() << "\n    " << CheckName;
     llvm::outs() << "\n\n";
     return 0;
   }
 
   SmallVector<clang::tidy::ClangTidyError, 16> Errors;
-  clang::tidy::runClangTidy(Checks, DisableChecks,
-                            OptionsParser.getCompilations(),
+  clang::tidy::runClangTidy(Options, OptionsParser.getCompilations(),
                             OptionsParser.getSourcePathList(), &Errors);
   clang::tidy::handleErrors(Errors, Fix);
 

@@ -54,15 +54,12 @@ struct CollectBoundNodes : MatchFinder::MatchCallback {
   }
 };
 
-}
+}  // namespace
 
 bool MatchQuery::run(llvm::raw_ostream &OS, QuerySession &QS) const {
   unsigned MatchCount = 0;
 
-  for (llvm::ArrayRef<ASTUnit *>::iterator I = QS.ASTs.begin(),
-                                           E = QS.ASTs.end();
-       I != E; ++I) {
-    ASTUnit *AST = *I;
+  for (auto &AST : QS.ASTs) {
     MatchFinder Finder;
     std::vector<BoundNodes> Matches;
     DynTypedMatcher MaybeBoundMatcher = Matcher;
@@ -121,6 +118,15 @@ bool MatchQuery::run(llvm::raw_ostream &OS, QuerySession &QS) const {
   }
 
   OS << MatchCount << (MatchCount == 1 ? " match.\n" : " matches.\n");
+  return true;
+}
+
+bool LetQuery::run(llvm::raw_ostream &OS, QuerySession &QS) const {
+  if (Value) {
+    QS.NamedValues[Name] = Value;
+  } else {
+    QS.NamedValues.erase(Name);
+  }
   return true;
 }
 

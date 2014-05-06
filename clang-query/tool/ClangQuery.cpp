@@ -85,7 +85,7 @@ int main(int argc, const char **argv) {
   }
 
   ClangTool Tool(*Compilations, SourcePaths);
-  std::vector<ASTUnit *> ASTs;
+  std::vector<std::unique_ptr<ASTUnit>> ASTs;
   if (Tool.buildASTs(ASTs) != 0)
     return 1;
 
@@ -95,7 +95,7 @@ int main(int argc, const char **argv) {
     for (cl::list<std::string>::iterator I = Commands.begin(),
                                          E = Commands.end();
          I != E; ++I) {
-      QueryRef Q = QueryParser::parse(I->c_str());
+      QueryRef Q = QueryParser::parse(I->c_str(), QS);
       if (!Q->run(llvm::outs(), QS))
         return 1;
     }
@@ -112,21 +112,21 @@ int main(int argc, const char **argv) {
         std::string Line;
         std::getline(Input, Line);
 
-        QueryRef Q = QueryParser::parse(Line.c_str());
+        QueryRef Q = QueryParser::parse(Line.c_str(), QS);
         if (!Q->run(llvm::outs(), QS))
           return 1;
       }
     }
   } else {
     LineEditor LE("clang-query");
-    LE.setListCompleter(QueryParser::complete);
+    LE.setListCompleter([&QS](StringRef Line, size_t Pos) {
+      return QueryParser::complete(Line, Pos, QS);
+    });
     while (llvm::Optional<std::string> Line = LE.readLine()) {
-      QueryRef Q = QueryParser::parse(*Line);
+      QueryRef Q = QueryParser::parse(*Line, QS);
       Q->run(llvm::outs(), QS);
     }
   }
-
-  llvm::DeleteContainerPointers(ASTs);
 
   return 0;
 }

@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CLANG_TIDY_DIAGNOSTIC_CONSUMER_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CLANG_TIDY_DIAGNOSTIC_CONSUMER_H
 
+#include "ClangTidyOptions.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Tooling/Refactoring.h"
@@ -59,7 +60,7 @@ struct ClangTidyError {
 /// \brief Filters checks by name.
 class ChecksFilter {
 public:
-  ChecksFilter(StringRef EnableChecksRegex, StringRef DisableChecksRegex);
+  ChecksFilter(const ClangTidyOptions& Options);
   bool isCheckEnabled(StringRef Name);
 
 private:
@@ -79,7 +80,7 @@ private:
 class ClangTidyContext {
 public:
   ClangTidyContext(SmallVectorImpl<ClangTidyError> *Errors,
-                   StringRef EnableChecksRegex, StringRef DisableChecksRegex);
+                   const ClangTidyOptions &Options);
 
   /// \brief Report any errors detected using this method.
   ///
@@ -106,6 +107,7 @@ public:
   StringRef getCheckName(unsigned DiagnosticID) const;
 
   ChecksFilter &getChecksFilter() { return Filter; }
+  const ClangTidyOptions &getOptions() const { return Options; }
 
 private:
   friend class ClangTidyDiagnosticConsumer; // Calls storeError().
@@ -115,6 +117,7 @@ private:
 
   SmallVectorImpl<ClangTidyError> *Errors;
   DiagnosticsEngine *DiagEngine;
+  ClangTidyOptions Options;
   ChecksFilter Filter;
 
   llvm::DenseMap<unsigned, std::string> CheckNamesByDiagnosticID;
@@ -140,8 +143,10 @@ public:
 
 private:
   void finalizeLastError();
+  bool relatesToUserCode(SourceLocation Location);
 
   ClangTidyContext &Context;
+  llvm::Regex HeaderFilter;
   std::unique_ptr<DiagnosticsEngine> Diags;
   SmallVector<ClangTidyError, 8> Errors;
   bool LastErrorRelatesToUserCode;
