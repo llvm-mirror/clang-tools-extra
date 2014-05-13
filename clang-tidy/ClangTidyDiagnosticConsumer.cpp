@@ -41,8 +41,6 @@ protected:
                              ArrayRef<CharSourceRange> Ranges,
                              const SourceManager *SM,
                              DiagOrStoredDiag Info) override {
-    if (Level == DiagnosticsEngine::Ignored)
-      return;
     ClangTidyMessage TidyMessage = Loc.isValid()
                                        ? ClangTidyMessage(Message, *SM, Loc)
                                        : ClangTidyMessage(Message);
@@ -111,8 +109,7 @@ ClangTidyMessage::ClangTidyMessage(StringRef Message,
   FileOffset = Sources.getFileOffset(Loc);
 }
 
-ClangTidyError::ClangTidyError(StringRef CheckName)
-    : CheckName(CheckName) {}
+ClangTidyError::ClangTidyError(StringRef CheckName) : CheckName(CheckName) {}
 
 ChecksFilter::ChecksFilter(const ClangTidyOptions &Options)
     : EnableChecks(Options.EnableChecksRegex),
@@ -122,9 +119,8 @@ bool ChecksFilter::isCheckEnabled(StringRef Name) {
   return EnableChecks.match(Name) && !DisableChecks.match(Name);
 }
 
-ClangTidyContext::ClangTidyContext(SmallVectorImpl<ClangTidyError> *Errors,
-                                   const ClangTidyOptions &Options)
-    : Errors(Errors), DiagEngine(nullptr), Options(Options), Filter(Options) {}
+ClangTidyContext::ClangTidyContext(const ClangTidyOptions &Options)
+    : DiagEngine(nullptr), Options(Options), Filter(Options) {}
 
 DiagnosticBuilder ClangTidyContext::diag(
     StringRef CheckName, SourceLocation Loc, StringRef Description,
@@ -139,8 +135,10 @@ DiagnosticBuilder ClangTidyContext::diag(
       ++P;
     StringRef RestOfLine(CharacterData, P - CharacterData + 1);
     // FIXME: Handle /\bNOLINT\b(\([^)]*\))?/ as cpplint.py does.
-    if (RestOfLine.find("NOLINT") != StringRef::npos)
+    if (RestOfLine.find("NOLINT") != StringRef::npos) {
       Level = DiagnosticIDs::Ignored;
+      ++Stats.ErrorsIgnoredNOLINT;
+    }
   }
   unsigned ID = DiagEngine->getDiagnosticIDs()->getCustomDiagID(
       Level, (Description + " [" + CheckName + "]").str());
@@ -159,7 +157,7 @@ void ClangTidyContext::setSourceManager(SourceManager *SourceMgr) {
 
 /// \brief Store a \c ClangTidyError.
 void ClangTidyContext::storeError(const ClangTidyError &Error) {
-  Errors->push_back(Error);
+  Errors.push_back(Error);
 }
 
 StringRef ClangTidyContext::getCheckName(unsigned DiagnosticID) const {
@@ -181,8 +179,18 @@ ClangTidyDiagnosticConsumer::ClangTidyDiagnosticConsumer(ClangTidyContext &Ctx)
 }
 
 void ClangTidyDiagnosticConsumer::finalizeLastError() {
-  if (!LastErrorRelatesToUserCode && !Errors.empty())
-    Errors.pop_back();
+  if (!Errors.empty()) {
+    ClangTidyError &Error = Errors.back();
+    if (!Context.getChecksFilter().isCheckEnabled(Error.CheckName)) {
+      ++Context.Stats.ErrorsIgnoredCheckFilter;
+      Errors.pop_back();
+    } else if (!LastErrorRelatesToUserCode) {
+      ++Context.Stats.ErrorsIgnoredNonUserCode;
+      Errors.pop_back();
+    } else {
+      ++Context.Stats.ErrorsDisplayed;
+    }
+  }
   LastErrorRelatesToUserCode = false;
 }
 
@@ -192,6 +200,7 @@ void ClangTidyDiagnosticConsumer::HandleDiagnostic(
     assert(!Errors.empty() &&
            "A diagnostic note can only be appended to a message.");
   } else {
+    // FIXME: Pass all errors here regardless of filters and non-user code.
     finalizeLastError();
     StringRef WarningOption =
         Context.DiagEngine->getDiagnosticIDs()->getWarningOptionForDiag(
@@ -239,7 +248,10 @@ bool ClangTidyDiagnosticConsumer::relatesToUserCode(SourceLocation Location) {
   if (FID == Sources.getMainFileID())
     return true;
 
-  return HeaderFilter.match(Sources.getFileEntryForID(FID)->getName());
+  const FileEntry *File = Sources.getFileEntryForID(FID);
+  // -DMACRO definitions on the command line have locations in a virtual buffer
+  // that doesn't have a FileEntry. Don't skip these as well.
+  return !File || HeaderFilter.match(File->getName());
 }
 
 struct LessClangTidyError {
@@ -256,10 +268,9 @@ struct LessClangTidyError {
 void ClangTidyDiagnosticConsumer::finish() {
   finalizeLastError();
   std::set<const ClangTidyError*, LessClangTidyError> UniqueErrors;
-  for (const ClangTidyError &Error : Errors) {
-    if (Context.getChecksFilter().isCheckEnabled(Error.CheckName))
-      UniqueErrors.insert(&Error);
-  }
+  for (const ClangTidyError &Error : Errors)
+    UniqueErrors.insert(&Error);
+
   for (const ClangTidyError *Error : UniqueErrors)
     Context.storeError(*Error);
   Errors.clear();

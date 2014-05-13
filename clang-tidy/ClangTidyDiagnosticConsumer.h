@@ -68,6 +68,17 @@ private:
   llvm::Regex DisableChecks;
 };
 
+struct ClangTidyStats {
+  ClangTidyStats()
+      : ErrorsDisplayed(0), ErrorsIgnoredCheckFilter(0), ErrorsIgnoredNOLINT(0),
+        ErrorsIgnoredNonUserCode(0) {}
+
+  unsigned ErrorsDisplayed;
+  unsigned ErrorsIgnoredCheckFilter;
+  unsigned ErrorsIgnoredNOLINT;
+  unsigned ErrorsIgnoredNonUserCode;
+};
+
 /// \brief Every \c ClangTidyCheck reports errors through a \c DiagnosticEngine
 /// provided by this context.
 ///
@@ -79,8 +90,7 @@ private:
 /// \endcode
 class ClangTidyContext {
 public:
-  ClangTidyContext(SmallVectorImpl<ClangTidyError> *Errors,
-                   const ClangTidyOptions &Options);
+  ClangTidyContext(const ClangTidyOptions &Options);
 
   /// \brief Report any errors detected using this method.
   ///
@@ -108,6 +118,9 @@ public:
 
   ChecksFilter &getChecksFilter() { return Filter; }
   const ClangTidyOptions &getOptions() const { return Options; }
+  const ClangTidyStats &getStats() const { return Stats; }
+  const std::vector<ClangTidyError> &getErrors() const { return Errors; }
+  void clearErrors() { Errors.clear(); }
 
 private:
   friend class ClangTidyDiagnosticConsumer; // Calls storeError().
@@ -115,10 +128,11 @@ private:
   /// \brief Store a \c ClangTidyError.
   void storeError(const ClangTidyError &Error);
 
-  SmallVectorImpl<ClangTidyError> *Errors;
+  std::vector<ClangTidyError> Errors;
   DiagnosticsEngine *DiagEngine;
   ClangTidyOptions Options;
   ChecksFilter Filter;
+  ClangTidyStats Stats;
 
   llvm::DenseMap<unsigned, std::string> CheckNamesByDiagnosticID;
 };

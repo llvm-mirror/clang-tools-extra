@@ -16,6 +16,7 @@
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Tooling/Refactoring.h"
+#include <vector>
 
 namespace clang {
 
@@ -121,17 +122,17 @@ private:
 std::vector<std::string> getCheckNames(const ClangTidyOptions &Options);
 
 /// \brief Run a set of clang-tidy checks on a set of files.
-void runClangTidy(const ClangTidyOptions &Options,
-                  const tooling::CompilationDatabase &Compilations,
-                  ArrayRef<std::string> Ranges,
-                  SmallVectorImpl<ClangTidyError> *Errors);
+ClangTidyStats runClangTidy(const ClangTidyOptions &Options,
+                            const tooling::CompilationDatabase &Compilations,
+                            ArrayRef<std::string> Ranges,
+                            std::vector<ClangTidyError> *Errors);
 
 // FIXME: This interface will need to be significantly extended to be useful.
 // FIXME: Implement confidence levels for displaying/fixing errors.
 //
 /// \brief Displays the found \p Errors to the users. If \p Fix is true, \p
 /// Errors containing fixes are automatically applied.
-void handleErrors(SmallVectorImpl<ClangTidyError> &Errors, bool Fix);
+void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix);
 
 } // end namespace tidy
 } // end namespace clang
