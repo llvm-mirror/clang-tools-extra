@@ -78,9 +78,19 @@ void Positive() {
   // CHECK: nullptr != sp->get();
 }
 
-// CHECK-NOT: warning
+// CHECK-NOT: warning:
 
 void Negative() {
+  struct NegPtr {
+    int* get();
+    int* operator->() {
+      return &*this->get();
+    }
+    int& operator*() {
+      return *get();
+    }
+  };
+
   std::unique_ptr<Bar>* u;
   u->get()->Do();
 
