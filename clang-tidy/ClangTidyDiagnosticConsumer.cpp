@@ -17,17 +17,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangTidyDiagnosticConsumer.h"
-
 #include "ClangTidyOptions.h"
+#include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Frontend/DiagnosticRenderer.h"
 #include "llvm/ADT/SmallString.h"
-
 #include <set>
 #include <tuple>
+using namespace clang;
+using namespace tidy;
 
-namespace clang {
-namespace tidy {
-
+namespace {
 class ClangTidyDiagnosticRenderer : public DiagnosticRenderer {
 public:
   ClangTidyDiagnosticRenderer(const LangOptions &LangOpts,
@@ -97,6 +96,7 @@ protected:
 private:
   ClangTidyError &Error;
 };
+} // end anonymous namespace
 
 ClangTidyMessage::ClangTidyMessage(StringRef Message) : Message(Message) {}
 
@@ -111,16 +111,49 @@ ClangTidyMessage::ClangTidyMessage(StringRef Message,
 
 ClangTidyError::ClangTidyError(StringRef CheckName) : CheckName(CheckName) {}
 
-ChecksFilter::ChecksFilter(const ClangTidyOptions &Options)
-    : EnableChecks(Options.EnableChecksRegex),
-      DisableChecks(Options.DisableChecksRegex) {}
+// Returns true if GlobList starts with the negative indicator ('-'), removes it
+// from the GlobList.
+static bool ConsumeNegativeIndicator(StringRef &GlobList) {
+  if (GlobList.startswith("-")) {
+    GlobList = GlobList.substr(1);
+    return true;
+  }
+  return false;
+}
+// Converts first glob from the comma-separated list of globs to Regex and
+// removes it and the trailing comma from the GlobList.
+static llvm::Regex ConsumeGlob(StringRef &GlobList) {
+  StringRef Glob = GlobList.substr(0, GlobList.find(','));
+  GlobList = GlobList.substr(Glob.size() + 1);
+  llvm::SmallString<128> RegexText("^");
+  StringRef MetaChars("()^$|*+?.[]\\{}");
+  for (char C : Glob) {
+    if (C == '*')
+      RegexText.push_back('.');
+    else if (MetaChars.find(C) != StringRef::npos)
+      RegexText.push_back('\\');
+    RegexText.push_back(C);
+  }
+  RegexText.push_back('$');
+  return llvm::Regex(RegexText);
+}
 
-bool ChecksFilter::isCheckEnabled(StringRef Name) {
-  return EnableChecks.match(Name) && !DisableChecks.match(Name);
+ChecksFilter::ChecksFilter(StringRef GlobList)
+    : Positive(!ConsumeNegativeIndicator(GlobList)),
+      Regex(ConsumeGlob(GlobList)),
+      NextFilter(GlobList.empty() ? nullptr : new ChecksFilter(GlobList)) {}
+
+bool ChecksFilter::isCheckEnabled(StringRef Name, bool Enabled) {
+  if (Regex.match(Name))
+    Enabled = Positive;
+
+  if (NextFilter)
+    Enabled = NextFilter->isCheckEnabled(Name, Enabled);
+  return Enabled;
 }
 
 ClangTidyContext::ClangTidyContext(const ClangTidyOptions &Options)
-    : DiagEngine(nullptr), Options(Options), Filter(Options) {}
+    : DiagEngine(nullptr), Options(Options), Filter(Options.Checks) {}
 
 DiagnosticBuilder ClangTidyContext::diag(
     StringRef CheckName, SourceLocation Loc, StringRef Description,
@@ -254,6 +287,7 @@ bool ClangTidyDiagnosticConsumer::relatesToUserCode(SourceLocation Location) {
   return !File || HeaderFilter.match(File->getName());
 }
 
+namespace {
 struct LessClangTidyError {
   bool operator()(const ClangTidyError *LHS, const ClangTidyError *RHS) const {
     const ClangTidyMessage &M1 = LHS->Message;
@@ -263,6 +297,7 @@ struct LessClangTidyError {
            std::tie(M2.FilePath, M2.FileOffset, M2.Message);
   }
 };
+} // end anonymous namespace
 
 // Flushes the internal diagnostics buffer to the ClangTidyContext.
 void ClangTidyDiagnosticConsumer::finish() {
@@ -275,6 +310,3 @@ void ClangTidyDiagnosticConsumer::finish() {
     Context.storeError(*Error);
   Errors.clear();
 }
-
-} // namespace tidy
-} // namespace clang
