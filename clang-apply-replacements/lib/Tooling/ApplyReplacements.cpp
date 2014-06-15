@@ -36,7 +36,7 @@ static void eatDiagnostics(const SMDiagnostic &, void *) {}
 namespace clang {
 namespace replace {
 
-llvm::error_code
+std::error_code
 collectReplacementsFromDirectory(const llvm::StringRef Directory,
                                  TUReplacements &TUs,
                                  TUReplacementFiles & TURFiles,
@@ -44,7 +44,7 @@ collectReplacementsFromDirectory(const llvm::StringRef Directory,
   using namespace llvm::sys::fs;
   using namespace llvm::sys::path;
 
-  error_code ErrorCode;
+  std::error_code ErrorCode;
 
   for (recursive_directory_iterator I(Directory, ErrorCode), E;
        I != E && !ErrorCode; I.increment(ErrorCode)) {
@@ -60,7 +60,7 @@ collectReplacementsFromDirectory(const llvm::StringRef Directory,
     TURFiles.push_back(I->path());
 
     std::unique_ptr<MemoryBuffer> Out;
-    error_code BufferError = MemoryBuffer::getFile(I->path(), Out);
+    std::error_code BufferError = MemoryBuffer::getFile(I->path(), Out);
     if (BufferError) {
       errs() << "Error reading " << I->path() << ": " << BufferError.message()
              << "\n";
@@ -263,7 +263,7 @@ bool deleteReplacementFiles(const TUReplacementFiles &Files,
   bool Success = true;
   for (TUReplacementFiles::const_iterator I = Files.begin(), E = Files.end();
        I != E; ++I) {
-    error_code Error = llvm::sys::fs::remove(*I);
+    std::error_code Error = llvm::sys::fs::remove(*I);
     if (Error) {
       Success = false;
       // FIXME: Use Diagnostics for outputting errors.

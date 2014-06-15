@@ -11,8 +11,8 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_CLANG_TIDY_OPTIONS_H
 
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/system_error.h"
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -34,8 +34,8 @@ struct FileFilter {
 /// \brief Global options. These options are neither stored nor read from
 /// configuration files.
 struct ClangTidyGlobalOptions {
-  /// \brief Output warnings from certain line ranges of certain files only. If
-  /// this list is emtpy, it won't be applied.
+  /// \brief Output warnings from certain line ranges of certain files only.
+  /// If empty, no warnings will be filtered.
   std::vector<FileFilter> LineFilter;
 };
 
@@ -89,12 +89,12 @@ private:
 };
 
 /// \brief Parses LineFilter from JSON and stores it to the \p Options.
-llvm::error_code parseLineFilter(const std::string &LineFilter,
-                                 clang::tidy::ClangTidyGlobalOptions &Options);
+std::error_code parseLineFilter(const std::string &LineFilter,
+                                clang::tidy::ClangTidyGlobalOptions &Options);
 
 /// \brief Parses configuration from JSON and stores it to the \p Options.
-llvm::error_code parseConfiguration(const std::string &Config,
-                                    clang::tidy::ClangTidyOptions &Options);
+std::error_code parseConfiguration(const std::string &Config,
+                                   clang::tidy::ClangTidyOptions &Options);
 
 } // end namespace tidy
 } // end namespace clang
