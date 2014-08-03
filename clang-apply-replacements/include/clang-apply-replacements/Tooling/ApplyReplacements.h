@@ -19,8 +19,8 @@
 #include "clang/Tooling/Refactoring.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/system_error.h"
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace clang {
@@ -65,7 +65,7 @@ FileToReplacementsMap;
 ///
 /// \returns An error_code indicating success or failure in navigating the
 /// directory structure.
-llvm::error_code
+std::error_code
 collectReplacementsFromDirectory(const llvm::StringRef Directory,
                                  TUReplacements &TUs,
                                  TUReplacementFiles &TURFiles,

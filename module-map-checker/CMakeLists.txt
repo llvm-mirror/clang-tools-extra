@@ -7,7 +7,9 @@ add_clang_executable(module-map-checker
   )
 
 target_link_libraries(module-map-checker
-  clangTooling
+  clangAST
   clangBasic
-  clangRewriteFrontend
+  clangFrontend
+  clangLex
+  clangTooling
   )

@@ -1,4 +1,4 @@
-//===--- GoogleTidyModule.h - clang-tidy ------------------------*- C++ -*-===//
+//===--- TwineLocalCheck.h - clang-tidy -------------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,20 +7,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_GOOGLE_TIDY_MODULE_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_GOOGLE_TIDY_MODULE_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_LLVM_TWINE_LOCAL_CHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_LLVM_TWINE_LOCAL_CHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
 
-/// \brief Checks that all single-argument constructors are explicit.
-///
-/// see:
-/// http://google-styleguide.googlecode.com/svn/trunk/cppguide.xml#Explicit_Constructors
-class ExplicitConstructorCheck : public ClangTidyCheck {
+/// \brief Looks for local Twine variables which are prone to use after frees
+/// and should be generally avoided.
+class TwineLocalCheck : public ClangTidyCheck {
 public:
+  TwineLocalCheck();
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
@@ -28,4 +27,4 @@ public:
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_GOOGLE_TIDY_MODULE_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_LLVM_TWINE_LOCAL_CHECK_H

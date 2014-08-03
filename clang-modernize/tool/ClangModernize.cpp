@@ -217,9 +217,9 @@ static CompilerVersions handleSupportedCompilers(const char *ProgName,
     Version *V = llvm::StringSwitch<Version *>(Compiler)
         .Case("clang", &RequiredVersions.Clang)
         .Case("gcc", &RequiredVersions.Gcc).Case("icc", &RequiredVersions.Icc)
-        .Case("msvc", &RequiredVersions.Msvc).Default(NULL);
+        .Case("msvc", &RequiredVersions.Msvc).Default(nullptr);
 
-    if (V == NULL) {
+    if (V == nullptr) {
       llvm::errs() << ProgName << ": " << Compiler
                    << ": unsupported platform\n";
       Error = true;
@@ -255,9 +255,10 @@ CompilationDatabase *autoDetectCompilations(std::string &ErrorMessage) {
                                                         ErrorMessage);
   // Try to auto-detect a compilation database from the first source.
   if (!SourcePaths.empty()) {
-    if (CompilationDatabase *Compilations =
-            CompilationDatabase::autoDetectFromSource(SourcePaths[0],
-                                                      ErrorMessage)) {
+    std::unique_ptr<CompilationDatabase> Compilations(
+        CompilationDatabase::autoDetectFromSource(SourcePaths[0],
+                                                  ErrorMessage));
+    if (Compilations) {
       // FIXME: just pass SourcePaths[0] once getCompileCommands supports
       // non-absolute paths.
       SmallString<64> Path(SourcePaths[0]);
@@ -267,7 +268,7 @@ CompilationDatabase *autoDetectCompilations(std::string &ErrorMessage) {
       // Ignore a detected compilation database that doesn't contain source0
       // since it is probably an unrelated compilation database.
       if (!Commands.empty())
-        return Compilations;
+        return Compilations.release();
     }
     // Reset ErrorMessage since a fix compilation database will be created if
     // it fails to detect one from source.
@@ -279,7 +280,7 @@ CompilationDatabase *autoDetectCompilations(std::string &ErrorMessage) {
   }
 
   ErrorMessage = "Could not determine sources to transform";
-  return 0;
+  return nullptr;
 }
 
 // Predicate definition for determining whether a file is not included.
@@ -395,7 +396,7 @@ int main(int argc, const char **argv) {
       new DiagnosticOptions());
   DiagnosticsEngine Diagnostics(
       llvm::IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs()),
-      DiagOpts.getPtr());
+      DiagOpts.get());
 
   // FIXME: Make this DiagnosticsEngine available to all Transforms probably via
   // GlobalOptions.

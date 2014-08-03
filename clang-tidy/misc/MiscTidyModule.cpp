@@ -11,7 +11,11 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "ArgumentCommentCheck.h"
+#include "BoolPointerImplicitConversion.h"
 #include "RedundantSmartptrGet.h"
+#include "SwappedArgumentsCheck.h"
+#include "UndelegatedConstructor.h"
+#include "UnusedRAII.h"
 #include "UseOverride.h"
 
 namespace clang {
@@ -24,8 +28,20 @@ public:
         "misc-argument-comment",
         new ClangTidyCheckFactory<ArgumentCommentCheck>());
     CheckFactories.addCheckFactory(
+        "misc-bool-pointer-implicit-conversion",
+        new ClangTidyCheckFactory<BoolPointerImplicitConversion>());
+    CheckFactories.addCheckFactory(
         "misc-redundant-smartptr-get",
         new ClangTidyCheckFactory<RedundantSmartptrGet>());
+    CheckFactories.addCheckFactory(
+        "misc-swapped-arguments",
+        new ClangTidyCheckFactory<SwappedArgumentsCheck>());
+    CheckFactories.addCheckFactory(
+        "misc-undelegated-constructor",
+        new ClangTidyCheckFactory<UndelegatedConstructorCheck>());
+    CheckFactories.addCheckFactory(
+        "misc-unused-raii",
+        new ClangTidyCheckFactory<UnusedRAIICheck>());
     CheckFactories.addCheckFactory(
         "misc-use-override",
         new ClangTidyCheckFactory<UseOverride>());

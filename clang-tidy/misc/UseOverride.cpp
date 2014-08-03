@@ -61,18 +61,25 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
       Method->isOutOfLine())
     return;
 
-  if (Method->getAttr<clang::OverrideAttr>() != nullptr &&
-      !Method->isVirtualAsWritten())
+  bool HasVirtual = Method->isVirtualAsWritten();
+  bool HasOverride = Method->getAttr<OverrideAttr>();
+  bool HasFinal = Method->getAttr<FinalAttr>();
+
+  bool OnlyVirtualSpecified = HasVirtual && !HasOverride && !HasFinal;
+  unsigned KeywordCount = HasVirtual + HasOverride + HasFinal;
+
+  if (!OnlyVirtualSpecified && KeywordCount == 1)
     return; // Nothing to do.
 
-  DiagnosticBuilder Diag =
-      diag(Method->getLocation(),
-           "Prefer using 'override' or 'final' instead of 'virtual'");
+  DiagnosticBuilder Diag = diag(
+      Method->getLocation(),
+      OnlyVirtualSpecified
+          ? "Prefer using 'override' or (rarely) 'final' instead of 'virtual'"
+          : "Annotate this function with 'override' or (rarely) 'final'");
 
-  CharSourceRange FileRange =
-      Lexer::makeFileCharRange(CharSourceRange::getTokenRange(
-                                   Method->getLocStart(), Method->getLocEnd()),
-                               Sources, Result.Context->getLangOpts());
+  CharSourceRange FileRange = Lexer::makeFileCharRange(
+      CharSourceRange::getTokenRange(Method->getSourceRange()), Sources,
+      Result.Context->getLangOpts());
 
   if (!FileRange.isValid())
     return;
@@ -84,8 +91,7 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
                                               Result.Context->getLangOpts());
 
   // Add 'override' on inline declarations that don't already have it.
-  if (Method->getAttr<clang::OverrideAttr>() == nullptr &&
-      Method->getAttr<clang::FinalAttr>() == nullptr) {
+  if (!HasFinal && !HasOverride) {
     SourceLocation InsertLoc;
     StringRef ReplacementText = "override ";
 
@@ -99,9 +105,8 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
     }
 
     if (InsertLoc.isInvalid() && Method->doesThisDeclarationHaveABody() &&
-        Method->getBody()) {
+        Method->getBody() && !Method->isDefaulted())
       InsertLoc = Method->getBody()->getLocStart();
-    }
 
     if (!InsertLoc.isValid()) {
       if (Tokens.size() > 2 && GetText(Tokens.back(), Sources) == "0" &&
@@ -117,6 +122,12 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
       ReplacementText = " override";
     }
     Diag << FixItHint::CreateInsertion(InsertLoc, ReplacementText);
+  }
+
+  if (HasFinal && HasOverride) {
+    SourceLocation OverrideLoc = Method->getAttr<OverrideAttr>()->getLocation();
+    Diag << FixItHint::CreateRemoval(
+        CharSourceRange::getTokenRange(OverrideLoc, OverrideLoc));
   }
 
   if (Method->isVirtualAsWritten()) {

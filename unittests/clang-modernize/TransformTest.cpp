@@ -124,7 +124,7 @@ TEST(Transform, Timings) {
   // file anyway. What is important is that we have an absolute path with which
   // to use with mapVirtualFile().
   SmallString<128> CurrentDir;
-  llvm::error_code EC = llvm::sys::fs::current_path(CurrentDir);
+  std::error_code EC = llvm::sys::fs::current_path(CurrentDir);
   assert(!EC);
   (void)EC;
 
@@ -187,7 +187,7 @@ public:
   virtual void
   run(const clang::ast_matchers::MatchFinder::MatchResult &Result) {
     const VarDecl *Decl = Result.Nodes.getNodeAs<VarDecl>("decl");
-    ASSERT_TRUE(Decl != 0);
+    ASSERT_TRUE(Decl != nullptr);
 
     const SourceManager &SM = *Result.SourceManager;
 
@@ -237,7 +237,7 @@ TEST(Transform, isFileModifiable) {
   // file anyway. What is important is that we have an absolute path with which
   // to use with mapVirtualFile().
   SmallString<128> CurrentDir;
-  llvm::error_code EC = llvm::sys::fs::current_path(CurrentDir);
+  std::error_code EC = llvm::sys::fs::current_path(CurrentDir);
   assert(!EC);
   (void)EC;
 

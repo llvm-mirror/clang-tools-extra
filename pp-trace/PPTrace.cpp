@@ -57,7 +57,6 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
-#include "llvm/Config/config.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/OptTable.h"
@@ -200,8 +199,8 @@ int main(int Argc, const char **Argv) {
 
   // Create the tool and run the compilation.
   ClangTool Tool(*Compilations, SourcePaths);
-  int HadErrors =
-      Tool.run(new PPTraceFrontendActionFactory(Ignore, CallbackCalls));
+  PPTraceFrontendActionFactory Factory(Ignore, CallbackCalls);
+  int HadErrors = Tool.run(&Factory);
 
   // If we had errors, exit early.
   if (HadErrors)
