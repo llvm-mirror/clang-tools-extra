@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
   IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts(new DiagnosticOptions());
   DiagnosticsEngine Diagnostics(
       IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs()),
-      DiagOpts.getPtr());
+      DiagOpts.get());
 
   // Determine a formatting style from options.
   format::FormatStyle FormatStyle;
@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
   TUReplacements TUs;
   TUReplacementFiles TURFiles;
 
-  error_code ErrorCode =
+  std::error_code ErrorCode =
       collectReplacementsFromDirectory(Directory, TUs, TURFiles, Diagnostics);
 
   if (ErrorCode) {

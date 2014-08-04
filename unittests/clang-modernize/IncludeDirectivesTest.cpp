@@ -41,7 +41,7 @@ namespace {
 class TestAddIncludeAction : public PreprocessOnlyAction {
 public:
   TestAddIncludeAction(StringRef Include, tooling::Replacements &Replaces,
-                       const char *HeaderToModify = 0)
+                       const char *HeaderToModify = nullptr)
       : Include(Include), Replaces(Replaces), HeaderToModify(HeaderToModify) {
     // some headers that the tests can include
     mapVirtualHeader("foo-inner.h", "#pragma once\n");
@@ -66,7 +66,7 @@ public:
   /// refer to the headers by using '\<FileName\>'.
   std::string makeHeaderFileName(StringRef FileName) const {
     SmallString<128> Path;
-    llvm::error_code EC = llvm::sys::fs::current_path(Path);
+    std::error_code EC = llvm::sys::fs::current_path(Path);
     assert(!EC);
     (void)EC;
 

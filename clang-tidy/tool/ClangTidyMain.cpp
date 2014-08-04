@@ -32,6 +32,7 @@ const char DefaultChecks[] =
     "-clang-analyzer-alpha*,"  // Too many false positives.
     "-llvm-include-order,"     // Not implemented yet.
     "-google-*,";              // Doesn't apply to LLVM.
+
 static cl::opt<std::string>
 Checks("checks", cl::desc("Comma-separated list of globs with optional '-'\n"
                           "prefix. Globs are processed in order of appearance\n"
@@ -40,13 +41,28 @@ Checks("checks", cl::desc("Comma-separated list of globs with optional '-'\n"
                           "prefix remove checks with matching names from the\n"
                           "set of enabled checks."),
        cl::init(""), cl::cat(ClangTidyCategory));
+
 static cl::opt<std::string>
 HeaderFilter("header-filter",
              cl::desc("Regular expression matching the names of the\n"
-                      "headers to output diagnostics from.\n"
-                      "Diagnostics from the main file of each\n"
-                      "translation unit are always displayed."),
+                      "headers to output diagnostics from. Diagnostics\n"
+                      "from the main file of each translation unit are\n"
+                      "always displayed.\n"
+                      "Can be used together with -line-filter."),
              cl::init(""), cl::cat(ClangTidyCategory));
+
+static cl::opt<std::string>
+LineFilter("line-filter",
+           cl::desc("List of files with line ranges to filter the\n"
+                    "warnings. Can be used together with\n"
+                    "-header-filter. The format of the list is a JSON\n"
+                    "array of objects:\n"
+                    "  [\n"
+                    "    {\"name\":\"file1.cpp\",\"lines\":[[1,3],[5,7]]},\n"
+                    "    {\"name\":\"file2.h\"}\n"
+                    "  ]"),
+           cl::init(""), cl::cat(ClangTidyCategory));
+
 static cl::opt<bool> Fix("fix", cl::desc("Fix detected errors if possible."),
                          cl::init(false), cl::cat(ClangTidyCategory));
 
@@ -63,14 +79,16 @@ AnalyzeTemporaryDtors("analyze-temporary-dtors",
                       cl::init(false), cl::cat(ClangTidyCategory));
 
 static void printStats(const clang::tidy::ClangTidyStats &Stats) {
-  unsigned ErrorsIgnored = Stats.ErrorsIgnoredNOLINT +
-                           Stats.ErrorsIgnoredCheckFilter +
-                           Stats.ErrorsIgnoredNonUserCode;
-  if (ErrorsIgnored) {
-    llvm::errs() << "Suppressed " << ErrorsIgnored << " warnings (";
+  if (Stats.errorsIgnored()) {
+    llvm::errs() << "Suppressed " << Stats.errorsIgnored() << " warnings (";
     StringRef Separator = "";
     if (Stats.ErrorsIgnoredNonUserCode) {
       llvm::errs() << Stats.ErrorsIgnoredNonUserCode << " in non-user code";
+      Separator = ", ";
+    }
+    if (Stats.ErrorsIgnoredLineFilter) {
+      llvm::errs() << Separator << Stats.ErrorsIgnoredLineFilter
+                   << " due to line filter";
       Separator = ", ";
     }
     if (Stats.ErrorsIgnoredNOLINT) {
@@ -90,24 +108,43 @@ static void printStats(const clang::tidy::ClangTidyStats &Stats) {
 int main(int argc, const char **argv) {
   CommonOptionsParser OptionsParser(argc, argv, ClangTidyCategory);
 
+  clang::tidy::ClangTidyGlobalOptions GlobalOptions;
+  if (std::error_code Err =
+          clang::tidy::parseLineFilter(LineFilter, GlobalOptions)) {
+    llvm::errs() << "Invalid LineFilter: " << Err.message() << "\n\nUsage:\n";
+    llvm::cl::PrintHelpMessage(/*Hidden=*/false, /*Categorized=*/true);
+    return 1;
+  }
+
   clang::tidy::ClangTidyOptions Options;
   Options.Checks = DefaultChecks + Checks;
   Options.HeaderFilterRegex = HeaderFilter;
   Options.AnalyzeTemporaryDtors = AnalyzeTemporaryDtors;
 
+  std::vector<std::string> EnabledChecks = clang::tidy::getCheckNames(Options);
+
   // FIXME: Allow using --list-checks without positional arguments.
   if (ListChecks) {
     llvm::outs() << "Enabled checks:";
-    for (auto CheckName : clang::tidy::getCheckNames(Options))
+    for (auto CheckName : EnabledChecks)
       llvm::outs() << "\n    " << CheckName;
     llvm::outs() << "\n\n";
     return 0;
   }
 
+  if (EnabledChecks.empty()) {
+    llvm::errs() << "Error: no checks enabled.\n";
+    llvm::cl::PrintHelpMessage(/*Hidden=*/false, /*Categorized=*/true);
+    return 1;
+  }
+
+  // TODO: Implement configuration file reading and a "real" options provider.
+  auto OptionsProvider =
+      new clang::tidy::DefaultOptionsProvider(GlobalOptions, Options);
   std::vector<clang::tidy::ClangTidyError> Errors;
-  clang::tidy::ClangTidyStats Stats =
-      clang::tidy::runClangTidy(Options, OptionsParser.getCompilations(),
-                                OptionsParser.getSourcePathList(), &Errors);
+  clang::tidy::ClangTidyStats Stats = clang::tidy::runClangTidy(
+      OptionsProvider, OptionsParser.getCompilations(),
+      OptionsParser.getSourcePathList(), &Errors);
   clang::tidy::handleErrors(Errors, Fix);
 
   printStats(Stats);

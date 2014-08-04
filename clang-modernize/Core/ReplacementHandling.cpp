@@ -18,7 +18,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
-#include "llvm/Support/system_error.h"
+#include <system_error>
 
 using namespace llvm;
 using namespace llvm::sys;
@@ -101,12 +101,12 @@ bool ReplacementHandling::applyReplacements() {
   Argv.push_back(DestinationDir.c_str());
 
   // Argv array needs to be null terminated.
-  Argv.push_back(0);
+  Argv.push_back(nullptr);
 
   std::string ErrorMsg;
   bool ExecutionFailed = false;
-  int ReturnCode = ExecuteAndWait(CARPath.c_str(), Argv.data(), /* env */ 0,
-                                  /* redirects */ 0,
+  int ReturnCode = ExecuteAndWait(CARPath.c_str(), Argv.data(),
+                                  /* env */ nullptr, /* redirects */ nullptr,
                                   /* secondsToWait */ 0, /* memoryLimit */ 0,
                                   &ErrorMsg, &ExecutionFailed);
   if (ExecutionFailed || !ErrorMsg.empty()) {
@@ -144,7 +144,7 @@ bool ReplacementHandling::generateReplacementsFileName(
   Error.clear();
   SmallString<128> Prefix = DestinationDir;
   path::append(Prefix, path::filename(MainSourceFile));
-  if (error_code EC =
+  if (std::error_code EC =
           fs::createUniqueFile(Prefix + "_%%_%%_%%_%%_%%_%%.yaml", Result)) {
     const std::string &Msg = EC.message();
     Error.append(Msg.begin(), Msg.end());

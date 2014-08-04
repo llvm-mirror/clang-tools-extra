@@ -6,6 +6,7 @@ add_clang_library(clangTidy
   ClangTidy.cpp
   ClangTidyModule.cpp
   ClangTidyDiagnosticConsumer.cpp
+  ClangTidyOptions.cpp
 
   DEPENDS
   ClangSACheckers
@@ -15,7 +16,9 @@ add_clang_library(clangTidy
   clangASTMatchers
   clangBasic
   clangFrontend
-  clangRewriteCore
+  clangRewrite
+  clangSema
+  clangStaticAnalyzerCore
   clangStaticAnalyzerFrontend
   clangTooling
   )

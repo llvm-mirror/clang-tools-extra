@@ -132,11 +132,11 @@ int main(int Argc, const char **Argv) {
 
   // Do the checks.  The return value is the program return code,
   // 0 for okay, 1 for module map warnings produced, 2 for any other error.
-  error_code ReturnCode = Checker->doChecks();
+  std::error_code ReturnCode = Checker->doChecks();
 
-  if (ReturnCode == error_code(1, generic_category()))
+  if (ReturnCode == std::error_code(1, std::generic_category()))
     return 1; // Module map warnings were issued.
-  else if (ReturnCode == error_code(2, generic_category()))
+  else if (ReturnCode == std::error_code(2, std::generic_category()))
     return 2; // Some other error occurred.
   else
     return 0; // No errors or warnings.
@@ -211,17 +211,17 @@ ModuleMapChecker::ModuleMapChecker(StringRef ModuleMapPath,
       DumpModuleMap(DumpModuleMap), CommandLine(CommandLine),
       LangOpts(new LangOptions()), DiagIDs(new DiagnosticIDs()),
       DiagnosticOpts(new DiagnosticOptions()),
-      DC(errs(), DiagnosticOpts.getPtr()),
+      DC(errs(), DiagnosticOpts.get()),
       Diagnostics(
-          new DiagnosticsEngine(DiagIDs, DiagnosticOpts.getPtr(), &DC, false)),
+          new DiagnosticsEngine(DiagIDs, DiagnosticOpts.get(), &DC, false)),
       TargetOpts(new ModuleMapTargetOptions()),
-      Target(TargetInfo::CreateTargetInfo(*Diagnostics, TargetOpts.getPtr())),
+      Target(TargetInfo::CreateTargetInfo(*Diagnostics, TargetOpts)),
       FileMgr(new FileManager(FileSystemOpts)),
       SourceMgr(new SourceManager(*Diagnostics, *FileMgr, false)),
       HeaderSearchOpts(new HeaderSearchOptions()),
       HeaderInfo(new HeaderSearch(HeaderSearchOpts, *SourceMgr, *Diagnostics,
-                                  *LangOpts, Target.getPtr())),
-      ModMap(new ModuleMap(*SourceMgr, *Diagnostics, *LangOpts, Target.getPtr(),
+                                  *LangOpts, Target.get())),
+      ModMap(new ModuleMap(*SourceMgr, *Diagnostics, *LangOpts, Target.get(),
                            *HeaderInfo)) {}
 
 // Create instance of ModuleMapChecker, to simplify setting up
@@ -243,26 +243,26 @@ ModuleMapChecker *ModuleMapChecker::createModuleMapChecker(
 // Returns error_code of 0 if there were no errors or warnings, 1 if there
 //   were warnings, 2 if any other problem, such as if a bad
 //   module map path argument was specified.
-error_code ModuleMapChecker::doChecks() {
-  error_code returnValue;
+std::error_code ModuleMapChecker::doChecks() {
+  std::error_code returnValue;
 
   // Load the module map.
   if (!loadModuleMap())
-    return error_code(2, generic_category());
+    return std::error_code(2, std::generic_category());
 
   // Collect the headers referenced in the modules.
   collectModuleHeaders();
 
   // Collect the file system headers.
   if (!collectFileSystemHeaders())
-    return error_code(2, generic_category());
+    return std::error_code(2, std::generic_category());
 
   // Do the checks.  These save the problematic file names.
   findUnaccountedForHeaders();
 
   // Check for warnings.
   if (UnaccountedForHeaders.size())
-    returnValue = error_code(1, generic_category());
+    returnValue = std::error_code(1, std::generic_category());
 
   // Dump module map if requested.
   if (DumpModuleMap) {
@@ -290,7 +290,7 @@ bool ModuleMapChecker::loadModuleMap() {
 
   // Because the module map parser uses a ForwardingDiagnosticConsumer,
   // which doesn't forward the BeginSourceFile call, we do it explicitly here.
-  DC.BeginSourceFile(*LangOpts, 0);
+  DC.BeginSourceFile(*LangOpts, nullptr);
 
   // Parse module.map file into module map.
   if (ModMap->parseModuleMapFile(ModuleMapEntry, false))
@@ -363,7 +363,7 @@ bool ModuleMapChecker::collectUmbrellaHeaders(StringRef UmbrellaDirName) {
   if (Directory.size() == 0)
     Directory = ".";
   // Walk the directory.
-  error_code EC;
+  std::error_code EC;
   fs::file_status Status;
   for (fs::directory_iterator I(Directory.str(), EC), E; I != E;
        I.increment(EC)) {
@@ -480,7 +480,7 @@ bool ModuleMapChecker::collectFileSystemHeaders(StringRef IncludePath) {
   }
 
   // Recursively walk the directory tree.
-  error_code EC;
+  std::error_code EC;
   fs::file_status Status;
   int Count = 0;
   for (fs::recursive_directory_iterator I(Directory.str(), EC), E; I != E;
