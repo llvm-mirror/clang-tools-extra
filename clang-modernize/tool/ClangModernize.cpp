@@ -52,24 +52,24 @@ const cl::OptionCategory *VisibleCategories[] = {
 
 static cl::extrahelp CommonHelp(CommonOptionsParser::HelpMessage);
 static cl::extrahelp MoreHelp(
-    "EXAMPLES:\n\n"
-    "Apply all transforms on a file that doesn't require compilation arguments:\n\n"
-    "  clang-modernize file.cpp\n"
-    "\n"
-    "Convert for loops to ranged-based for loops for all files in the compilation\n"
-    "database that belong in a project subtree and then reformat the code\n"
-    "automatically using the LLVM style:\n\n"
-    "    clang-modernize -p build/path -include project/path -format -loop-convert\n"
-    "\n"
-    "Make use of both nullptr and the override specifier, using git ls-files:\n"
-    "\n"
-    "  git ls-files '*.cpp' | xargs -I{} clang-modernize -p build/path \\\n"
-    "      -use-nullptr -add-override -override-macros {}\n"
-    "\n"
-    "Apply all transforms supported by both clang >= 3.0 and gcc >= 4.7 to\n"
-    "foo.cpp and any included headers in bar:\n\n"
-    "  clang-modernize -for-compilers=clang-3.0,gcc-4.7 foo.cpp \\\n"
-    "      -include bar -- -std=c++11 -Ibar\n\n");
+"EXAMPLES:\n\n"
+"Apply all transforms on a file that doesn't require compilation arguments:\n\n"
+"  clang-modernize file.cpp\n"
+"\n"
+"Convert for loops to ranged-based for loops for all files in the compilation\n"
+"database that belong in a project subtree and then reformat the code\n"
+"automatically using the LLVM style:\n\n"
+"   clang-modernize -p build/path -include project/path -format -loop-convert\n"
+"\n"
+"Make use of both nullptr and the override specifier, using git ls-files:\n"
+"\n"
+"  git ls-files '*.cpp' | xargs -I{} clang-modernize -p build/path \\\n"
+"      -use-nullptr -add-override -override-macros {}\n"
+"\n"
+"Apply all transforms supported by both clang >= 3.0 and gcc >= 4.7 to\n"
+"foo.cpp and any included headers in bar:\n\n"
+"  clang-modernize -for-compilers=clang-3.0,gcc-4.7 foo.cpp \\\n"
+"      -include bar -- -std=c++11 -Ibar\n\n");
 
 ////////////////////////////////////////////////////////////////////////////////
 /// General Options
