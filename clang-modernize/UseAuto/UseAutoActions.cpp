@@ -35,6 +35,8 @@ void IteratorReplacer::run(const MatchFinder::MatchResult &Result) {
     const VarDecl *V = cast<VarDecl>(*DI);
 
     const Expr *ExprInit = V->getInit();
+    if (isa<CallExpr>(ExprInit))
+      return;
 
     // Skip expressions with cleanups from the initializer expression.
     if (const ExprWithCleanups *E = dyn_cast<ExprWithCleanups>(ExprInit))
