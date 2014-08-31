@@ -120,9 +120,10 @@ public:
       : Ignore(Ignore), CallbackCalls(CallbackCalls) {}
 
 protected:
-  virtual clang::ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                                StringRef InFile) {
-    return new PPTraceConsumer(Ignore, CallbackCalls, CI.getPreprocessor());
+  std::unique_ptr<clang::ASTConsumer>
+  CreateASTConsumer(CompilerInstance &CI, StringRef InFile) override {
+    return llvm::make_unique<PPTraceConsumer>(Ignore, CallbackCalls,
+                                              CI.getPreprocessor());
   }
 
 private:
@@ -211,12 +212,11 @@ int main(int Argc, const char **Argv) {
     HadErrors = outputPPTrace(CallbackCalls, llvm::outs());
   } else {
     // Set up output file.
-    std::string Error;
-    llvm::tool_output_file Out(OutputFileName.c_str(), Error,
-                               llvm::sys::fs::F_Text);
-    if (!Error.empty()) {
+    std::error_code EC;
+    llvm::tool_output_file Out(OutputFileName, EC, llvm::sys::fs::F_Text);
+    if (EC) {
       llvm::errs() << "pp-trace: error creating " << OutputFileName << ":"
-                   << Error << "\n";
+                   << EC.message() << "\n";
       return 1;
     }
 
