@@ -19,13 +19,7 @@ namespace tidy {
 namespace readability {
 
 void NamedParameterCheck::registerMatchers(ast_matchers::MatchFinder *Finder) {
-  Finder->addMatcher(
-      functionDecl(
-          unless(hasAncestor(decl(
-              anyOf(recordDecl(ast_matchers::isTemplateInstantiation()),
-                    functionDecl(ast_matchers::isTemplateInstantiation()))))))
-          .bind("decl"),
-      this);
+  Finder->addMatcher(functionDecl(unless(isInstantiated())).bind("decl"), this);
 }
 
 void NamedParameterCheck::check(const MatchFinder::MatchResult &Result) {
@@ -40,7 +34,8 @@ void NamedParameterCheck::check(const MatchFinder::MatchResult &Result) {
   // Ignore declarations without a definition if we're not dealing with an
   // overriden method.
   const FunctionDecl *Definition = nullptr;
-  if (!Function->isDefined(Definition) &&
+  if ((!Function->isDefined(Definition) || Function->isDefaulted() ||
+       Function->isDeleted()) &&
       (!isa<CXXMethodDecl>(Function) ||
        cast<CXXMethodDecl>(Function)->size_overridden_methods() == 0))
     return;
@@ -52,6 +47,12 @@ void NamedParameterCheck::check(const MatchFinder::MatchResult &Result) {
     const ParmVarDecl *Parm = Function->getParamDecl(I);
     // Look for unnamed parameters.
     if (!Parm->getName().empty())
+      continue;
+
+    // Don't warn on the dummy argument on post-inc and post-dec operators.
+    if ((Function->getOverloadedOperator() == OO_PlusPlus ||
+         Function->getOverloadedOperator() == OO_MinusMinus) &&
+        Parm->getType()->isSpecificBuiltinType(BuiltinType::Int))
       continue;
 
     // Sanity check the source locations.

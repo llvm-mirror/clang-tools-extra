@@ -98,29 +98,26 @@ static void reportConflict(
 
   // FIXME: Output something a little more user-friendly (e.g. unified diff?)
   errs() << "The following changes conflict:\n";
-  for (const tooling::Replacement *I = ConflictingReplacements.begin(),
-                                  *E = ConflictingReplacements.end();
-       I != E; ++I) {
-    if (I->getLength() == 0) {
-      errs() << "  Insert at " << SM.getLineNumber(FID, I->getOffset()) << ":"
-             << SM.getColumnNumber(FID, I->getOffset()) << " "
-             << I->getReplacementText() << "\n";
+  for (const tooling::Replacement &R : ConflictingReplacements) {
+    if (R.getLength() == 0) {
+      errs() << "  Insert at " << SM.getLineNumber(FID, R.getOffset()) << ":"
+             << SM.getColumnNumber(FID, R.getOffset()) << " "
+             << R.getReplacementText() << "\n";
     } else {
-      if (I->getReplacementText().empty())
+      if (R.getReplacementText().empty())
         errs() << "  Remove ";
       else
         errs() << "  Replace ";
 
-      errs() << SM.getLineNumber(FID, I->getOffset()) << ":"
-             << SM.getColumnNumber(FID, I->getOffset()) << "-"
-             << SM.getLineNumber(FID, I->getOffset() + I->getLength() - 1)
-             << ":"
-             << SM.getColumnNumber(FID, I->getOffset() + I->getLength() - 1);
+      errs() << SM.getLineNumber(FID, R.getOffset()) << ":"
+             << SM.getColumnNumber(FID, R.getOffset()) << "-"
+             << SM.getLineNumber(FID, R.getOffset() + R.getLength() - 1) << ":"
+             << SM.getColumnNumber(FID, R.getOffset() + R.getLength() - 1);
 
-      if (I->getReplacementText().empty())
+      if (R.getReplacementText().empty())
         errs() << "\n";
       else
-        errs() << " with \"" << I->getReplacementText() << "\"\n";
+        errs() << " with \"" << R.getReplacementText() << "\"\n";
     }
   }
 }
@@ -140,33 +137,24 @@ static bool deduplicateAndDetectConflicts(FileToReplacementsMap &Replacements,
                                           SourceManager &SM) {
   bool conflictsFound = false;
 
-  for (FileToReplacementsMap::iterator I = Replacements.begin(),
-                                       E = Replacements.end();
-       I != E; ++I) {
-
-    const FileEntry *Entry = SM.getFileManager().getFile(I->getKey());
-    if (!Entry) {
-      errs() << "Described file '" << I->getKey()
-             << "' doesn't exist. Ignoring...\n";
-      continue;
-    }
+  for (auto &FileAndReplacements : Replacements) {
+    const FileEntry *Entry = FileAndReplacements.first;
+    auto &Replacements = FileAndReplacements.second;
+    assert(Entry != nullptr && "No file entry!");
 
     std::vector<tooling::Range> Conflicts;
-    tooling::deduplicate(I->getValue(), Conflicts);
+    tooling::deduplicate(FileAndReplacements.second, Conflicts);
 
     if (Conflicts.empty())
       continue;
 
     conflictsFound = true;
 
-    errs() << "There are conflicting changes to " << I->getKey() << ":\n";
+    errs() << "There are conflicting changes to " << Entry->getName() << ":\n";
 
-    for (std::vector<tooling::Range>::const_iterator
-             ConflictI = Conflicts.begin(),
-             ConflictE = Conflicts.end();
-         ConflictI != ConflictE; ++ConflictI) {
-      ArrayRef<tooling::Replacement> ConflictingReplacements(
-          &I->getValue()[ConflictI->getOffset()], ConflictI->getLength());
+    for (const tooling::Range &Conflict : Conflicts) {
+      auto ConflictingReplacements = llvm::makeArrayRef(
+          &Replacements[Conflict.getOffset()], Conflict.getLength());
       reportConflict(Entry, ConflictingReplacements, SM);
     }
   }
@@ -179,14 +167,20 @@ bool mergeAndDeduplicate(const TUReplacements &TUs,
                          clang::SourceManager &SM) {
 
   // Group all replacements by target file.
-  for (TUReplacements::const_iterator TUI = TUs.begin(), TUE = TUs.end();
-       TUI != TUE; ++TUI)
-    for (std::vector<tooling::Replacement>::const_iterator
-             RI = TUI->Replacements.begin(),
-             RE = TUI->Replacements.end();
-         RI != RE; ++RI)
-      GroupedReplacements[RI->getFilePath()].push_back(*RI);
-
+  std::set<StringRef> Warned;
+  for (const auto &TU : TUs) {
+    for (const tooling::Replacement &R : TU.Replacements) {
+      // Use the file manager to deduplicate paths. FileEntries are
+      // automatically canonicalized.
+      const FileEntry *Entry = SM.getFileManager().getFile(R.getFilePath());
+      if (!Entry && Warned.insert(R.getFilePath()).second) {
+        errs() << "Described file '" << R.getFilePath()
+               << "' doesn't exist. Ignoring...\n";
+        continue;
+      }
+      GroupedReplacements[Entry].push_back(R);
+    }
+  }
 
   // Ask clang to deduplicate and report conflicts.
   if (deduplicateAndDetectConflicts(GroupedReplacements, SM))
@@ -204,10 +198,8 @@ bool applyReplacements(const FileToReplacementsMap &GroupedReplacements,
   // data structure for applying replacements. Rewriter certainly doesn't care.
   // However, until we nail down the design of ReplacementGroups, might as well
   // leave this as is.
-  for (FileToReplacementsMap::const_iterator I = GroupedReplacements.begin(),
-                                             E = GroupedReplacements.end();
-       I != E; ++I) {
-    if (!tooling::applyAllReplacements(I->getValue(), Rewrites))
+  for (const auto &FileAndReplacements : GroupedReplacements) {
+    if (!tooling::applyAllReplacements(FileAndReplacements.second, Rewrites))
       return false;
   }
 
@@ -223,11 +215,7 @@ RangeVector calculateChangedRanges(
   // NOTE: This is O(n^2) in the number of replacements. If this starts to
   // become a problem inline shiftedCodePosition() here and do shifts in a
   // single run through this loop.
-  for (std::vector<clang::tooling::Replacement>::const_iterator
-           I = Replaces.begin(),
-           E = Replaces.end();
-       I != E; ++I) {
-    const tooling::Replacement &R = *I;
+  for (const tooling::Replacement &R : Replaces) {
     unsigned Offset = tooling::shiftedCodePosition(Replaces, R.getOffset());
     unsigned Length = R.getReplacementText().size();
 
@@ -260,13 +248,12 @@ bool writeFiles(const clang::Rewriter &Rewrites) {
 bool deleteReplacementFiles(const TUReplacementFiles &Files,
                             clang::DiagnosticsEngine &Diagnostics) {
   bool Success = true;
-  for (TUReplacementFiles::const_iterator I = Files.begin(), E = Files.end();
-       I != E; ++I) {
-    std::error_code Error = llvm::sys::fs::remove(*I);
+  for (const auto &Filename : Files) {
+    std::error_code Error = llvm::sys::fs::remove(Filename);
     if (Error) {
       Success = false;
       // FIXME: Use Diagnostics for outputting errors.
-      errs() << "Error deleting file: " << *I << "\n";
+      errs() << "Error deleting file: " << Filename << "\n";
       errs() << Error.message() << "\n";
       errs() << "Please delete the file manually\n";
     }

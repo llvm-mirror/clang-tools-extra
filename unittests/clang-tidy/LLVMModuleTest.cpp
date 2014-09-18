@@ -95,6 +95,8 @@ static std::string runHeaderGuardCheck(StringRef Code, const Twine &Filename) {
 
 namespace {
 struct WithEndifComment : public LLVMHeaderGuardCheck {
+  WithEndifComment(StringRef Name, ClangTidyContext *Context)
+      : LLVMHeaderGuardCheck(Name, Context) {}
   bool shouldSuggestEndifComment(StringRef Filename) override { return true; }
 };
 } // namespace
@@ -170,6 +172,20 @@ TEST(LLVMHeaderGuardCheckTest, FixHeaderGuards) {
       runHeaderGuardCheckWithEndif(
           "#ifndef LLVM_ADT_FOO_H_\n#define LLVM_ADT_FOO_H_\n#endif // LLVM\n",
           "include/llvm/ADT/foo.h"));
+
+  EXPECT_EQ("#ifndef LLVM_ADT_FOO_H\n#define LLVM_ADT_FOO_H\n#endif \\ \n// "
+            "LLVM_ADT_FOO_H\n",
+            runHeaderGuardCheckWithEndif("#ifndef LLVM_ADT_FOO_H\n#define "
+                                         "LLVM_ADT_FOO_H\n#endif \\ \n// "
+                                         "LLVM_ADT_FOO_H\n",
+                                         "include/llvm/ADT/foo.h"));
+
+  EXPECT_EQ("#ifndef LLVM_ADT_FOO_H\n#define LLVM_ADT_FOO_H\n#endif  /* "
+            "LLVM_ADT_FOO_H\\ \n FOO */",
+            runHeaderGuardCheckWithEndif(
+                "#ifndef LLVM_ADT_FOO_H\n#define LLVM_ADT_FOO_H\n#endif  /* "
+                "LLVM_ADT_FOO_H\\ \n FOO */",
+                "include/llvm/ADT/foo.h"));
 }
 #endif
 
