@@ -109,16 +109,32 @@ public:
           EndIfs[Ifndefs[MacroEntry.first.getIdentifierInfo()].first];
 
       // If the macro Name is not equal to what we can compute, correct it in
-      // the
-      // #ifndef and #define.
+      // the #ifndef and #define.
       StringRef CurHeaderGuard =
           MacroEntry.first.getIdentifierInfo()->getName();
+      std::vector<FixItHint> FixIts;
       std::string NewGuard = checkHeaderGuardDefinition(
-          Ifndef, Define, EndIf, FileName, CurHeaderGuard);
+          Ifndef, Define, EndIf, FileName, CurHeaderGuard, FixIts);
 
       // Now look at the #endif. We want a comment with the header guard. Fix it
       // at the slightest deviation.
-      checkEndifComment(FileName, EndIf, NewGuard);
+      checkEndifComment(FileName, EndIf, NewGuard, FixIts);
+
+      // Bundle all fix-its into one warning. The message depends on whether we
+      // changed the header guard or not.
+      if (!FixIts.empty()) {
+        if (CurHeaderGuard != NewGuard) {
+          auto D = Check->diag(Ifndef,
+                               "header guard does not follow preferred style");
+          for (FixItHint &Fix : FixIts)
+            D.AddFixItHint(std::move(Fix));
+        } else {
+          auto D = Check->diag(EndIf, "#endif for a header guard should "
+                                      "reference the guard macro in a comment");
+          for (FixItHint &Fix : FixIts)
+            D.AddFixItHint(std::move(Fix));
+        }
+      }
     }
 
     // Emit warnings for headers that are missing guards.
@@ -161,7 +177,8 @@ public:
                                          SourceLocation Define,
                                          SourceLocation EndIf,
                                          StringRef FileName,
-                                         StringRef CurHeaderGuard) {
+                                         StringRef CurHeaderGuard,
+                                         std::vector<FixItHint> &FixIts) {
     std::string CPPVar = Check->getHeaderGuard(FileName, CurHeaderGuard);
     std::string CPPVarUnder = CPPVar + '_';
 
@@ -170,15 +187,14 @@ public:
     if (Ifndef.isValid() && CurHeaderGuard != CPPVar &&
         (CurHeaderGuard != CPPVarUnder ||
          wouldFixEndifComment(FileName, EndIf, CurHeaderGuard))) {
-      Check->diag(Ifndef, "header guard does not follow preferred style")
-          << FixItHint::CreateReplacement(
-                 CharSourceRange::getTokenRange(
-                     Ifndef, Ifndef.getLocWithOffset(CurHeaderGuard.size())),
-                 CPPVar)
-          << FixItHint::CreateReplacement(
-                 CharSourceRange::getTokenRange(
-                     Define, Define.getLocWithOffset(CurHeaderGuard.size())),
-                 CPPVar);
+      FixIts.push_back(FixItHint::CreateReplacement(
+          CharSourceRange::getTokenRange(
+              Ifndef, Ifndef.getLocWithOffset(CurHeaderGuard.size())),
+          CPPVar));
+      FixIts.push_back(FixItHint::CreateReplacement(
+          CharSourceRange::getTokenRange(
+              Define, Define.getLocWithOffset(CurHeaderGuard.size())),
+          CPPVar));
       return CPPVar;
     }
     return CurHeaderGuard;
@@ -187,16 +203,15 @@ public:
   /// \brief Checks the comment after the #endif of a header guard and fixes it
   /// if it doesn't match \c HeaderGuard.
   void checkEndifComment(StringRef FileName, SourceLocation EndIf,
-                         StringRef HeaderGuard) {
+                         StringRef HeaderGuard,
+                         std::vector<FixItHint> &FixIts) {
     size_t EndIfLen;
     if (wouldFixEndifComment(FileName, EndIf, HeaderGuard, &EndIfLen)) {
       std::string Correct = "endif  // " + HeaderGuard.str();
-      Check->diag(EndIf, "#endif for a header guard should reference the "
-                         "guard macro in a comment")
-          << FixItHint::CreateReplacement(
-              CharSourceRange::getCharRange(EndIf,
-                                            EndIf.getLocWithOffset(EndIfLen)),
-              Correct);
+      FixIts.push_back(FixItHint::CreateReplacement(
+          CharSourceRange::getCharRange(EndIf,
+                                        EndIf.getLocWithOffset(EndIfLen)),
+          Correct));
     }
   }
 

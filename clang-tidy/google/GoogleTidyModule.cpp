@@ -18,8 +18,10 @@
 #include "NamedParameterCheck.h"
 #include "OverloadedUnaryAndCheck.h"
 #include "StringReferenceMemberCheck.h"
+#include "TodoCommentCheck.h"
 #include "UnnamedNamespaceInHeaderCheck.h"
 #include "UsingNamespaceDirectiveCheck.h"
+#include "../readability/NamespaceCommentCheck.h"
 
 using namespace clang::ast_matchers;
 
@@ -49,6 +51,10 @@ public:
         "google-readability-casting");
     CheckFactories.registerCheck<readability::NamedParameterCheck>(
         "google-readability-function");
+    CheckFactories.registerCheck<readability::TodoCommentCheck>(
+        "google-readability-todo");
+    CheckFactories.registerCheck<readability::NamespaceCommentCheck>(
+        "google-readability-namespace-comments");
   }
 };
 

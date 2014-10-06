@@ -17,7 +17,7 @@ with if you set up a compile command database for your project (for an example
 of how to do this see `How To Setup Tooling For LLVM`_). You can also specify
 compilation options on the command line after ``--``:
 
-.. code-block:: bash
+.. code-block:: console
 
   $ clang-tidy test.cpp -- -Imy_project/include -DMY_DEFINES ...
 
@@ -27,7 +27,7 @@ checks. Each check has a name and the checks to run can be chosen using the
 negative (prefixed with ``-``) globs. Positive globs add subsets of checks,
 negative globs remove them. For example,
 
-.. code-block:: bash
+.. code-block:: console
 
   $ clang-tidy test.cpp -checks='-*,clang-analyzer-*,-clang-analyzer-alpha*'
 
@@ -69,7 +69,7 @@ supported by corresponding checks.
 
 An overview of all the command-line options:
 
-.. code-block:: bash
+.. code-block:: console
 
   $ clang-tidy -help
   USAGE: clang-tidy [options] <source0> [... <sourceN>]
@@ -94,11 +94,33 @@ An overview of all the command-line options:
                                with matching names to the set, globs with the '-'
                                prefix remove checks with matching names from the
                                set of enabled checks.
+                               This option's value is appended to the value read
+                               from a .clang-tidy file, if any.
+    -config=<string>         - Specifies a configuration in YAML/JSON format:
+                                 -config="{Checks: '*', CheckOptions: {key: x, value: y}}"
+                               When the value is empty, clang-tidy will attempt to find
+                               a file named .clang-tidy for each source file in its parent
+                               directories.
+    -dump-config             - Dumps configuration in the YAML format to stdout.
+    -export-fixes=<filename> - YAML file to store suggested fixes in. The
+                               stored fixes can be applied to the input source
+                               code with clang-apply-replacements.
     -fix                     - Fix detected errors if possible.
     -header-filter=<string>  - Regular expression matching the names of the
-                               headers to output diagnostics from.
-                               Diagnostics from the main file of each
-                               translation unit are always displayed.
+                               headers to output diagnostics from. Diagnostics
+                               from the main file of each translation unit are
+                               always displayed.
+                               Can be used together with -line-filter.
+                               This option overrides the value read from a
+                               .clang-tidy file.
+    -line-filter=<string>    - List of files with line ranges to filter the
+                               warnings. Can be used together with
+                               -header-filter. The format of the list is a JSON
+                               array of objects:
+                                 [
+                                   {"name":"file1.cpp","lines":[[1,3],[5,7]]},
+                                   {"name":"file2.h"}
+                                 ]
     -list-checks             - List all enabled checks and exit. Use with
                                -checks='*' to list all available checks.
     -p=<string>              - Build path
@@ -122,6 +144,12 @@ An overview of all the command-line options:
     automatically removed, but the rest of a relative path must be a
     suffix of a path in the compile command database.
 
+  Configuration files:
+    clang-tidy attempts to read configuration for each source file from a
+    .clang-tidy file located in the closest parent directory of the source
+    file. If any configuration options have a corresponding command-line
+    option, command-line option takes precedence. The effective
+    configuration can be inspected using -dump-config.
 
 .. _LibTooling: http://clang.llvm.org/docs/LibTooling.html
 .. _How To Setup Tooling For LLVM: http://clang.llvm.org/docs/HowToSetupToolingForLLVM.html
@@ -247,9 +275,14 @@ In this case we need to override two methods:
   ...
   class ExplicitConstructorCheck : public ClangTidyCheck {
   public:
+    ExplicitConstructorCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
     void registerMatchers(ast_matchers::MatchFinder *Finder) override;
     void check(ast_matchers::MatchFinder::MatchResult &Result) override;
   };
+
+Constructor of the check receives the ``Name`` and ``Context`` parameters, and
+must forward them to the ``ClangTidyCheck`` constructor.
 
 In the ``registerMatchers`` method we create an AST Matcher (see `AST Matchers`_
 for more information) that will find the pattern in the AST that we want to
@@ -279,7 +312,7 @@ can further inspect them and report diagnostics.
   }
 
 (The full code for this check resides in
-``clang-tidy/google/GoogleTidyModule.cpp``).
+``clang-tidy/google/ExplicitConstructorCheck.{h,cpp}``).
 
 
 Registering your Check
@@ -292,9 +325,8 @@ The check should be registered in the corresponding module with a distinct name:
   class MyModule : public ClangTidyModule {
    public:
     void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
-      CheckFactories.addCheckFactory(
-          "my-explicit-constructor",
-          new ClangTidyCheckFactory<ExplicitConstructorCheck>());
+      CheckFactories.registerCheck<ExplicitConstructorCheck>(
+          "my-explicit-constructor");
     }
   };
 
@@ -326,6 +358,48 @@ you link the ``clang-tidy`` library in) ``clang-tidy/tool/ClangTidyMain.cpp``:
   // This anchor is used to force the linker to link the MyModule.
   extern volatile int MyModuleAnchorSource;
   static int MyModuleAnchorDestination = MyModuleAnchorSource;
+
+
+Configuring Checks
+------------------
+
+If a check needs configuration options, it can access check-specific options
+using the ``Options.get<Type>("SomeOption", DefaultValue)`` call in the check
+constructor. In this case the check should also override the
+``ClangTidyCheck::storeOptions`` method to make the options provided by the
+check discoverable. This method lets :program:`clang-tidy` know which options
+the check implements and what the current values are (e.g. for the
+``-dump-config`` command line option).
+
+.. code-block:: c++
+
+  class MyCheck : public ClangTidyCheck {
+    const unsigned SomeOption1;
+    const std::string SomeOption2;
+  
+  public:
+    MyCheck(StringRef Name, ClangTidyContext *Context)
+      : ClangTidyCheck(Name, Context),
+        SomeOption(Options.get("SomeOption1", -1U)),
+        SomeOption(Options.get("SomeOption2", "some default")) {}
+
+    void storeOptions(ClangTidyOptions::OptionMap &Opts) {
+      Options.store(Opts, "SomeOption1", SomeOption1);
+      Options.store(Opts, "SomeOption2", SomeOption2);
+    }
+    ...
+
+Assuming the check is registered with the name "my-check", the option can then
+be set in a ``.clang-tidy`` file in the following way:
+
+.. code-block:: yaml
+
+  CheckOptions: {
+    - key: my-check.SomeOption1
+      value: 123
+    - key: my-check.SomeOption2
+      value: 'some other value'
+  }
 
 
 Running clang-tidy on LLVM
