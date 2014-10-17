@@ -5,10 +5,12 @@ add_clang_library(clangTidyGoogleModule
   ExplicitConstructorCheck.cpp
   ExplicitMakePairCheck.cpp
   GoogleTidyModule.cpp
+  IntegerTypesCheck.cpp
   MemsetZeroLengthCheck.cpp
   NamedParameterCheck.cpp
   OverloadedUnaryAndCheck.cpp
   StringReferenceMemberCheck.cpp
+  TodoCommentCheck.cpp
   UnnamedNamespaceInHeaderCheck.cpp
   UsingNamespaceDirectiveCheck.cpp
 
@@ -18,4 +20,5 @@ add_clang_library(clangTidyGoogleModule
   clangBasic
   clangLex
   clangTidy
+  clangTidyReadability
   )

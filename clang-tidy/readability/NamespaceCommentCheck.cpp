@@ -11,20 +11,28 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Lex/Lexer.h"
-
-
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/StringExtras.h"
 
 using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace readability {
 
-NamespaceCommentCheck::NamespaceCommentCheck()
-    : NamespaceCommentPattern("^/[/*] *(end (of )?)? *(anonymous|unnamed)? *"
+NamespaceCommentCheck::NamespaceCommentCheck(StringRef Name,
+                                             ClangTidyContext *Context)
+    : ClangTidyCheck(Name, Context),
+      NamespaceCommentPattern("^/[/*] *(end (of )?)? *(anonymous|unnamed)? *"
                               "namespace( +([a-zA-Z0-9_]+))? *(\\*/)?$",
                               llvm::Regex::IgnoreCase),
-      ShortNamespaceLines(1) {}
+      ShortNamespaceLines(Options.get("ShortNamespaceLines", 1u)),
+      SpacesBeforeComments(Options.get("SpacesBeforeComments",
+                                       Name.startswith("google") ? 2u : 1u)) {}
+
+void NamespaceCommentCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
+  Options.store(Opts, "ShortNamespaceLines", ShortNamespaceLines);
+  Options.store(Opts, "SpacesBeforeComments", SpacesBeforeComments);
+}
 
 void NamespaceCommentCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(namespaceDecl().bind("namespace"), this);
@@ -109,9 +117,11 @@ void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
   }
 
   diag(ND->getLocation(), "namespace not terminated with a closing comment")
-      << FixItHint::CreateInsertion(
-          AfterRBrace, " " + getNamespaceComment(ND, NeedLineBreak));
+      << FixItHint::CreateInsertion(AfterRBrace,
+                                    std::string(SpacesBeforeComments, ' ') +
+                                        getNamespaceComment(ND, NeedLineBreak));
 }
 
+} // namespace readability
 } // namespace tidy
 } // namespace clang
