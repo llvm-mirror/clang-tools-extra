@@ -16,6 +16,7 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace readability {
 namespace {
 
 tok::TokenKind getTokenKind(SourceLocation Loc, const SourceManager &SM,
@@ -109,6 +110,17 @@ SourceLocation findEndLocation(SourceLocation LastTokenLoc,
 }
 
 } // namespace
+
+BracesAroundStatementsCheck::BracesAroundStatementsCheck(
+    StringRef Name, ClangTidyContext *Context)
+    : ClangTidyCheck(Name, Context),
+      // Always add braces by default.
+      ShortStatementLines(Options.get("ShortStatementLines", 0U)) {}
+
+void
+BracesAroundStatementsCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
+  Options.store(Opts, "ShortStatementLines", ShortStatementLines);
+}
 
 void BracesAroundStatementsCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(ifStmt().bind("if"), this);
@@ -206,11 +218,6 @@ BracesAroundStatementsCheck::checkStmt(const MatchFinder::MatchResult &Result,
   if (S->getLocStart().isMacroID())
     return;
 
-  // TODO: Add an option to insert braces if:
-  //   * the body doesn't fit on the same line with the control statement
-  //   * the body takes more than one line
-  //   * always.
-
   const SourceManager &SM = *Result.SourceManager;
   const ASTContext *Context = Result.Context;
 
@@ -230,10 +237,21 @@ BracesAroundStatementsCheck::checkStmt(const MatchFinder::MatchResult &Result,
   }
 
   assert(StartLoc.isValid());
+  assert(EndLoc.isValid());
+  // Don't require braces for statements spanning less than certain number of
+  // lines.
+  if (ShortStatementLines) {
+    unsigned StartLine = SM.getSpellingLineNumber(StartLoc);
+    unsigned EndLine = SM.getSpellingLineNumber(EndLoc);
+    if (EndLine - StartLine < ShortStatementLines)
+      return;
+  }
+
   auto Diag = diag(StartLoc, "statement should be inside braces");
   Diag << FixItHint::CreateInsertion(StartLoc, " {")
        << FixItHint::CreateInsertion(EndLoc, ClosingInsertion);
 }
 
+} // namespace readability
 } // namespace tidy
 } // namespace clang
