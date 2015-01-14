@@ -1,4 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy_fix.sh %s misc-use-override %t
+// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-use-override %t
 // REQUIRES: shell
 
 #define ABSTRACT = 0
@@ -9,6 +9,7 @@
 #define NOT_OVERRIDE
 
 #define MUST_USE_RESULT __attribute__((warn_unused_result))
+#define UNUSED __attribute__((unused))
 
 struct MUST_USE_RESULT MustUseResultObject {};
 
@@ -24,7 +25,8 @@ struct Base {
 
   virtual void j() const;
   virtual MustUseResultObject k();
-  virtual bool l() MUST_USE_RESULT;
+  virtual bool l() MUST_USE_RESULT UNUSED;
+  virtual bool n() MUST_USE_RESULT UNUSED;
 
   virtual void m();
 };
@@ -71,9 +73,13 @@ public:
   // CHECK-MESSAGES: :[[@LINE-1]]:31: warning: Prefer using
   // CHECK-FIXES: {{^  MustUseResultObject k\(\) override;}}
 
-  virtual bool l() MUST_USE_RESULT; // Has an explicit attribute
+  virtual bool l() MUST_USE_RESULT UNUSED;
   // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: Prefer using
-  // CHECK-FIXES: {{^  bool l\(\) override MUST_USE_RESULT;}}
+  // CHECK-FIXES: {{^  bool l\(\) override MUST_USE_RESULT UNUSED;}}
+
+  virtual bool n() UNUSED MUST_USE_RESULT;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: Prefer using
+  // CHECK-FIXES: {{^  bool n\(\) override UNUSED MUST_USE_RESULT;}}
 
   virtual void m() override final;
   // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: Annotate this
@@ -117,9 +123,9 @@ public:
   // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: Annotate this
   // CHECK-FIXES: {{^  void j\(\) const final;}}
 
-  virtual bool l() final MUST_USE_RESULT;
+  virtual bool l() final MUST_USE_RESULT UNUSED;
   // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: Annotate this
-  // CHECK-FIXES: {{^  bool l\(\) final MUST_USE_RESULT;}}
+  // CHECK-FIXES: {{^  bool l\(\) final MUST_USE_RESULT UNUSED;}}
 };
 
 struct InlineDefinitions : public Base {
@@ -152,9 +158,9 @@ public:
   // CHECK-MESSAGES: :[[@LINE-1]]:31: warning: Prefer using
   // CHECK-FIXES: {{^  MustUseResultObject k\(\) override {}}}
 
-  virtual bool l() MUST_USE_RESULT {} // Has an explicit attribute
+  virtual bool l() MUST_USE_RESULT UNUSED {}
   // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: Prefer using
-  // CHECK-FIXES: {{^  bool l\(\) override MUST_USE_RESULT {}}}
+  // CHECK-FIXES: {{^  bool l\(\) override MUST_USE_RESULT UNUSED {}}}
 };
 
 struct Macros : public Base {

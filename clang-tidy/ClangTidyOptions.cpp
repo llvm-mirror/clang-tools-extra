@@ -101,6 +101,7 @@ ClangTidyOptions ClangTidyOptions::getDefaults() {
   ClangTidyOptions Options;
   Options.Checks = "";
   Options.HeaderFilterRegex = "";
+  Options.SystemHeaders = false;
   Options.AnalyzeTemporaryDtors = false;
   Options.User = llvm::None;
   for (ClangTidyModuleRegistry::iterator I = ClangTidyModuleRegistry::begin(),
@@ -122,6 +123,8 @@ ClangTidyOptions::mergeWith(const ClangTidyOptions &Other) const {
 
   if (Other.HeaderFilterRegex)
     Result.HeaderFilterRegex = Other.HeaderFilterRegex;
+  if (Other.SystemHeaders)
+    Result.SystemHeaders = Other.SystemHeaders;
   if (Other.AnalyzeTemporaryDtors)
     Result.AnalyzeTemporaryDtors = Other.AnalyzeTemporaryDtors;
   if (Other.User)
@@ -187,10 +190,10 @@ const ClangTidyOptions &FileOptionsProvider::getOptions(StringRef FileName) {
       while (Path != CurrentPath) {
         DEBUG(llvm::dbgs() << "Caching configuration for path " << Path
                            << ".\n");
-        CachedOptions.GetOrCreateValue(Path, *Result);
+        CachedOptions[Path] = *Result;
         Path = llvm::sys::path::parent_path(Path);
       }
-      return CachedOptions.GetOrCreateValue(Path, *Result).getValue();
+      return CachedOptions[Path] = *Result;
     }
   }
 }
@@ -232,8 +235,9 @@ FileOptionsProvider::TryReadConfigFile(StringRef Directory) {
     llvm::ErrorOr<ClangTidyOptions> ParsedOptions =
         ConfigHandler.second((*Text)->getBuffer());
     if (!ParsedOptions) {
-      llvm::errs() << "Error parsing " << ConfigFile << ": "
-                   << ParsedOptions.getError().message() << "\n";
+      if (ParsedOptions.getError())
+        llvm::errs() << "Error parsing " << ConfigFile << ": "
+                     << ParsedOptions.getError().message() << "\n";
       continue;
     }
 

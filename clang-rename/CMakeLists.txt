@@ -9,10 +9,8 @@ add_clang_library(clangRename
   LINK_LIBS
   clangAST
   clangBasic
-  clangFrontend
   clangIndex
-  clangRewrite
-  clangTooling
+  clangToolingCore
   )
 
 add_subdirectory(tool)

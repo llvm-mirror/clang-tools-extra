@@ -35,11 +35,10 @@ static cl::extrahelp ClangTidyHelp(
     "  option, command-line option takes precedence. The effective\n"
     "  configuration can be inspected using -dump-config.\n\n");
 
-const char DefaultChecks[] =
-    "*,"                       // Enable all checks, except these:
-    "-clang-analyzer-alpha*,"  // Too many false positives.
-    "-llvm-include-order,"     // Not implemented yet.
-    "-google-*,";              // Doesn't apply to LLVM.
+const char DefaultChecks[] =  // Enable these checks:
+    "clang-diagnostic-*,"     //   * compiler diagnostics
+    "clang-analyzer-*,"       //   * Static Analyzer checks
+    "-clang-analyzer-alpha*"; //   * but not alpha checks: many false positives
 
 static cl::opt<std::string>
 Checks("checks", cl::desc("Comma-separated list of globs with optional '-'\n"
@@ -63,6 +62,10 @@ HeaderFilter("header-filter",
                       ".clang-tidy file."),
              cl::init(""), cl::cat(ClangTidyCategory));
 
+static cl::opt<bool>
+    SystemHeaders("system-headers",
+                  cl::desc("Display the errors from system headers."),
+                  cl::init(false), cl::cat(ClangTidyCategory));
 static cl::opt<std::string>
 LineFilter("line-filter",
            cl::desc("List of files with line ranges to filter the\n"
@@ -75,8 +78,18 @@ LineFilter("line-filter",
                     "  ]"),
            cl::init(""), cl::cat(ClangTidyCategory));
 
-static cl::opt<bool> Fix("fix", cl::desc("Fix detected errors if possible."),
-                         cl::init(false), cl::cat(ClangTidyCategory));
+static cl::opt<bool>
+    Fix("fix", cl::desc("Apply suggested fixes. Without -fix-errors\n"
+                        "clang-tidy will bail out if any compilation\n"
+                        "errors were found."),
+        cl::init(false), cl::cat(ClangTidyCategory));
+
+static cl::opt<bool>
+    FixErrors("fix-errors",
+              cl::desc("Apply suggested fixes even if compilation errors\n"
+                       "were found. If compiler errors have attached\n"
+                       "fix-its, clang-tidy will apply them as well."),
+              cl::init(false), cl::cat(ClangTidyCategory));
 
 static cl::opt<bool>
 ListChecks("list-checks",
@@ -97,6 +110,11 @@ static cl::opt<bool>
 DumpConfig("dump-config",
            cl::desc("Dumps configuration in the YAML format to stdout."),
            cl::init(false), cl::cat(ClangTidyCategory));
+
+static cl::opt<bool> EnableCheckProfile(
+    "enable-check-profile",
+    cl::desc("Enable per-check timing profiles, and print a report to stderr."),
+    cl::init(false), cl::cat(ClangTidyCategory));
 
 static cl::opt<bool> AnalyzeTemporaryDtors(
     "analyze-temporary-dtors",
@@ -143,6 +161,45 @@ static void printStats(const ClangTidyStats &Stats) {
   }
 }
 
+static void printProfileData(const ProfileData &Profile,
+                             llvm::raw_ostream &OS) {
+  // Time is first to allow for sorting by it.
+  std::vector<std::pair<llvm::TimeRecord, StringRef>> Timers;
+  TimeRecord Total;
+
+  for (const auto& P : Profile.Records) {
+    Timers.emplace_back(P.getValue(), P.getKey());
+    Total += P.getValue();
+  }
+
+  std::sort(Timers.begin(), Timers.end());
+
+  std::string Line = "===" + std::string(73, '-') + "===\n";
+  OS << Line;
+
+  if (Total.getUserTime())
+    OS << "   ---User Time---";
+  if (Total.getSystemTime())
+    OS << "   --System Time--";
+  if (Total.getProcessTime())
+    OS << "   --User+System--";
+  OS << "   ---Wall Time---";
+  if (Total.getMemUsed())
+    OS << "  ---Mem---";
+  OS << "  --- Name ---\n";
+
+  // Loop through all of the timing data, printing it out.
+  for (auto I = Timers.rbegin(), E = Timers.rend(); I != E; ++I) {
+    I->first.print(Total, OS);
+    OS << I->second << '\n';
+  }
+
+  Total.print(Total, OS);
+  OS << "Total\n";
+  OS << Line << "\n";
+  OS.flush();
+}
+
 std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
   ClangTidyGlobalOptions GlobalOptions;
   if (std::error_code Err = parseLineFilter(LineFilter, GlobalOptions)) {
@@ -154,6 +211,7 @@ std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
   ClangTidyOptions DefaultOptions;
   DefaultOptions.Checks = DefaultChecks;
   DefaultOptions.HeaderFilterRegex = HeaderFilter;
+  DefaultOptions.SystemHeaders = SystemHeaders;
   DefaultOptions.AnalyzeTemporaryDtors = AnalyzeTemporaryDtors;
   DefaultOptions.User = llvm::sys::Process::GetEnv("USER");
   // USERNAME is used on Windows.
@@ -165,6 +223,8 @@ std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
     OverrideOptions.Checks = Checks;
   if (HeaderFilter.getNumOccurrences() > 0)
     OverrideOptions.HeaderFilterRegex = HeaderFilter;
+  if (SystemHeaders.getNumOccurrences() > 0)
+    OverrideOptions.SystemHeaders = SystemHeaders;
   if (AnalyzeTemporaryDtors.getNumOccurrences() > 0)
     OverrideOptions.AnalyzeTemporaryDtors = AnalyzeTemporaryDtors;
 
@@ -220,11 +280,22 @@ int clangTidyMain(int argc, const char **argv) {
     return 1;
   }
 
+  ProfileData Profile;
+
   std::vector<ClangTidyError> Errors;
   ClangTidyStats Stats =
       runClangTidy(std::move(OptionsProvider), OptionsParser.getCompilations(),
-                   OptionsParser.getSourcePathList(), &Errors);
-  handleErrors(Errors, Fix);
+                   OptionsParser.getSourcePathList(), &Errors,
+                   EnableCheckProfile ? &Profile : nullptr);
+  bool FoundErrors =
+      std::find_if(Errors.begin(), Errors.end(), [](const ClangTidyError &E) {
+        return E.DiagLevel == ClangTidyError::Error;
+      }) != Errors.end();
+
+  const bool DisableFixes = Fix && FoundErrors && !FixErrors;
+
+  // -fix-errors implies -fix.
+  handleErrors(Errors, (FixErrors || Fix) && !DisableFixes);
 
   if (!ExportFixes.empty() && !Errors.empty()) {
     std::error_code EC;
@@ -237,6 +308,13 @@ int clangTidyMain(int argc, const char **argv) {
   }
 
   printStats(Stats);
+  if (DisableFixes)
+    llvm::errs() << "Found compiler errors, but -fix-error was not specified.\n"
+                    "Fixes have NOT been applied.\n\n";
+
+  if (EnableCheckProfile)
+    printProfileData(Profile, llvm::errs());
+
   return 0;
 }
 
@@ -251,6 +329,10 @@ static int GoogleModuleAnchorDestination = GoogleModuleAnchorSource;
 // This anchor is used to force the linker to link the MiscModule.
 extern volatile int MiscModuleAnchorSource;
 static int MiscModuleAnchorDestination = MiscModuleAnchorSource;
+
+// This anchor is used to force the linker to link the ReadabilityModule.
+extern volatile int ReadabilityModuleAnchorSource;
+static int ReadabilityModuleAnchorDestination = ReadabilityModuleAnchorSource;
 
 } // namespace tidy
 } // namespace clang
