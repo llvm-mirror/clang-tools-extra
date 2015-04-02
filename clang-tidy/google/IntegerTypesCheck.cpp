@@ -9,13 +9,14 @@
 
 #include "IntegerTypesCheck.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/TargetInfo.h"
 
 namespace clang {
 namespace tidy {
+namespace google {
 namespace runtime {
 
 using namespace ast_matchers;
@@ -26,6 +27,10 @@ void IntegerTypesCheck::registerMatchers(MatchFinder *Finder) {
 }
 
 void IntegerTypesCheck::check(const MatchFinder::MatchResult &Result) {
+  // The relevant Style Guide rule only applies to C++.
+  if (!Result.Context->getLangOpts().CPlusPlus)
+    return;
+
   auto TL = *Result.Nodes.getNodeAs<TypeLoc>("tl");
   SourceLocation Loc = TL.getLocStart();
 
@@ -94,5 +99,6 @@ void IntegerTypesCheck::check(const MatchFinder::MatchResult &Result) {
 }
 
 } // namespace runtime
+} // namespace google
 } // namespace tidy
 } // namespace clang

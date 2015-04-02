@@ -6,9 +6,10 @@ add_clang_library(clangApplyReplacements
   lib/Tooling/ApplyReplacements.cpp
 
   LINK_LIBS
+  clangAST
   clangBasic
   clangRewrite
-  clangTooling
+  clangToolingCore
   )
 
 include_directories(

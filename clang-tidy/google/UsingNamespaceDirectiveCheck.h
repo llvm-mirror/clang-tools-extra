@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_USING_NAMESPACE_CHECK_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_USING_NAMESPACE_CHECK_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_USINGNAMESPACEDIRECTIVECHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_USINGNAMESPACEDIRECTIVECHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace google {
 namespace build {
 
 /// \brief Finds using namespace directives.
@@ -29,7 +30,8 @@ public:
 };
 
 } // namespace build
+} // namespace google
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_USING_NAMESPACE_CHECK_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_USINGNAMESPACEDIRECTIVECHECK_H

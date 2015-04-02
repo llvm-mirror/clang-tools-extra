@@ -10,24 +10,27 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "../readability/BracesAroundStatementsCheck.h"
+#include "../readability/FunctionSizeCheck.h"
+#include "../readability/NamespaceCommentCheck.h"
+#include "../readability/RedundantSmartptrGetCheck.h"
 #include "AvoidCStyleCastsCheck.h"
 #include "ExplicitConstructorCheck.h"
 #include "ExplicitMakePairCheck.h"
+#include "GlobalNamesInHeadersCheck.h"
 #include "IntegerTypesCheck.h"
 #include "MemsetZeroLengthCheck.h"
-#include "NamedParameterCheck.h"
 #include "OverloadedUnaryAndCheck.h"
 #include "StringReferenceMemberCheck.h"
 #include "TodoCommentCheck.h"
 #include "UnnamedNamespaceInHeaderCheck.h"
 #include "UsingNamespaceDirectiveCheck.h"
-#include "../readability/BracesAroundStatementsCheck.h"
-#include "../readability/NamespaceCommentCheck.h"
 
 using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace google {
 
 class GoogleModule : public ClangTidyModule {
 public:
@@ -50,14 +53,21 @@ public:
         "google-runtime-memset");
     CheckFactories.registerCheck<readability::AvoidCStyleCastsCheck>(
         "google-readability-casting");
-    CheckFactories.registerCheck<readability::NamedParameterCheck>(
-        "google-readability-function");
     CheckFactories.registerCheck<readability::TodoCommentCheck>(
         "google-readability-todo");
-    CheckFactories.registerCheck<readability::NamespaceCommentCheck>(
-        "google-readability-namespace-comments");
-    CheckFactories.registerCheck<readability::BracesAroundStatementsCheck>(
-        "google-readability-braces-around-statements");
+    CheckFactories
+        .registerCheck<clang::tidy::readability::BracesAroundStatementsCheck>(
+            "google-readability-braces-around-statements");
+    CheckFactories.registerCheck<readability::GlobalNamesInHeadersCheck>(
+        "google-global-names-in-headers");
+    CheckFactories.registerCheck<clang::tidy::readability::FunctionSizeCheck>(
+        "google-readability-function-size");
+    CheckFactories
+        .registerCheck<clang::tidy::readability::NamespaceCommentCheck>(
+            "google-readability-namespace-comments");
+    CheckFactories
+        .registerCheck<clang::tidy::readability::RedundantSmartptrGetCheck>(
+            "google-readability-redundant-smartptr-get");
   }
 
   ClangTidyOptions getModuleOptions() override {
@@ -65,7 +75,8 @@ public:
     auto &Opts = Options.CheckOptions;
     Opts["google-readability-braces-around-statements.ShortStatementLines"] =
         "1";
-    Opts["google-readability-namespace-comments.ShortNamespaceLines"] = "1";
+    Opts["google-readability-function-size.StatementThreshold"] = "800";
+    Opts["google-readability-namespace-comments.ShortNamespaceLines"] = "10";
     Opts["google-readability-namespace-comments.SpacesBeforeComments"] = "2";
     return Options;
   }
@@ -74,6 +85,8 @@ public:
 // Register the GoogleTidyModule using this statically initialized variable.
 static ClangTidyModuleRegistry::Add<GoogleModule> X("google-module",
                                                     "Adds Google lint checks.");
+
+} // namespace google
 
 // This anchor is used to force the linker to link in the generated object file
 // and thus register the GoogleModule.

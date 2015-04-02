@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "ExplicitMakePairCheck.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
-#include "clang/AST/ASTContext.h"
 
 using namespace clang::ast_matchers;
 
@@ -23,6 +23,7 @@ AST_MATCHER(DeclRefExpr, hasExplicitTemplateArgs) {
 } // namespace ast_matchers
 
 namespace tidy {
+namespace google {
 namespace build {
 
 void
@@ -67,5 +68,6 @@ void ExplicitMakePairCheck::check(const MatchFinder::MatchResult &Result) {
 }
 
 } // namespace build
+} // namespace google
 } // namespace tidy
 } // namespace clang

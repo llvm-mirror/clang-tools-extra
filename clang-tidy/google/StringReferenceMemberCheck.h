@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_STRING_REF_MEMBER_CHECK_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_STRING_REF_MEMBER_CHECK_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_STRINGREFERENCEMEMBERCHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_STRINGREFERENCEMEMBERCHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace google {
 namespace runtime {
 
 /// \brief Finds members of type 'const string&'.
@@ -46,7 +47,8 @@ public:
 };
 
 } // namespace runtime
+} // namespace google
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_STRING_REF_MEMBER_CHECK_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_STRINGREFERENCEMEMBERCHECK_H

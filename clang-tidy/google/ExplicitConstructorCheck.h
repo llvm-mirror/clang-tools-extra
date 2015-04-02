@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICIT_CONSTRUCTOR_CHECK_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICIT_CONSTRUCTOR_CHECK_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICITCONSTRUCTORCHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICITCONSTRUCTORCHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace google {
 
 /// \brief Checks that all single-argument constructors are explicit.
 ///
@@ -27,7 +28,8 @@ public:
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
+} // namespace google
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICIT_CONSTRUCTOR_CHECK_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICITCONSTRUCTORCHECK_H

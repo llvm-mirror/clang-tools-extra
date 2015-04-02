@@ -8,10 +8,12 @@ add_clang_executable(clang-tidy
 target_link_libraries(clang-tidy
   clangAST
   clangASTMatchers
+  clangBasic
   clangTidy
   clangTidyGoogleModule
   clangTidyLLVMModule
   clangTidyMiscModule
+  clangTidyReadabilityModule
   clangTooling
   )
 

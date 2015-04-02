@@ -31,20 +31,18 @@ using namespace clang::replace;
 static cl::opt<std::string> Directory(cl::Positional, cl::Required,
                                       cl::desc("<Search Root Directory>"));
 
+static cl::OptionCategory ReplacementCategory("Replacement Options");
 static cl::OptionCategory FormattingCategory("Formatting Options");
+
+const cl::OptionCategory *VisibleCategories[] = {&ReplacementCategory,
+                                                 &FormattingCategory};
 
 static cl::opt<bool> RemoveTUReplacementFiles(
     "remove-change-desc-files",
     cl::desc("Remove the change description files regardless of successful\n"
              "merging/replacing."),
-    cl::init(false));
+    cl::init(false), cl::cat(ReplacementCategory));
 
-// Update this list of options to show in -help as new options are added.
-// Should add even those options marked as 'Hidden'. Any option not listed
-// here will get marked 'ReallyHidden' so they don't appear in any -help text.
-const char *OptionsToShow[] = { "help",                     "version",
-                                "remove-change-desc-files", "format",
-                                "style-config",             "style" };
 
 static cl::opt<bool> DoFormat(
     "format",
@@ -68,6 +66,7 @@ static cl::opt<std::string>
 FormatStyleOpt("style", cl::desc(format::StyleOptionHelpDescription),
                cl::init("LLVM"), cl::cat(FormattingCategory));
 
+namespace {
 // Helper object to remove the TUReplacement files (triggered by
 // "remove-change-desc-files" command line option) when exiting current scope.
 class ScopedFileRemover {
@@ -84,8 +83,9 @@ private:
   const TUReplacementFiles &TURFiles;
   clang::DiagnosticsEngine &Diag;
 };
+} // namespace
 
-void printVersion() {
+static void printVersion() {
   outs() << "clang-apply-replacements version " CLANG_VERSION_STRING << "\n";
 }
 
@@ -136,9 +136,9 @@ getRewrittenData(const std::vector<tooling::Replacement> &Replacements,
 ///
 /// \returns \li true if all replacements applied successfully.
 ///          \li false if at least one replacement failed to apply.
-bool applyReplacements(const std::vector<tooling::Replacement> &Replacements,
-                       std::string &Result,
-                       DiagnosticsEngine &Diagnostics) {
+static bool
+applyReplacements(const std::vector<tooling::Replacement> &Replacements,
+                  std::string &Result, DiagnosticsEngine &Diagnostics) {
   FileManager Files((FileSystemOptions()));
   SourceManager SM(Diagnostics, Files);
   Rewriter Rewrites(SM, LangOptions());
@@ -163,11 +163,11 @@ bool applyReplacements(const std::vector<tooling::Replacement> &Replacements,
 /// \returns \li true if reformatting replacements were all successfully
 ///          applied.
 ///          \li false if at least one reformatting replacement failed to apply.
-bool applyFormatting(const std::vector<tooling::Replacement> &Replacements,
-                     const StringRef FileData,
-                     std::string &FormattedFileData,
-                     const format::FormatStyle &FormatStyle,
-                     DiagnosticsEngine &Diagnostics) {
+static bool
+applyFormatting(const std::vector<tooling::Replacement> &Replacements,
+                const StringRef FileData, std::string &FormattedFileData,
+                const format::FormatStyle &FormatStyle,
+                DiagnosticsEngine &Diagnostics) {
   assert(!Replacements.empty() && "Need at least one replacement");
 
   RangeVector Ranges = calculateChangedRanges(Replacements);
@@ -196,14 +196,7 @@ bool applyFormatting(const std::vector<tooling::Replacement> &Replacements,
 }
 
 int main(int argc, char **argv) {
-  // Only include our options in -help output.
-  StringMap<cl::Option*> OptMap;
-  cl::getRegisteredOptions(OptMap);
-  const char **EndOpts = std::end(OptionsToShow);
-  for (const auto &Opt : OptMap) {
-    if (std::find(OptionsToShow, EndOpts, Opt.getKey()) == EndOpts)
-      Opt.getValue()->setHiddenFlag(cl::ReallyHidden);
-  }
+  cl::HideUnrelatedOptions(makeArrayRef(VisibleCategories));
 
   cl::SetVersionPrinter(&printVersion);
   cl::ParseCommandLineOptions(argc, argv);
@@ -270,7 +263,7 @@ int main(int argc, char **argv) {
 
     // Write new file to disk
     std::error_code EC;
-    llvm::raw_fd_ostream FileStream(FileName, EC, llvm::sys::fs::F_Text);
+    llvm::raw_fd_ostream FileStream(FileName, EC, llvm::sys::fs::F_None);
     if (EC) {
       llvm::errs() << "Could not open " << FileName << " for writing\n";
       continue;

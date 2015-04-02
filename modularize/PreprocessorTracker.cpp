@@ -251,11 +251,9 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/StringPool.h"
 #include "llvm/Support/raw_ostream.h"
+#include "ModularizeUtilities.h"
 
 namespace Modularize {
-
-// Forwards.
-class PreprocessorTrackerImpl;
 
 // Some handle types
 typedef llvm::PooledStringPtr StringHandle;
@@ -302,7 +300,8 @@ static void getSourceLocationLineAndColumn(clang::Preprocessor &PP,
 }
 
 // Retrieve source snippet from file image.
-std::string getSourceString(clang::Preprocessor &PP, clang::SourceRange Range) {
+static std::string getSourceString(clang::Preprocessor &PP,
+                                   clang::SourceRange Range) {
   clang::SourceLocation BeginLoc = Range.getBegin();
   clang::SourceLocation EndLoc = Range.getEnd();
   const char *BeginPtr = PP.getSourceManager().getCharacterData(BeginLoc);
@@ -312,7 +311,8 @@ std::string getSourceString(clang::Preprocessor &PP, clang::SourceRange Range) {
 }
 
 // Retrieve source line from file image given a location.
-std::string getSourceLine(clang::Preprocessor &PP, clang::SourceLocation Loc) {
+static std::string getSourceLine(clang::Preprocessor &PP,
+                                 clang::SourceLocation Loc) {
   const llvm::MemoryBuffer *MemBuffer =
       PP.getSourceManager().getBuffer(PP.getSourceManager().getFileID(Loc));
   const char *Buffer = MemBuffer->getBufferStart();
@@ -337,8 +337,8 @@ std::string getSourceLine(clang::Preprocessor &PP, clang::SourceLocation Loc) {
 }
 
 // Retrieve source line from file image given a file ID and line number.
-std::string getSourceLine(clang::Preprocessor &PP, clang::FileID FileID,
-                          int Line) {
+static std::string getSourceLine(clang::Preprocessor &PP, clang::FileID FileID,
+                                 int Line) {
   const llvm::MemoryBuffer *MemBuffer = PP.getSourceManager().getBuffer(FileID);
   const char *Buffer = MemBuffer->getBufferStart();
   const char *BufferEnd = MemBuffer->getBufferEnd();
@@ -374,10 +374,10 @@ std::string getSourceLine(clang::Preprocessor &PP, clang::FileID FileID,
 // for the macro instance, which in the case of a function-style
 // macro will be a ')', but for an object-style macro, it
 // will be the macro name itself.
-std::string getMacroUnexpandedString(clang::SourceRange Range,
-                                     clang::Preprocessor &PP,
-                                     llvm::StringRef MacroName,
-                                     const clang::MacroInfo *MI) {
+static std::string getMacroUnexpandedString(clang::SourceRange Range,
+                                            clang::Preprocessor &PP,
+                                            llvm::StringRef MacroName,
+                                            const clang::MacroInfo *MI) {
   clang::SourceLocation BeginLoc(Range.getBegin());
   const char *BeginPtr = PP.getSourceManager().getCharacterData(BeginLoc);
   size_t Length;
@@ -399,10 +399,10 @@ std::string getMacroUnexpandedString(clang::SourceRange Range,
 // allows modularize to effectively work with respect to macro
 // consistency checking, although it displays the incorrect
 // expansion in error messages.
-std::string getMacroExpandedString(clang::Preprocessor &PP,
-                                   llvm::StringRef MacroName,
-                                   const clang::MacroInfo *MI,
-                                   const clang::MacroArgs *Args) {
+static std::string getMacroExpandedString(clang::Preprocessor &PP,
+                                          llvm::StringRef MacroName,
+                                          const clang::MacroInfo *MI,
+                                          const clang::MacroArgs *Args) {
   std::string Expanded;
   // Walk over the macro Tokens.
   typedef clang::MacroInfo::tokens_iterator Iter;
@@ -457,77 +457,7 @@ std::string getMacroExpandedString(clang::Preprocessor &PP,
   return Expanded;
 }
 
-// Get the string representing a vector of Tokens.
-std::string
-getTokensSpellingString(clang::Preprocessor &PP,
-                        llvm::SmallVectorImpl<clang::Token> &Tokens) {
-  std::string Expanded;
-  // Walk over the macro Tokens.
-  typedef llvm::SmallVectorImpl<clang::Token>::iterator Iter;
-  for (Iter I = Tokens.begin(), E = Tokens.end(); I != E; ++I)
-    Expanded += PP.getSpelling(*I); // Not an identifier.
-  return llvm::StringRef(Expanded).trim().str();
-}
-
-// Get the expansion for a macro instance, given the information
-// provided by PPCallbacks.
-std::string getExpandedString(clang::Preprocessor &PP,
-                              llvm::StringRef MacroName,
-                              const clang::MacroInfo *MI,
-                              const clang::MacroArgs *Args) {
-  std::string Expanded;
-  // Walk over the macro Tokens.
-  typedef clang::MacroInfo::tokens_iterator Iter;
-  for (Iter I = MI->tokens_begin(), E = MI->tokens_end(); I != E; ++I) {
-    clang::IdentifierInfo *II = I->getIdentifierInfo();
-    int ArgNo = (II && Args ? MI->getArgumentNum(II) : -1);
-    if (ArgNo == -1) {
-      // This isn't an argument, just add it.
-      if (II == nullptr)
-        Expanded += PP.getSpelling((*I)); // Not an identifier.
-      else {
-        // Token is for an identifier.
-        std::string Name = II->getName().str();
-        // Check for nexted macro references.
-        clang::MacroInfo *MacroInfo = PP.getMacroInfo(II);
-        if (MacroInfo)
-          Expanded += getMacroExpandedString(PP, Name, MacroInfo, nullptr);
-        else
-          Expanded += Name;
-      }
-      continue;
-    }
-    // We get here if it's a function-style macro with arguments.
-    const clang::Token *ResultArgToks;
-    const clang::Token *ArgTok = Args->getUnexpArgument(ArgNo);
-    if (Args->ArgNeedsPreexpansion(ArgTok, PP))
-      ResultArgToks = &(const_cast<clang::MacroArgs *>(Args))
-          ->getPreExpArgument(ArgNo, MI, PP)[0];
-    else
-      ResultArgToks = ArgTok; // Use non-preexpanded Tokens.
-    // If the arg token didn't expand into anything, ignore it.
-    if (ResultArgToks->is(clang::tok::eof))
-      continue;
-    unsigned NumToks = clang::MacroArgs::getArgLength(ResultArgToks);
-    // Append the resulting argument expansions.
-    for (unsigned ArgumentIndex = 0; ArgumentIndex < NumToks; ++ArgumentIndex) {
-      const clang::Token &AT = ResultArgToks[ArgumentIndex];
-      clang::IdentifierInfo *II = AT.getIdentifierInfo();
-      if (II == nullptr)
-        Expanded += PP.getSpelling(AT); // Not an identifier.
-      else {
-        // It's an identifier.  Check for further expansion.
-        std::string Name = II->getName().str();
-        clang::MacroInfo *MacroInfo = PP.getMacroInfo(II);
-        if (MacroInfo)
-          Expanded += getMacroExpandedString(PP, Name, MacroInfo, nullptr);
-        else
-          Expanded += Name;
-      }
-    }
-  }
-  return Expanded;
-}
+namespace {
 
 // ConditionValueKind strings.
 const char *
@@ -804,6 +734,8 @@ public:
   std::vector<ConditionalExpansionInstance> ConditionalExpansionInstances;
 };
 
+class PreprocessorTrackerImpl;
+
 // Preprocessor callbacks for modularize.
 //
 // This class derives from the Clang PPCallbacks class to track preprocessor
@@ -866,9 +798,19 @@ ConditionalExpansionMapIter;
 // course of running modularize.
 class PreprocessorTrackerImpl : public PreprocessorTracker {
 public:
-  PreprocessorTrackerImpl()
-      : CurrentInclusionPathHandle(InclusionPathHandleInvalid),
-        InNestedHeader(false) {}
+  PreprocessorTrackerImpl(llvm::SmallVector<std::string, 32> &Headers,
+        bool DoBlockCheckHeaderListOnly)
+      : BlockCheckHeaderListOnly(DoBlockCheckHeaderListOnly),
+        CurrentInclusionPathHandle(InclusionPathHandleInvalid),
+        InNestedHeader(false) {
+    // Use canonical header path representation.
+    for (llvm::ArrayRef<std::string>::iterator I = Headers.begin(),
+      E = Headers.end();
+      I != E; ++I) {
+      HeaderList.push_back(getCanonicalPath(*I));
+    }
+  }
+
   ~PreprocessorTrackerImpl() {}
 
   // Handle entering a preprocessing session.
@@ -889,6 +831,10 @@ public:
   // "namespace {}" blocks containing #include directives.
   void handleIncludeDirective(llvm::StringRef DirectivePath, int DirectiveLine,
                               int DirectiveColumn, llvm::StringRef TargetPath) {
+    // If it's not a header in the header list, ignore it with respect to
+    // the check.
+    if (BlockCheckHeaderListOnly && !isHeaderListHeader(TargetPath))
+      return;
     HeaderHandle CurrentHeaderHandle = findHeaderHandle(DirectivePath);
     StringHandle IncludeHeaderHandle = addString(TargetPath);
     for (std::vector<PPItemKey>::const_iterator I = IncludeDirectives.begin(),
@@ -916,7 +862,10 @@ public:
     // and block statement.
     clang::FileID FileID = PP.getSourceManager().getFileID(BlockStartLoc);
     std::string SourcePath = getSourceLocationFile(PP, BlockStartLoc);
+    SourcePath = ModularizeUtilities::getCanonicalPath(SourcePath);
     HeaderHandle SourceHandle = findHeaderHandle(SourcePath);
+    if (SourceHandle == -1)
+      return true;
     int BlockStartLine, BlockStartColumn, BlockEndLine, BlockEndColumn;
     bool returnValue = true;
     getSourceLocationLineAndColumn(PP, BlockStartLoc, BlockStartLine,
@@ -957,17 +906,21 @@ public:
       pushHeaderHandle(H);
     // Check for nested header.
     if (!InNestedHeader)
-      InNestedHeader = !HeadersInThisCompile.insert(H);
+      InNestedHeader = !HeadersInThisCompile.insert(H).second;
   }
+
   // Handle exiting a header source file.
   void handleHeaderExit(llvm::StringRef HeaderPath) {
     // Ignore <built-in> and <command-line> to reduce message clutter.
     if (HeaderPath.startswith("<"))
       return;
     HeaderHandle H = findHeaderHandle(HeaderPath);
+    HeaderHandle TH;
     if (isHeaderHandleInStack(H)) {
-      while ((H != getCurrentHeaderHandle()) && (HeaderStack.size() != 0))
+      do {
+        TH = getCurrentHeaderHandle();
         popHeaderHandle();
+      } while ((TH != H) && (HeaderStack.size() != 0));
     }
     InNestedHeader = false;
   }
@@ -975,11 +928,29 @@ public:
   // Lookup/add string.
   StringHandle addString(llvm::StringRef Str) { return Strings.intern(Str); }
 
+  // Convert to a canonical path.
+  std::string getCanonicalPath(llvm::StringRef path) const {
+    std::string CanonicalPath(path);
+    std::replace(CanonicalPath.begin(), CanonicalPath.end(), '\\', '/');
+    return CanonicalPath;
+  }
+
+  // Return true if the given header is in the header list.
+  bool isHeaderListHeader(llvm::StringRef HeaderPath) const {
+    std::string CanonicalPath = getCanonicalPath(HeaderPath);
+    for (llvm::ArrayRef<std::string>::iterator I = HeaderList.begin(),
+        E = HeaderList.end();
+        I != E; ++I) {
+      if (*I == CanonicalPath)
+        return true;
+    }
+    return false;
+  }
+
   // Get the handle of a header file entry.
   // Return HeaderHandleInvalid if not found.
   HeaderHandle findHeaderHandle(llvm::StringRef HeaderPath) const {
-    std::string CanonicalPath(HeaderPath);
-    std::replace(CanonicalPath.begin(), CanonicalPath.end(), '\\', '/');
+    std::string CanonicalPath = getCanonicalPath(HeaderPath);
     HeaderHandle H = 0;
     for (std::vector<StringHandle>::const_iterator I = HeaderPaths.begin(),
                                                    E = HeaderPaths.end();
@@ -993,8 +964,7 @@ public:
   // Add a new header file entry, or return existing handle.
   // Return the header handle.
   HeaderHandle addHeader(llvm::StringRef HeaderPath) {
-    std::string CanonicalPath(HeaderPath);
-    std::replace(CanonicalPath.begin(), CanonicalPath.end(), '\\', '/');
+    std::string CanonicalPath = getCanonicalPath(HeaderPath);
     HeaderHandle H = findHeaderHandle(CanonicalPath);
     if (H == HeaderHandleInvalid) {
       H = HeaderPaths.size();
@@ -1296,6 +1266,9 @@ public:
   }
 
 private:
+  llvm::SmallVector<std::string, 32> HeaderList;
+  // Only do extern, namespace check for headers in HeaderList.
+  bool BlockCheckHeaderListOnly;
   llvm::StringPool Strings;
   std::vector<StringHandle> HeaderPaths;
   std::vector<HeaderHandle> HeaderStack;
@@ -1308,14 +1281,18 @@ private:
   bool InNestedHeader;
 };
 
+} // namespace
+
 // PreprocessorTracker functions.
 
 // PreprocessorTracker desctructor.
 PreprocessorTracker::~PreprocessorTracker() {}
 
 // Create instance of PreprocessorTracker.
-PreprocessorTracker *PreprocessorTracker::create() {
-  return new PreprocessorTrackerImpl();
+PreprocessorTracker *PreprocessorTracker::create(
+    llvm::SmallVector<std::string, 32> &Headers,
+    bool DoBlockCheckHeaderListOnly) {
+  return new PreprocessorTrackerImpl(Headers, DoBlockCheckHeaderListOnly);
 }
 
 // Preprocessor callbacks for modularize.

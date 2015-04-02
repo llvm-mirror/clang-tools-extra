@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICIT_MAKE_PAIR_CHECK_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICIT_MAKE_PAIR_CHECK_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICITMAKEPAIRCHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICITMAKEPAIRCHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace google {
 namespace build {
 
 /// \brief Check that make_pair's template arguments are deduced.
@@ -31,7 +32,8 @@ public:
 };
 
 } // namespace build
+} // namespace google
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICIT_MAKE_PAIR_CHECK_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_EXPLICITMAKEPAIRCHECK_H

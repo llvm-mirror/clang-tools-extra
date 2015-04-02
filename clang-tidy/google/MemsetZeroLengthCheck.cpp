@@ -8,15 +8,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "MemsetZeroLengthCheck.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
-#include "clang/AST/ASTContext.h"
 #include "clang/Lex/Lexer.h"
 
 using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace google {
 namespace runtime {
 
 void
@@ -85,5 +86,6 @@ void MemsetZeroLengthCheck::check(const MatchFinder::MatchResult &Result) {
 }
 
 } // namespace runtime
+} // namespace google
 } // namespace tidy
 } // namespace clang
