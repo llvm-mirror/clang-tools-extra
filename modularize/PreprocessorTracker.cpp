@@ -251,6 +251,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/StringPool.h"
 #include "llvm/Support/raw_ostream.h"
+#include "ModularizeUtilities.h"
 
 namespace Modularize {
 
@@ -866,9 +867,19 @@ ConditionalExpansionMapIter;
 // course of running modularize.
 class PreprocessorTrackerImpl : public PreprocessorTracker {
 public:
-  PreprocessorTrackerImpl()
-      : CurrentInclusionPathHandle(InclusionPathHandleInvalid),
-        InNestedHeader(false) {}
+  PreprocessorTrackerImpl(llvm::SmallVector<std::string, 32> &Headers,
+        bool DoBlockCheckHeaderListOnly)
+      : BlockCheckHeaderListOnly(DoBlockCheckHeaderListOnly),
+        CurrentInclusionPathHandle(InclusionPathHandleInvalid),
+        InNestedHeader(false) {
+    // Use canonical header path representation.
+    for (llvm::ArrayRef<std::string>::iterator I = Headers.begin(),
+      E = Headers.end();
+      I != E; ++I) {
+      HeaderList.push_back(getCanonicalPath(*I));
+    }
+  }
+
   ~PreprocessorTrackerImpl() {}
 
   // Handle entering a preprocessing session.
@@ -889,6 +900,10 @@ public:
   // "namespace {}" blocks containing #include directives.
   void handleIncludeDirective(llvm::StringRef DirectivePath, int DirectiveLine,
                               int DirectiveColumn, llvm::StringRef TargetPath) {
+    // If it's not a header in the header list, ignore it with respect to
+    // the check.
+    if (BlockCheckHeaderListOnly && !isHeaderListHeader(TargetPath))
+      return;
     HeaderHandle CurrentHeaderHandle = findHeaderHandle(DirectivePath);
     StringHandle IncludeHeaderHandle = addString(TargetPath);
     for (std::vector<PPItemKey>::const_iterator I = IncludeDirectives.begin(),
@@ -916,7 +931,10 @@ public:
     // and block statement.
     clang::FileID FileID = PP.getSourceManager().getFileID(BlockStartLoc);
     std::string SourcePath = getSourceLocationFile(PP, BlockStartLoc);
+    SourcePath = ModularizeUtilities::getCanonicalPath(SourcePath);
     HeaderHandle SourceHandle = findHeaderHandle(SourcePath);
+    if (SourceHandle == -1)
+      return true;
     int BlockStartLine, BlockStartColumn, BlockEndLine, BlockEndColumn;
     bool returnValue = true;
     getSourceLocationLineAndColumn(PP, BlockStartLoc, BlockStartLine,
@@ -959,15 +977,19 @@ public:
     if (!InNestedHeader)
       InNestedHeader = !HeadersInThisCompile.insert(H).second;
   }
+
   // Handle exiting a header source file.
   void handleHeaderExit(llvm::StringRef HeaderPath) {
     // Ignore <built-in> and <command-line> to reduce message clutter.
     if (HeaderPath.startswith("<"))
       return;
     HeaderHandle H = findHeaderHandle(HeaderPath);
+    HeaderHandle TH;
     if (isHeaderHandleInStack(H)) {
-      while ((H != getCurrentHeaderHandle()) && (HeaderStack.size() != 0))
+      do {
+        TH = getCurrentHeaderHandle();
         popHeaderHandle();
+      } while ((TH != H) && (HeaderStack.size() != 0));
     }
     InNestedHeader = false;
   }
@@ -975,11 +997,29 @@ public:
   // Lookup/add string.
   StringHandle addString(llvm::StringRef Str) { return Strings.intern(Str); }
 
+  // Convert to a canonical path.
+  std::string getCanonicalPath(llvm::StringRef path) const {
+    std::string CanonicalPath(path);
+    std::replace(CanonicalPath.begin(), CanonicalPath.end(), '\\', '/');
+    return CanonicalPath;
+  }
+
+  // Return true if the given header is in the header list.
+  bool isHeaderListHeader(llvm::StringRef HeaderPath) const {
+    std::string CanonicalPath = getCanonicalPath(HeaderPath);
+    for (llvm::ArrayRef<std::string>::iterator I = HeaderList.begin(),
+        E = HeaderList.end();
+        I != E; ++I) {
+      if (*I == CanonicalPath)
+        return true;
+    }
+    return false;
+  }
+
   // Get the handle of a header file entry.
   // Return HeaderHandleInvalid if not found.
   HeaderHandle findHeaderHandle(llvm::StringRef HeaderPath) const {
-    std::string CanonicalPath(HeaderPath);
-    std::replace(CanonicalPath.begin(), CanonicalPath.end(), '\\', '/');
+    std::string CanonicalPath = getCanonicalPath(HeaderPath);
     HeaderHandle H = 0;
     for (std::vector<StringHandle>::const_iterator I = HeaderPaths.begin(),
                                                    E = HeaderPaths.end();
@@ -993,8 +1033,7 @@ public:
   // Add a new header file entry, or return existing handle.
   // Return the header handle.
   HeaderHandle addHeader(llvm::StringRef HeaderPath) {
-    std::string CanonicalPath(HeaderPath);
-    std::replace(CanonicalPath.begin(), CanonicalPath.end(), '\\', '/');
+    std::string CanonicalPath = getCanonicalPath(HeaderPath);
     HeaderHandle H = findHeaderHandle(CanonicalPath);
     if (H == HeaderHandleInvalid) {
       H = HeaderPaths.size();
@@ -1296,6 +1335,9 @@ public:
   }
 
 private:
+  llvm::SmallVector<std::string, 32> HeaderList;
+  // Only do extern, namespace check for headers in HeaderList.
+  bool BlockCheckHeaderListOnly;
   llvm::StringPool Strings;
   std::vector<StringHandle> HeaderPaths;
   std::vector<HeaderHandle> HeaderStack;
@@ -1314,8 +1356,10 @@ private:
 PreprocessorTracker::~PreprocessorTracker() {}
 
 // Create instance of PreprocessorTracker.
-PreprocessorTracker *PreprocessorTracker::create() {
-  return new PreprocessorTrackerImpl();
+PreprocessorTracker *PreprocessorTracker::create(
+    llvm::SmallVector<std::string, 32> &Headers,
+    bool DoBlockCheckHeaderListOnly) {
+  return new PreprocessorTrackerImpl(Headers, DoBlockCheckHeaderListOnly);
 }
 
 // Preprocessor callbacks for modularize.

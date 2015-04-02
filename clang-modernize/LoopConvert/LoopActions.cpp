@@ -450,8 +450,15 @@ static bool isAliasDecl(const Decl *TheDecl, const VarDecl *IndexVar) {
       const CXXOperatorCallExpr *OpCall = cast<CXXOperatorCallExpr>(Init);
       if (OpCall->getOperator() == OO_Star)
         return isDereferenceOfOpCall(OpCall, IndexVar);
+      if (OpCall->getOperator() == OO_Subscript) {
+        assert(OpCall->getNumArgs() == 2);
+        return true;
+      }
       break;
   }
+
+  case Stmt::CXXMemberCallExprClass:
+    return true;
 
   default:
     break;
@@ -554,7 +561,7 @@ bool ForLoopIndexUseVisitor::TraverseMemberExpr(MemberExpr *Member) {
              "Operator-> takes more than one argument");
       Obj = getDeclRef(Call->getArg(0));
       ResultExpr = Obj;
-      ExprType = Call->getCallReturnType();
+      ExprType = Call->getCallReturnType(*Context);
     }
   }
 

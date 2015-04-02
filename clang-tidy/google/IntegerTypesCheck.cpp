@@ -9,8 +9,8 @@
 
 #include "IntegerTypesCheck.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/TargetInfo.h"
 
@@ -26,6 +26,10 @@ void IntegerTypesCheck::registerMatchers(MatchFinder *Finder) {
 }
 
 void IntegerTypesCheck::check(const MatchFinder::MatchResult &Result) {
+  // The relevant Style Guide rule only applies to C++.
+  if (!Result.Context->getLangOpts().CPlusPlus)
+    return;
+
   auto TL = *Result.Nodes.getNodeAs<TypeLoc>("tl");
   SourceLocation Loc = TL.getLocStart();
 

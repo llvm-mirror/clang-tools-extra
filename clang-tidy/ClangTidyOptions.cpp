@@ -11,12 +11,12 @@
 #include "ClangTidyModuleRegistry.h"
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/Support/Errc.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/YAMLTraits.h"
+#include "llvm/Support/raw_ostream.h"
 #include <utility>
 
 #define DEBUG_TYPE "clang-tidy-options"
@@ -159,7 +159,7 @@ FileOptionsProvider::FileOptionsProvider(
 // FIXME: This method has some common logic with clang::format::getStyle().
 // Consider pulling out common bits to a findParentFileWithName function or
 // similar.
-const ClangTidyOptions &FileOptionsProvider::getOptions(StringRef FileName) {
+ClangTidyOptions FileOptionsProvider::getOptions(StringRef FileName) {
   DEBUG(llvm::dbgs() << "Getting options for file " << FileName << "...\n");
   SmallString<256> FilePath(FileName);
 
@@ -241,10 +241,9 @@ FileOptionsProvider::TryReadConfigFile(StringRef Directory) {
       continue;
     }
 
-    ClangTidyOptions Defaults = DefaultOptionsProvider::getOptions(Directory);
-    // Only use checks from the config file.
-    Defaults.Checks = None;
-    return Defaults.mergeWith(*ParsedOptions).mergeWith(OverrideOptions);
+    return DefaultOptionsProvider::getOptions(Directory)
+        .mergeWith(*ParsedOptions)
+        .mergeWith(OverrideOptions);
   }
   return llvm::None;
 }

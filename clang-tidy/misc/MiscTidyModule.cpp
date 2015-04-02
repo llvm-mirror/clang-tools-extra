@@ -11,9 +11,13 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "ArgumentCommentCheck.h"
+#include "AssignOperatorSignatureCheck.h"
 #include "BoolPointerImplicitConversion.h"
+#include "InaccurateEraseCheck.h"
+#include "InefficientAlgorithmCheck.h"
 #include "SwappedArgumentsCheck.h"
 #include "UndelegatedConstructor.h"
+#include "UniqueptrResetRelease.h"
 #include "UnusedRAII.h"
 #include "UseOverride.h"
 
@@ -24,12 +28,20 @@ class MiscModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.registerCheck<ArgumentCommentCheck>("misc-argument-comment");
+    CheckFactories.registerCheck<AssignOperatorSignatureCheck>(
+        "misc-assign-operator-signature");
     CheckFactories.registerCheck<BoolPointerImplicitConversion>(
         "misc-bool-pointer-implicit-conversion");
+    CheckFactories.registerCheck<InaccurateEraseCheck>(
+        "misc-inaccurate-erase");
+    CheckFactories.registerCheck<InefficientAlgorithmCheck>(
+        "misc-inefficient-algorithm");
     CheckFactories.registerCheck<SwappedArgumentsCheck>(
         "misc-swapped-arguments");
     CheckFactories.registerCheck<UndelegatedConstructorCheck>(
         "misc-undelegated-constructor");
+    CheckFactories.registerCheck<UniqueptrResetRelease>(
+        "misc-uniqueptr-reset-release");
     CheckFactories.registerCheck<UnusedRAIICheck>("misc-unused-raii");
     CheckFactories.registerCheck<UseOverride>("misc-use-override");
   }

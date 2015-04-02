@@ -10,9 +10,14 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "../readability/BracesAroundStatementsCheck.h"
+#include "../readability/FunctionSize.h"
+#include "../readability/NamespaceCommentCheck.h"
+#include "../readability/RedundantSmartptrGet.h"
 #include "AvoidCStyleCastsCheck.h"
 #include "ExplicitConstructorCheck.h"
 #include "ExplicitMakePairCheck.h"
+#include "GlobalNamesInHeadersCheck.h"
 #include "IntegerTypesCheck.h"
 #include "MemsetZeroLengthCheck.h"
 #include "NamedParameterCheck.h"
@@ -21,10 +26,6 @@
 #include "TodoCommentCheck.h"
 #include "UnnamedNamespaceInHeaderCheck.h"
 #include "UsingNamespaceDirectiveCheck.h"
-#include "../readability/BracesAroundStatementsCheck.h"
-#include "../readability/FunctionSize.h"
-#include "../readability/NamespaceCommentCheck.h"
-#include "../readability/RedundantSmartptrGet.h"
 
 using namespace clang::ast_matchers;
 
@@ -58,6 +59,8 @@ public:
         "google-readability-todo");
     CheckFactories.registerCheck<readability::BracesAroundStatementsCheck>(
         "google-readability-braces-around-statements");
+    CheckFactories.registerCheck<readability::GlobalNamesInHeadersCheck>(
+        "google-global-names-in-headers");
     CheckFactories.registerCheck<readability::FunctionSizeCheck>(
         "google-readability-function-size");
     CheckFactories.registerCheck<readability::NamespaceCommentCheck>(
