@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_SHRINK_TO_FIT_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_SHRINK_TO_FIT_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_SHRINKTOFITCHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_SHRINKTOFITCHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace readability {
 
 /// \brief Replace copy and swap tricks on shrinkable containers with the
 /// \c shrink_to_fit() method call.
@@ -29,7 +30,8 @@ public:
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
+} // namespace readability
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_SHRINK_TO_FIT_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_SHRINKTOFITCHECK_H

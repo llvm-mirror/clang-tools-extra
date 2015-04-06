@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANG_TIDY_CLANG_TIDY_TEST_H
-#define LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANG_TIDY_CLANG_TIDY_TEST_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANG_TIDY_CLANGTIDYTEST_H
+#define LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANG_TIDY_CLANGTIDYTEST_H
 
 #include "ClangTidy.h"
 #include "ClangTidyDiagnosticConsumer.h"
@@ -78,8 +78,11 @@ std::string runCheckOnCode(StringRef Code,
   return tooling::applyAllReplacements(Code, Fixes);
 }
 
+#define EXPECT_NO_CHANGES(Check, Code)                                         \
+  EXPECT_EQ(Code, runCheckOnCode<Check>(Code))
+
 } // namespace test
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANG_TIDY_CLANG_TIDY_TEST_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANG_TIDY_CLANGTIDYTEST_H

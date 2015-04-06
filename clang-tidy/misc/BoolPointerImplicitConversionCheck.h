@@ -1,4 +1,4 @@
-//===--- BoolPointerImplicitConversion.h - clang-tidy -----------*- C++ -*-===//
+//===--- BoolPointerImplicitConversionCheck.h - clang-tidy ------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_BOOL_POINTER_IMPLICIT_CONV_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_BOOL_POINTER_IMPLICIT_CONV_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_BOOLPOINTERIMPLICITCONVERSIONCHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_BOOLPOINTERIMPLICITCONVERSIONCHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace misc {
 
 /// \brief Checks for conditions based on implicit conversion from a bool
 /// pointer to bool e.g.
@@ -21,16 +22,17 @@ namespace tidy {
 /// if (p) {
 ///   // Never used in a pointer-specific way.
 /// }
-class BoolPointerImplicitConversion : public ClangTidyCheck {
+class BoolPointerImplicitConversionCheck : public ClangTidyCheck {
 public:
-  BoolPointerImplicitConversion(StringRef Name, ClangTidyContext *Context)
+  BoolPointerImplicitConversionCheck(StringRef Name, ClangTidyContext *Context)
       : ClangTidyCheck(Name, Context) {}
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
+} // namespace misc
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_BOOL_POINTER_IMPLICIT_CONV_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_BOOLPOINTERIMPLICITCONVERSIONCHECK_H
 

@@ -1,4 +1,4 @@
-//===--- GlobalNamesInHeadersCheck.h - clang-tidy ---------------*- C++ -*-===//
+//===--- RedundantStringCStrCheck.h - clang-tidy ----------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,29 +7,26 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_GLOBALNAMESINHEADERSCHECK_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_GLOBALNAMESINHEADERSCHECK_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_REDUNDANTSTRINGCSTRCHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_REDUNDANTSTRINGCSTRCHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
-namespace google {
 namespace readability {
 
-// Flag global namespace pollution in header files.
-// Right now it only triggers on using declarations and directives.
-class GlobalNamesInHeadersCheck : public ClangTidyCheck {
+/// \brief Finds unnecessary calls to std::string::c_str().
+class RedundantStringCStrCheck : public ClangTidyCheck {
 public:
-  GlobalNamesInHeadersCheck(StringRef Name, ClangTidyContext *Context)
+  RedundantStringCStrCheck(StringRef Name, ClangTidyContext *Context)
       : ClangTidyCheck(Name, Context) {}
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
 } // namespace readability
-} // namespace google
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_GOOGLE_GLOBALNAMESINHEADERSCHECK_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_READABILITY_REDUNDANTSTRINGCSTRCHECK_H

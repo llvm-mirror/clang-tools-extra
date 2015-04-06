@@ -1,4 +1,4 @@
-//===--- UseOverride.cpp - clang-tidy -------------------------------------===//
+//===--- UseOverrideCheck.cpp - clang-tidy --------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "UseOverride.h"
+#include "UseOverrideCheck.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Lex/Lexer.h"
@@ -16,8 +16,9 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace misc {
 
-void UseOverride::registerMatchers(MatchFinder *Finder) {
+void UseOverrideCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(methodDecl(isOverride()).bind("method"), this);
 }
 
@@ -56,7 +57,10 @@ static StringRef GetText(const Token &Tok, const SourceManager &Sources) {
                    Tok.getLength());
 }
 
-void UseOverride::check(const MatchFinder::MatchResult &Result) {
+void UseOverrideCheck::check(const MatchFinder::MatchResult &Result) {
+  if (!Result.Context->getLangOpts().CPlusPlus11)
+    return;
+
   const FunctionDecl *Method = Result.Nodes.getStmtAs<FunctionDecl>("method");
   const SourceManager &Sources = *Result.SourceManager;
 
@@ -78,11 +82,26 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
   if (!OnlyVirtualSpecified && KeywordCount == 1)
     return; // Nothing to do.
 
-  DiagnosticBuilder Diag = diag(
-      Method->getLocation(),
-      OnlyVirtualSpecified
-          ? "Prefer using 'override' or (rarely) 'final' instead of 'virtual'"
-          : "Annotate this function with 'override' or (rarely) 'final'");
+  std::string Message;
+
+  if (OnlyVirtualSpecified) {
+    Message =
+        "prefer using 'override' or (rarely) 'final' instead of 'virtual'";
+  } else if (KeywordCount == 0) {
+    Message = "annotate this function with 'override' or (rarely) 'final'";
+  } else {
+    StringRef Redundant =
+        HasVirtual ? (HasOverride && HasFinal ? "'virtual' and 'override' are"
+                                              : "'virtual' is")
+                   : "'override' is";
+    StringRef Correct = HasFinal ? "'final'" : "'override'";
+
+    Message =
+        (llvm::Twine(Redundant) +
+         " redundant since the function is already declared " + Correct).str();
+  }
+
+  DiagnosticBuilder Diag = diag(Method->getLocation(), Message);
 
   CharSourceRange FileRange = Lexer::makeFileCharRange(
       CharSourceRange::getTokenRange(Method->getSourceRange()), Sources,
@@ -125,7 +144,12 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
       InsertLoc = Method->getBody()->getLocStart();
 
     if (!InsertLoc.isValid()) {
-      if (Tokens.size() > 2 && GetText(Tokens.back(), Sources) == "0" &&
+      // For declarations marked with "= 0" or "= [default|delete]", the end
+      // location will point until after those markings. Therefore, the override
+      // keyword shouldn't be inserted at the end, but before the '='.
+      if (Tokens.size() > 2 && (GetText(Tokens.back(), Sources) == "0" ||
+                                Tokens.back().is(tok::kw_default) ||
+                                Tokens.back().is(tok::kw_delete)) &&
           GetText(Tokens[Tokens.size() - 2], Sources) == "=") {
         InsertLoc = Tokens[Tokens.size() - 2].getLocation();
       } else if (GetText(Tokens.back(), Sources) == "ABSTRACT") {
@@ -146,7 +170,7 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
         CharSourceRange::getTokenRange(OverrideLoc, OverrideLoc));
   }
 
-  if (Method->isVirtualAsWritten()) {
+  if (HasVirtual) {
     for (Token Tok : Tokens) {
       if (Tok.is(tok::kw_virtual)) {
         Diag << FixItHint::CreateRemoval(CharSourceRange::getTokenRange(
@@ -157,5 +181,6 @@ void UseOverride::check(const MatchFinder::MatchResult &Result) {
   }
 }
 
+} // namespace misc
 } // namespace tidy
 } // namespace clang

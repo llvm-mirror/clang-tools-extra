@@ -3,12 +3,11 @@
 #include "google/GlobalNamesInHeadersCheck.h"
 #include "gtest/gtest.h"
 
+using namespace clang::tidy::google;
+
 namespace clang {
 namespace tidy {
 namespace test {
-
-#define EXPECT_NO_CHANGES(Check, Code)                                         \
-  EXPECT_EQ(Code, runCheckOnCode<Check>(Code))
 
 TEST(ExplicitConstructorCheckTest, SingleArgumentConstructorsOnly) {
   EXPECT_NO_CHANGES(ExplicitConstructorCheck, "class C { C(); };");
@@ -100,6 +99,10 @@ TEST_F(GlobalNamesInHeadersCheckTest, UsingDirectives) {
                               "}  // my_namespace\n",
                               "foo.h"));
   EXPECT_FALSE(runCheckOnCode("SOME_MACRO(namespace std);", "foo.h"));
+}
+
+TEST_F(GlobalNamesInHeadersCheckTest, RegressionAnonymousNamespace) {
+  EXPECT_FALSE(runCheckOnCode("namespace {}", "foo.h"));
 }
 
 } // namespace test

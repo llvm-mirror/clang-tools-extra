@@ -27,18 +27,19 @@ bool isShrinkableContainer(llvm::StringRef ClassName) {
   }();
   return Shrinkables.find(ClassName) != Shrinkables.end();
 }
-}
+} // namespace
 
 namespace clang {
 namespace ast_matchers {
 AST_MATCHER(NamedDecl, stlShrinkableContainer) {
   return isShrinkableContainer(Node.getQualifiedNameAsString());
 }
-} // namespace ast_matchesr
+} // namespace ast_matchers
 } // namespace clang
 
 namespace clang {
 namespace tidy {
+namespace readability {
 
 void ShrinkToFitCheck::registerMatchers(MatchFinder *Finder) {
   // Swap as a function need not to be considered, because rvalue can not
@@ -104,5 +105,6 @@ void ShrinkToFitCheck::check(const MatchFinder::MatchResult &Result) {
       << Hint;
 }
 
+} // namespace readability
 } // namespace tidy
 } // namespace clang

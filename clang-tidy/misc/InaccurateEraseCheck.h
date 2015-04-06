@@ -7,13 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_INACCURATE_ERASE_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_INACCURATE_ERASE_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_INACCURATEERASECHECK_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_INACCURATEERASECHECK_H
 
 #include "../ClangTidy.h"
 
 namespace clang {
 namespace tidy {
+namespace misc {
 
 /// \brief Checks for inaccurate use of \c erase() method.
 ///
@@ -30,7 +31,8 @@ public:
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
+} // namespace misc
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_INACCURATE_ERASE_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MISC_INACCURATEERASECHECK_H

@@ -11,10 +11,12 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "BracesAroundStatementsCheck.h"
-#include "ContainerSizeEmpty.h"
+#include "ContainerSizeEmptyCheck.h"
 #include "ElseAfterReturnCheck.h"
-#include "FunctionSize.h"
-#include "RedundantSmartptrGet.h"
+#include "FunctionSizeCheck.h"
+#include "NamedParameterCheck.h"
+#include "RedundantSmartptrGetCheck.h"
+#include "RedundantStringCStrCheck.h"
 #include "ShrinkToFitCheck.h"
 
 namespace clang {
@@ -32,21 +34,24 @@ public:
         "readability-else-after-return");
     CheckFactories.registerCheck<FunctionSizeCheck>(
         "readability-function-size");
-    CheckFactories.registerCheck<RedundantSmartptrGet>(
+    CheckFactories.registerCheck<readability::NamedParameterCheck>(
+        "readability-named-parameter");
+    CheckFactories.registerCheck<RedundantSmartptrGetCheck>(
         "readability-redundant-smartptr-get");
-    CheckFactories.registerCheck<ShrinkToFitCheck>(
-        "readability-shrink-to-fit");
+    CheckFactories.registerCheck<RedundantStringCStrCheck>(
+        "readability-redundant-string-cstr");
+    CheckFactories.registerCheck<ShrinkToFitCheck>("readability-shrink-to-fit");
   }
 };
 
+// Register the ReadabilityModule using this statically initialized variable.
+static ClangTidyModuleRegistry::Add<ReadabilityModule>
+    X("readability-module", "Adds readability-related checks.");
+
 } // namespace readability
 
-// Register the MiscTidyModule using this statically initialized variable.
-static ClangTidyModuleRegistry::Add<readability::ReadabilityModule>
-X("readability-module", "Adds readability-related checks.");
-
 // This anchor is used to force the linker to link in the generated object file
-// and thus register the MiscModule.
+// and thus register the ReadabilityModule.
 volatile int ReadabilityModuleAnchorSource = 0;
 
 } // namespace tidy
