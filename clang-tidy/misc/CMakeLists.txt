@@ -8,6 +8,7 @@ add_clang_library(clangTidyMiscModule
   InaccurateEraseCheck.cpp
   InefficientAlgorithmCheck.cpp
   MiscTidyModule.cpp
+  NoexceptMoveConstructorCheck.cpp
   StaticAssertCheck.cpp
   SwappedArgumentsCheck.cpp
   UndelegatedConstructor.cpp
