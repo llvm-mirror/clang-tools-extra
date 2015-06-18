@@ -111,11 +111,11 @@ void PPCallbacksTracker::FileChanged(
 // Callback invoked whenever a source file is skipped as the result
 // of header guard optimization.
 void
-PPCallbacksTracker::FileSkipped(const clang::FileEntry &ParentFile,
+PPCallbacksTracker::FileSkipped(const clang::FileEntry &SkippedFile,
                                 const clang::Token &FilenameTok,
                                 clang::SrcMgr::CharacteristicKind FileType) {
   beginCallback("FileSkipped");
-  appendArgument("ParentFile", &ParentFile);
+  appendArgument("ParentFile", &SkippedFile);
   appendArgument("FilenameTok", FilenameTok);
   appendArgument("FileType", FileType, CharacteristicKindStrings);
 }
@@ -166,8 +166,7 @@ void PPCallbacksTracker::moduleImport(clang::SourceLocation ImportLoc,
 void PPCallbacksTracker::EndOfMainFile() { beginCallback("EndOfMainFile"); }
 
 // Callback invoked when a #ident or #sccs directive is read.
-void PPCallbacksTracker::Ident(clang::SourceLocation Loc,
-                               const std::string &Str) {
+void PPCallbacksTracker::Ident(clang::SourceLocation Loc, llvm::StringRef Str) {
   beginCallback("Ident");
   appendArgument("Loc", Loc);
   appendArgument("Str", Str);
@@ -185,7 +184,7 @@ PPCallbacksTracker::PragmaDirective(clang::SourceLocation Loc,
 // Callback invoked when a #pragma comment directive is read.
 void PPCallbacksTracker::PragmaComment(clang::SourceLocation Loc,
                                        const clang::IdentifierInfo *Kind,
-                                       const std::string &Str) {
+                                       llvm::StringRef Str) {
   beginCallback("PragmaComment");
   appendArgument("Loc", Loc);
   appendArgument("Kind", Kind);
@@ -195,8 +194,8 @@ void PPCallbacksTracker::PragmaComment(clang::SourceLocation Loc,
 // Callback invoked when a #pragma detect_mismatch directive is
 // read.
 void PPCallbacksTracker::PragmaDetectMismatch(clang::SourceLocation Loc,
-                                              const std::string &Name,
-                                              const std::string &Value) {
+                                              llvm::StringRef Name,
+                                              llvm::StringRef Value) {
   beginCallback("PragmaDetectMismatch");
   appendArgument("Loc", Loc);
   appendArgument("Name", Name);
@@ -302,12 +301,12 @@ void PPCallbacksTracker::PragmaWarningPop(clang::SourceLocation Loc) {
 // macro invocation is found.
 void
 PPCallbacksTracker::MacroExpands(const clang::Token &MacroNameTok,
-                                 const clang::MacroDirective *MacroDirective,
+                                 const clang::MacroDefinition &MacroDefinition,
                                  clang::SourceRange Range,
                                  const clang::MacroArgs *Args) {
   beginCallback("MacroExpands");
   appendArgument("MacroNameTok", MacroNameTok);
-  appendArgument("MacroDirective", MacroDirective);
+  appendArgument("MacroDefinition", MacroDefinition);
   appendArgument("Range", Range);
   appendArgument("Args", Args);
 }
@@ -324,19 +323,19 @@ PPCallbacksTracker::MacroDefined(const clang::Token &MacroNameTok,
 // Hook called whenever a macro #undef is seen.
 void PPCallbacksTracker::MacroUndefined(
     const clang::Token &MacroNameTok,
-    const clang::MacroDirective *MacroDirective) {
+    const clang::MacroDefinition &MacroDefinition) {
   beginCallback("MacroUndefined");
   appendArgument("MacroNameTok", MacroNameTok);
-  appendArgument("MacroDirective", MacroDirective);
+  appendArgument("MacroDefinition", MacroDefinition);
 }
 
 // Hook called whenever the 'defined' operator is seen.
 void PPCallbacksTracker::Defined(const clang::Token &MacroNameTok,
-                                 const clang::MacroDirective *MacroDirective,
+                                 const clang::MacroDefinition &MacroDefinition,
                                  clang::SourceRange Range) {
   beginCallback("Defined");
   appendArgument("MacroNameTok", MacroNameTok);
-  appendArgument("MacroDirective", MacroDirective);
+  appendArgument("MacroDefinition", MacroDefinition);
   appendArgument("Range", Range);
 }
 
@@ -371,21 +370,21 @@ void PPCallbacksTracker::Elif(clang::SourceLocation Loc,
 // Hook called whenever an #ifdef is seen.
 void PPCallbacksTracker::Ifdef(clang::SourceLocation Loc,
                                const clang::Token &MacroNameTok,
-                               const clang::MacroDirective *MacroDirective) {
+                               const clang::MacroDefinition &MacroDefinition) {
   beginCallback("Ifdef");
   appendArgument("Loc", Loc);
   appendArgument("MacroNameTok", MacroNameTok);
-  appendArgument("MacroDirective", MacroDirective);
+  appendArgument("MacroDefinition", MacroDefinition);
 }
 
 // Hook called whenever an #ifndef is seen.
 void PPCallbacksTracker::Ifndef(clang::SourceLocation Loc,
                                 const clang::Token &MacroNameTok,
-                                const clang::MacroDirective *MacroDirective) {
+                                const clang::MacroDefinition &MacroDefinition) {
   beginCallback("Ifndef");
   appendArgument("Loc", Loc);
   appendArgument("MacroNameTok", MacroNameTok);
-  appendArgument("MacroDirective", MacroDirective);
+  appendArgument("MacroDefinition", MacroDefinition);
 }
 
 // Hook called whenever an #else is seen.
@@ -556,6 +555,25 @@ void PPCallbacksTracker::appendArgument(const char *Name,
     return;
   }
   appendArgument(Name, MacroDirectiveKindStrings[Value->getKind()]);
+}
+
+// Append a MacroDefinition argument to the top trace item.
+void PPCallbacksTracker::appendArgument(const char *Name,
+                                        const clang::MacroDefinition &Value) {
+  std::string Str;
+  llvm::raw_string_ostream SS(Str);
+  SS << "[";
+  bool Any = false;
+  if (Value.getLocalDirective()) {
+    SS << "(local)";
+    Any = true;
+  }
+  for (auto *MM : Value.getModuleMacros()) {
+    if (Any) SS << ", ";
+    SS << MM->getOwningModule()->getFullModuleName();
+  }
+  SS << "]";
+  appendArgument(Name, SS.str());
 }
 
 // Append a MacroArgs argument to the top trace item.

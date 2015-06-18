@@ -37,9 +37,10 @@ directory.
 
 ``<front-end-options>`` is a place-holder for regular Clang
 front-end arguments, which must follow the <include-files-list>.
-Note that by default, the underlying Clang front end assumes .h files
-contain C source, so you might need to specify the ``-x c++`` Clang option
-to tell Clang that the header contains C++ definitions.
+Note that by default, modularize assumes .h files
+contain C++ source, so if you are using a different language,
+you might need to use a ``-x`` option to tell Clang that the
+header contains another language, i.e.:  ``-x c``
 
 Note also that because modularize does not use the clang driver,
 you will likely need to pass in additional compiler front-end
@@ -48,7 +49,7 @@ arguments to match those passed in by default by the driver.
 Modularize Command Line Options
 ===============================
 
-.. option:: -prefix <header-path>
+.. option:: -prefix=<header-path>
 
   Prepend the given path to non-absolute file paths in the header list file.
   By default, headers are assumed to be relative to the header list file

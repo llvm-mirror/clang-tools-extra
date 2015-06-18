@@ -46,6 +46,7 @@ ModularizeUtilities::ModularizeUtilities(std::vector<std::string> &InputPaths,
   : InputFilePaths(InputPaths),
     HeaderPrefix(Prefix),
     HasModuleMap(false),
+    MissingHeaderCount(0),
     // Init clang stuff needed for loading the module map and preprocessing.
     LangOpts(new LangOptions()), DiagIDs(new DiagnosticIDs()),
     DiagnosticOpts(new DiagnosticOptions()),
@@ -234,6 +235,9 @@ std::error_code ModularizeUtilities::loadModuleMap(
   // Do matching end call.
   DC.EndSourceFile();
 
+  // Reset missing header count.
+  MissingHeaderCount = 0;
+
   if (!collectModuleMapHeaders(ModMap.get()))
     return std::error_code(1, std::generic_category());
 
@@ -242,6 +246,10 @@ std::error_code ModularizeUtilities::loadModuleMap(
 
   // Indicate we are using module maps.
   HasModuleMap = true;
+
+  // Return code of 1 for missing headers.
+  if (MissingHeaderCount)
+    return std::error_code(1, std::generic_category());
 
   return std::error_code();
 }
@@ -278,14 +286,14 @@ bool ModularizeUtilities::collectModuleHeaders(const Module &Mod) {
       MI != MIEnd; ++MI)
     collectModuleHeaders(**MI);
 
-  if (const FileEntry *UmbrellaHeader = Mod.getUmbrellaHeader()) {
+  if (const FileEntry *UmbrellaHeader = Mod.getUmbrellaHeader().Entry) {
     std::string HeaderPath = getCanonicalPath(UmbrellaHeader->getName());
     // Collect umbrella header.
     HeaderFileNames.push_back(HeaderPath);
 
     // FUTURE: When needed, umbrella header header collection goes here.
   }
-  else if (const DirectoryEntry *UmbrellaDir = Mod.getUmbrellaDir()) {
+  else if (const DirectoryEntry *UmbrellaDir = Mod.getUmbrellaDir().Entry) {
     // If there normal headers, assume these are umbrellas and skip collection.
     if (Mod.Headers->size() == 0) {
       // Collect headers in umbrella directory.
@@ -309,6 +317,17 @@ bool ModularizeUtilities::collectModuleHeaders(const Module &Mod) {
     std::string HeaderPath = getCanonicalPath(Header.Entry->getName());
     HeaderFileNames.push_back(HeaderPath);
   }
+
+  int MissingCountThisModule = Mod.MissingHeaders.size();
+
+  for (int Index = 0; Index < MissingCountThisModule; ++Index) {
+    std::string MissingFile = Mod.MissingHeaders[Index].FileName;
+    SourceLocation Loc = Mod.MissingHeaders[Index].FileNameLoc;
+    errs() << Loc.printToString(*SourceMgr)
+      << ": error : Header not found: " << MissingFile << "\n";
+  }
+
+  MissingHeaderCount += MissingCountThisModule;
 
   return true;
 }
