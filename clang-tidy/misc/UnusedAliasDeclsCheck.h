@@ -15,7 +15,7 @@
 namespace clang {
 namespace tidy {
 
-/// \brief Finds unused namespace alias declarations.
+/// Finds unused namespace alias declarations.
 class UnusedAliasDeclsCheck : public ClangTidyCheck {
 public:
   UnusedAliasDeclsCheck(StringRef Name, ClangTidyContext *Context)
@@ -25,7 +25,7 @@ public:
   void onEndOfTranslationUnit() override;
 
 private:
-  llvm::DenseMap<const Decl *, CharSourceRange> FoundDecls;
+  llvm::DenseMap<const NamedDecl *, CharSourceRange> FoundDecls;
 };
 
 } // namespace tidy

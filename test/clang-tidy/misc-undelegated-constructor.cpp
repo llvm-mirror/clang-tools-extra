@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-undelegated-constructor %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s misc-undelegated-constructor %t
 
 struct Ctor;
 Ctor foo();

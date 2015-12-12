@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s google-readability-namespace-comments %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s google-readability-namespace-comments %t
 
 namespace n1 {
 namespace n2 {

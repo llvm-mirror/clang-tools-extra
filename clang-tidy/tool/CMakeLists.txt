@@ -10,9 +10,12 @@ target_link_libraries(clang-tidy
   clangASTMatchers
   clangBasic
   clangTidy
+  clangTidyCERTModule
+  clangTidyCppCoreGuidelinesModule
   clangTidyGoogleModule
   clangTidyLLVMModule
   clangTidyMiscModule
+  clangTidyModernizeModule
   clangTidyReadabilityModule
   clangTooling
   )
@@ -20,3 +23,5 @@ target_link_libraries(clang-tidy
 install(TARGETS clang-tidy
   RUNTIME DESTINATION bin)
 
+install(PROGRAMS clang-tidy-diff.py DESTINATION share/clang)
+install(PROGRAMS run-clang-tidy.py DESTINATION share/clang)

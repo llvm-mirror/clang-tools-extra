@@ -96,7 +96,7 @@ AST_MATCHER_P(QualType, isSugarFor, internal::Matcher<QualType>, SugarMatcher) {
 ///
 /// \c namedDecl(hasStdIteratorName()) matches \c I and \c CI.
 AST_MATCHER(NamedDecl, hasStdIteratorName) {
-  static const char *IteratorNames[] = {
+  static const char *const IteratorNames[] = {
     "iterator",
     "reverse_iterator",
     "const_iterator",
@@ -125,7 +125,7 @@ AST_MATCHER(NamedDecl, hasStdIteratorName) {
 /// \c recordDecl(hasStdContainerName()) matches \c vector and \c forward_list
 /// but not \c my_vec.
 AST_MATCHER(NamedDecl, hasStdContainerName) {
-  static const char *ContainerNames[] = {
+  static const char *const ContainerNames[] = {
     "array",
     "deque",
     "forward_list",
@@ -258,7 +258,7 @@ StatementMatcher makeDeclWithNewMatcher() {
     unless(has(varDecl(
       anyOf(
         unless(hasInitializer(
-          ignoringParenImpCasts(newExpr())
+          ignoringParenImpCasts(cxxNewExpr())
         )),
         // FIXME: TypeLoc information is not reliable where CV qualifiers are
         // concerned so these types can't be handled for now.

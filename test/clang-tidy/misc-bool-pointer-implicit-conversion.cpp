@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-bool-pointer-implicit-conversion %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s misc-bool-pointer-implicit-conversion %t
 
 bool *SomeFunction();
 void SomeOtherFunction(bool*);

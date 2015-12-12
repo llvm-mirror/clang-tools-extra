@@ -68,7 +68,7 @@ def get_tidy_invocation(f, clang_tidy_binary, checks, tmpdir, build_path,
     # Show warnings in all in-project headers by default.
     start.append('-header-filter=^' + build_path + '/.*')
   if checks:
-    start.append('-checks=-*,' + checks)
+    start.append('-checks=' + checks)
   if tmpdir is not None:
     start.append('-export-fixes')
     # Get a temporary file. We immediately close the handle so clang-tidy can
@@ -128,21 +128,28 @@ def main():
   parser.add_argument('-fix', action='store_true', help='apply fix-its')
   parser.add_argument('-format', action='store_true', help='Reformat code '
                       'after applying fixes')
+  parser.add_argument('-p', dest='build_path',
+                      help='Path used to read a compile command database.')
   args = parser.parse_args()
+
+  db_path = 'compile_commands.json'
+
+  if args.build_path is not None:
+    build_path = args.build_path
+  else:
+    # Find our database
+    build_path = find_compilation_database(db_path)
 
   try:
     invocation = [args.clang_tidy_binary, '-list-checks']
+    invocation.append('-p=' + build_path)
     if args.checks:
-      invocation.append('-checks='+args.checks)
+      invocation.append('-checks=' + args.checks)
     invocation.append('-')
     print subprocess.check_output(invocation)
   except:
     print >>sys.stderr, "Unable to run clang-tidy."
     sys.exit(1)
-
-  # Find our database.
-  db_path = 'compile_commands.json'
-  build_path = find_compilation_database(db_path)
 
   # Load the database and extract all files.
   database = json.load(open(os.path.join(build_path, db_path)))

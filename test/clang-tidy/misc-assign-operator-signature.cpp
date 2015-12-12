@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-assign-operator-signature %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s misc-assign-operator-signature %t
 
 struct Good {
   Good& operator=(const Good&);
@@ -49,4 +48,9 @@ class Private {
   // We don't check the return value of private operators.
   // Pre-C++11 way of disabling assignment.
   void operator=(const Private &);
+};
+
+struct Virtual {
+  virtual Virtual& operator=(const Virtual &);
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: operator=() should not be marked 'virtual'
 };

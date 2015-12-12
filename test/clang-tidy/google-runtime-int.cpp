@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s google-runtime-int %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s google-runtime-int %t
 
 long a();
 // CHECK-MESSAGES: [[@LINE-1]]:1: warning: consider replacing 'long' with 'int{{..}}'
@@ -50,6 +49,7 @@ short bar(const short, unsigned short) {
 
   tmpl<short>();
 // CHECK-MESSAGES: [[@LINE-1]]:8: warning: consider replacing 'short' with 'int16'
+  return 0;
 }
 
 void p(unsigned short port);
@@ -58,3 +58,10 @@ void qux() {
   short port;
 // CHECK-MESSAGES: [[@LINE-1]]:3: warning: consider replacing 'short' with 'int16'
 }
+
+// FIXME: This shouldn't warn, as UD-literal operators require one of a handful
+// of types as an argument.
+struct some_value {};
+constexpr some_value operator"" _some_literal(unsigned long long int i);
+// CHECK-MESSAGES: [[@LINE-1]]:47: warning: consider replacing 'unsigned long long'
+

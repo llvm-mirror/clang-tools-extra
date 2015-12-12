@@ -16,6 +16,7 @@ add_clang_library(clangTidy
   clangASTMatchers
   clangBasic
   clangFrontend
+  clangLex
   clangRewrite
   clangSema
   clangStaticAnalyzerCore
@@ -25,8 +26,11 @@ add_clang_library(clangTidy
   )
 
 add_subdirectory(tool)
+add_subdirectory(cert)
 add_subdirectory(llvm)
+add_subdirectory(cppcoreguidelines)
 add_subdirectory(google)
 add_subdirectory(misc)
+add_subdirectory(modernize)
 add_subdirectory(readability)
 add_subdirectory(utils)

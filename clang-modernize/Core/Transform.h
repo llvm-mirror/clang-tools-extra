@@ -95,7 +95,8 @@ public:
   /// \p SourcePaths.
   /// \param[in] SourcePaths list of sources to transform.
   ///
-  /// \returns \li 0 if successful
+  /// \returns \parblock
+  ///          \li 0 if successful
   ///          \li 1 otherwise
   virtual int apply(const clang::tooling::CompilationDatabase &Database,
                     const std::vector<std::string> &SourcePaths) = 0;
@@ -134,7 +135,7 @@ public:
   /// \brief Tests if the file containing \a Loc is allowed to be modified by
   /// the Modernizer.
   bool isFileModifiable(const clang::SourceManager &SM,
-                        const clang::SourceLocation &Loc) const;
+                        clang::SourceLocation Loc) const;
 
   /// \brief Whether a transformation with a risk level of \p RiskLevel is
   /// acceptable or not.
@@ -171,7 +172,8 @@ public:
 
   /// \brief Add a Replacement to the list for the current translation unit.
   ///
-  /// \returns \li true on success
+  /// \returns \parblock
+  ///          \li true on success
   ///          \li false if there is no current translation unit
   bool addReplacementForCurrentTU(const clang::tooling::Replacement &R);
 

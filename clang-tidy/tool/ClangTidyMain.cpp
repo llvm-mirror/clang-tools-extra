@@ -121,9 +121,11 @@ static cl::opt<std::string> Config(
 static cl::opt<bool> DumpConfig(
     "dump-config",
     cl::desc("Dumps configuration in the YAML format to stdout. This option\n"
-             "should be used along with a file name (and '--' if the file is\n"
+             "can be used along with a file name (and '--' if the file is\n"
              "outside of a project with configured compilation database). The\n"
-             "configuration used for this file will be printed."),
+             "configuration used for this file will be printed.\n"
+             "Use along with -checks=* to include configuration of all\n"
+             "checks.\n"),
     cl::init(false), cl::cat(ClangTidyCategory));
 
 static cl::opt<bool> EnableCheckProfile(
@@ -262,17 +264,21 @@ static std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
 }
 
 static int clangTidyMain(int argc, const char **argv) {
-  CommonOptionsParser OptionsParser(argc, argv, ClangTidyCategory);
+  CommonOptionsParser OptionsParser(argc, argv, ClangTidyCategory,
+                                    cl::ZeroOrMore);
 
   auto OptionsProvider = createOptionsProvider();
   if (!OptionsProvider)
     return 1;
 
-  std::string FileName = OptionsParser.getSourcePathList().front();
+  StringRef FileName("dummy");
+  auto PathList = OptionsParser.getSourcePathList();
+  if (!PathList.empty()) {
+    FileName = PathList.front();
+  }
   ClangTidyOptions EffectiveOptions = OptionsProvider->getOptions(FileName);
   std::vector<std::string> EnabledChecks = getCheckNames(EffectiveOptions);
 
-  // FIXME: Allow using --list-checks without positional arguments.
   if (ListChecks) {
     llvm::outs() << "Enabled checks:";
     for (auto CheckName : EnabledChecks)
@@ -283,8 +289,9 @@ static int clangTidyMain(int argc, const char **argv) {
 
   if (DumpConfig) {
     EffectiveOptions.CheckOptions = getCheckOptions(EffectiveOptions);
-    llvm::outs() << configurationAsText(ClangTidyOptions::getDefaults()
-                                            .mergeWith(EffectiveOptions))
+    llvm::outs() << configurationAsText(
+                        ClangTidyOptions::getDefaults().mergeWith(
+                            EffectiveOptions))
                  << "\n";
     return 0;
   }
@@ -295,12 +302,18 @@ static int clangTidyMain(int argc, const char **argv) {
     return 1;
   }
 
+  if (PathList.empty()) {
+    llvm::errs() << "Error: no input files specified.\n";
+    llvm::cl::PrintHelpMessage(/*Hidden=*/false, /*Categorized=*/true);
+    return 1;
+  }
+
   ProfileData Profile;
 
   std::vector<ClangTidyError> Errors;
   ClangTidyStats Stats =
       runClangTidy(std::move(OptionsProvider), OptionsParser.getCompilations(),
-                   OptionsParser.getSourcePathList(), &Errors,
+                   PathList, &Errors,
                    EnableCheckProfile ? &Profile : nullptr);
   bool FoundErrors =
       std::find_if(Errors.begin(), Errors.end(), [](const ClangTidyError &E) {
@@ -334,21 +347,40 @@ static int clangTidyMain(int argc, const char **argv) {
   return 0;
 }
 
+// This anchor is used to force the linker to link the CERTModule.
+extern volatile int CERTModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED CERTModuleAnchorDestination =
+    CERTModuleAnchorSource;
+
 // This anchor is used to force the linker to link the LLVMModule.
 extern volatile int LLVMModuleAnchorSource;
-static int LLVMModuleAnchorDestination = LLVMModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED LLVMModuleAnchorDestination =
+    LLVMModuleAnchorSource;
+
+// This anchor is used to force the linker to link the CppCoreGuidelinesModule.
+extern volatile int CppCoreGuidelinesModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED CppCoreGuidelinesModuleAnchorDestination =
+    CppCoreGuidelinesModuleAnchorSource;
 
 // This anchor is used to force the linker to link the GoogleModule.
 extern volatile int GoogleModuleAnchorSource;
-static int GoogleModuleAnchorDestination = GoogleModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED GoogleModuleAnchorDestination =
+    GoogleModuleAnchorSource;
 
 // This anchor is used to force the linker to link the MiscModule.
 extern volatile int MiscModuleAnchorSource;
-static int MiscModuleAnchorDestination = MiscModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED MiscModuleAnchorDestination =
+    MiscModuleAnchorSource;
+
+// This anchor is used to force the linker to link the ModernizeModule.
+extern volatile int ModernizeModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED ModernizeModuleAnchorDestination =
+    ModernizeModuleAnchorSource;
 
 // This anchor is used to force the linker to link the ReadabilityModule.
 extern volatile int ReadabilityModuleAnchorSource;
-static int ReadabilityModuleAnchorDestination = ReadabilityModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED ReadabilityModuleAnchorDestination =
+    ReadabilityModuleAnchorSource;
 
 } // namespace tidy
 } // namespace clang

@@ -33,11 +33,7 @@ AST_MATCHER_P(Expr, hasSideEffect, bool, CheckFunctionCalls) {
   }
 
   if (const auto *Op = dyn_cast<BinaryOperator>(E)) {
-    BinaryOperator::Opcode OC = Op->getOpcode();
-    return OC == BO_Assign || OC == BO_MulAssign || OC == BO_DivAssign ||
-           OC == BO_RemAssign || OC == BO_AddAssign || OC == BO_SubAssign ||
-           OC == BO_ShlAssign || OC == BO_ShrAssign || OC == BO_AndAssign ||
-           OC == BO_XorAssign || OC == BO_OrAssign;
+    return Op->isAssignmentOp();
   }
 
   if (const auto *OpCallExpr = dyn_cast<CXXOperatorCallExpr>(E)) {
@@ -96,22 +92,26 @@ void AssertSideEffectCheck::registerMatchers(MatchFinder *Finder) {
 }
 
 void AssertSideEffectCheck::check(const MatchFinder::MatchResult &Result) {
-  const ASTContext *ASTCtx = Result.Context;
-  const auto *CondStmt = Result.Nodes.getNodeAs<Stmt>("condStmt");
-  SourceLocation Loc = CondStmt->getLocStart();
+  const SourceManager &SM = *Result.SourceManager;
+  const LangOptions LangOpts = Result.Context->getLangOpts();
+  SourceLocation Loc = Result.Nodes.getNodeAs<Stmt>("condStmt")->getLocStart();
 
-  if (!Loc.isValid() || !Loc.isMacroID())
+  StringRef AssertMacroName;
+  while (Loc.isValid() && Loc.isMacroID()) {
+    StringRef MacroName = Lexer::getImmediateMacroName(Loc, SM, LangOpts);
+
+    // Check if this macro is an assert.
+    if (std::find(AssertMacros.begin(), AssertMacros.end(), MacroName) !=
+        AssertMacros.end()) {
+      AssertMacroName = MacroName;
+      break;
+    }
+    Loc = SM.getImmediateMacroCallerLoc(Loc);
+  }
+  if (AssertMacroName.empty())
     return;
 
-  StringRef MacroName = Lexer::getImmediateMacroName(
-      Loc, ASTCtx->getSourceManager(), ASTCtx->getLangOpts());
-
-  // Check if this macro is an assert.
-  if (std::find(AssertMacros.begin(), AssertMacros.end(), MacroName) ==
-      AssertMacros.end())
-    return;
-
-  diag(Loc, "found " + MacroName.str() + "() with side effect");
+  diag(Loc, "found " + AssertMacroName.str() + "() with side effect");
 }
 
 } // namespace tidy
