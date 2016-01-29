@@ -5,6 +5,7 @@ add_clang_library(clangTidyMiscModule
   AssertSideEffectCheck.cpp
   AssignOperatorSignatureCheck.cpp
   BoolPointerImplicitConversionCheck.cpp
+  DefinitionsInHeadersCheck.cpp
   InaccurateEraseCheck.cpp
   InefficientAlgorithmCheck.cpp
   MacroParenthesesCheck.cpp
@@ -17,6 +18,7 @@ add_clang_library(clangTidyMiscModule
   NonCopyableObjects.cpp
   SizeofContainerCheck.cpp
   StaticAssertCheck.cpp
+  StringIntegerAssignmentCheck.cpp
   SwappedArgumentsCheck.cpp
   ThrowByValueCatchByReferenceCheck.cpp
   UndelegatedConstructor.cpp
@@ -24,6 +26,7 @@ add_clang_library(clangTidyMiscModule
   UnusedParametersCheck.cpp
   UnusedRAIICheck.cpp
   UniqueptrResetReleaseCheck.cpp
+  VirtualNearMissCheck.cpp
 
   LINK_LIBS
   clangAST

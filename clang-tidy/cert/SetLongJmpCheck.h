@@ -14,11 +14,12 @@
 
 namespace clang {
 namespace tidy {
+namespace cert {
 
 /// Guards against use of setjmp/longjmp in C++ code
 ///
 /// For the user-facing documentation see:
-/// http://clang.llvm.org/extra/clang-tidy/checks/cert-setlongjmp.html
+/// http://clang.llvm.org/extra/clang-tidy/checks/cert-err52-cpp.html
 class SetLongJmpCheck : public ClangTidyCheck {
 public:
   SetLongJmpCheck(StringRef Name, ClangTidyContext *Context)
@@ -30,8 +31,8 @@ public:
   static const char DiagWording[];
 };
 
+} // namespace cert
 } // namespace tidy
 } // namespace clang
 
 #endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_SETLONGJMPCHECK_H
-

@@ -1,5 +1,4 @@
-============================
-C++11 Migrator User's Manual
-============================
+:orphan:
 
-This tool has been renamed :doc:`clang-modernize <clang-modernize>`.
+All :program:`clang-modernize` transforms have moved to :doc:`clang-tidy/index`
+(see the ``modernize`` module).

@@ -73,6 +73,7 @@ def write_header(module_path, module, check_name, check_name_camel):
 
 namespace clang {
 namespace tidy {
+namespace %(module)s {
 
 /// FIXME: Write a short description.
 ///
@@ -86,18 +87,19 @@ public:
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
+} // namespace %(module)s
 } // namespace tidy
 } // namespace clang
 
 #endif // %(header_guard)s
-
 """ % {'header_guard': header_guard,
        'check_name': check_name_camel,
-       'check_name_dashes': check_name_dashes})
+       'check_name_dashes': check_name_dashes,
+       'module': module})
 
 
 # Adds the implementation of the new check.
-def write_implementation(module_path, check_name_camel):
+def write_implementation(module_path, module, check_name_camel):
   filename = os.path.join(module_path, check_name_camel) + '.cpp'
   print('Creating %s...' % filename)
   with open(filename, 'wb') as f:
@@ -123,6 +125,7 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace %(module)s {
 
 void %(check_name)s::registerMatchers(MatchFinder *Finder) {
   // FIXME: Add matchers.
@@ -139,10 +142,11 @@ void %(check_name)s::check(const MatchFinder::MatchResult &Result) {
       << FixItHint::CreateInsertion(MatchedDecl->getLocation(), "awesome_");
 }
 
+} // namespace %(module)s
 } // namespace tidy
 } // namespace clang
-
-""" % {'check_name': check_name_camel})
+""" % {'check_name': check_name_camel,
+       'module': module})
 
 
 # Modifies the module to include the new check.
@@ -211,15 +215,25 @@ void awesome_f2();
 
 # Recreates the list of checks in the docs/clang-tidy/checks directory.
 def update_checks_list(module_path):
-  filename = os.path.normpath(
-      os.path.join(module_path, '../../docs/clang-tidy/checks/list.rst'))
+  docs_dir = os.path.join(module_path, '../../docs/clang-tidy/checks')
+  filename = os.path.normpath(os.path.join(docs_dir, 'list.rst'))
   with open(filename, 'r') as f:
     lines = f.readlines()
+  doc_files = filter(
+      lambda s: s.endswith('.rst') and s != 'list.rst',
+      os.listdir(docs_dir))
+  doc_files.sort()
 
-  checks = map(lambda s: '   ' + s.replace('.rst', '\n'),
-               filter(lambda s: s.endswith('.rst') and s != 'list.rst',
-                      os.listdir(os.path.join(module_path, '../../docs/clang-tidy/checks'))))
-  checks.sort()
+  def format_link(doc_file):
+    check_name = doc_file.replace('.rst', '')
+    with open(os.path.join(docs_dir, doc_file), 'r') as doc:
+      match = re.search('.*:http-equiv=refresh: \d+;URL=(.*).html.*', doc.read())
+      if match:
+        return '   %(check)s (redirects to %(target)s) <%(check)s>\n' % {
+            'check' : check_name, 'target' : match.group(1) }
+      return '   %s\n' % check_name
+
+  checks = map(format_link, doc_files)
 
   print('Updating %s...' % filename)
   with open(filename, 'wb') as f:
@@ -238,7 +252,9 @@ def write_docs(module_path, module, check_name):
   print('Creating %s...' % filename)
   with open(filename, 'wb') as f:
     f.write(
-"""%(check_name_dashes)s
+""".. title:: clang-tidy - %(check_name_dashes)s
+
+%(check_name_dashes)s
 %(underline)s
 
 FIXME: Describe what patterns does the check detect and why. Give examples.
@@ -261,7 +277,7 @@ def main():
   if not adapt_cmake(module_path, check_name_camel):
     return
   write_header(module_path, module, check_name, check_name_camel)
-  write_implementation(module_path, check_name_camel)
+  write_implementation(module_path, module, check_name_camel)
   adapt_module(module_path, module, check_name, check_name_camel)
   write_test(module_path, module, check_name)
   write_docs(module_path, module, check_name)
