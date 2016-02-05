@@ -1,8 +1,7 @@
 // RUN: echo "static void staticFunctionHeader(int i) {}" > %T/header.h
 // RUN: echo "static void staticFunctionHeader(int  /*i*/) {}" > %T/header-fixed.h
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-unused-parameters %t -header-filter='.*' -- -fno-delayed-template-parsing
+// RUN: %check_clang_tidy %s misc-unused-parameters %t -- -header-filter='.*' -- -std=c++11 -fno-delayed-template-parsing
 // RUN: diff %T/header.h %T/header-fixed.h
-// REQUIRES: shell
 
 #include "header.h"
 // CHECK-MESSAGES: header.h:1:38: warning
@@ -26,6 +25,9 @@ void c(int *i) {}
 void g(int i);             // Don't remove stuff in declarations
 void h(int i) { (void)i; } // Don't remove used parameters
 
+bool useLambda(int (*fn)(int));
+static bool static_var = useLambda([] (int a) { return a; });
+
 // Remove parameters of local functions
 // ====================================
 static void staticFunctionA(int i);
@@ -40,7 +42,7 @@ static void staticFunctionB(int i, int j) { (void)i; }
 
 static void staticFunctionC(int i, int j) { (void)j; }
 // CHECK-MESSAGES: :[[@LINE-1]]:33: warning
-// CHECK-FIXES: {{^}}static void staticFunctionC( int j)
+// CHECK-FIXES: {{^}}static void staticFunctionC(int j)
 
 static void staticFunctionD(int i, int j, int k) { (void)i; (void)k; }
 // CHECK-MESSAGES: :[[@LINE-1]]:40: warning
@@ -57,10 +59,36 @@ static void someCallSites() {
   staticFunctionB(1, 2);
 // CHECK-FIXES: staticFunctionB(1);
   staticFunctionC(1, 2);
-// CHECK-FIXES: staticFunctionC( 2);
+// CHECK-FIXES: staticFunctionC(2);
   staticFunctionD(1, 2, 3);
 // CHECK-FIXES: staticFunctionD(1, 3);
   staticFunctionE();
+}
+
+/*
+ * FIXME: This fails because the removals overlap and ClangTidy doesn't apply
+ *        them.
+ * static void bothVarsUnused(int a, int b) {}
+ */
+
+// Regression test for long variable names and expressions
+// =======================================================
+static int variableWithLongName1(int LongName1, int LongName2) {
+// CHECK-MESSAGES: :[[@LINE-1]]:53: warning: parameter 'LongName2' is unused
+// CHECK-FIXES: {{^}}static int variableWithLongName1(int LongName1) {
+  return LongName1;
+}
+static int variableWithLongName2(int LongName1, int LongName2) {
+// CHECK-MESSAGES: :[[@LINE-1]]:38: warning: parameter 'LongName1' is unused
+// CHECK-FIXES: {{^}}static int variableWithLongName2(int LongName2) {
+  return LongName2;
+}
+static void someLongNameCallSites() {
+  int LongName1 = 7, LongName2 = 17;
+  variableWithLongName1(LongName1, LongName2);
+// CHECK-FIXES: variableWithLongName1(LongName1);
+  variableWithLongName2(LongName1, LongName2);
+// CHECK-FIXES: variableWithLongName2(LongName2);
 }
 
 class SomeClass {

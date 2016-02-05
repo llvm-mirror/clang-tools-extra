@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s readability-braces-around-statements %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s readability-braces-around-statements %t
 
 void do_something(const char *) {}
 
@@ -171,4 +170,25 @@ void test() {
   // CHECK-FIXES-NEXT: }
   // CHECK-FIXES-NEXT: }
   // CHECK-FIXES-NEXT: }
+}
+
+#define M(x) x
+
+int test_macros(bool b) {
+  if (b) {
+    return 1;
+  } else
+    M(return 2);
+  // CHECK-MESSAGES: :[[@LINE-2]]:9: warning: statement should be inside braces
+  // CHECK-FIXES: } else {
+  // CHECK-FIXES-NEXT:   M(return 2);
+  // CHECK-FIXES-NEXT: }
+  M(
+    for (;;)
+      ;
+  );
+  // CHECK-MESSAGES: :[[@LINE-3]]:13: warning: statement should be inside braces
+  // CHECK-FIXES: {{^}}    for (;;) {{{$}}
+  // CHECK-FIXES-NEXT: {{^      ;$}}
+  // CHECK-FIXES-NEXT: {{^}$}}
 }

@@ -149,18 +149,29 @@ public:
   /// \brief Sets ASTContext for the current translation unit.
   void setASTContext(ASTContext *Context);
 
+  /// \brief Gets the language options from the AST context.
+  LangOptions getLangOpts() const { return LangOpts; }
+
   /// \brief Returns the name of the clang-tidy check which produced this
   /// diagnostic ID.
   StringRef getCheckName(unsigned DiagnosticID) const;
 
   /// \brief Returns check filter for the \c CurrentFile.
+  ///
+  /// The \c CurrentFile can be changed using \c setCurrentFile.
   GlobList &getChecksFilter();
 
   /// \brief Returns global options.
   const ClangTidyGlobalOptions &getGlobalOptions() const;
 
   /// \brief Returns options for \c CurrentFile.
+  ///
+  /// The \c CurrentFile can be changed using \c setCurrentFile.
   const ClangTidyOptions &getOptions() const;
+
+  /// \brief Returns options for \c File. Does not change or depend on
+  /// \c CurrentFile.
+  ClangTidyOptions getOptionsForFile(StringRef File) const;
 
   /// \brief Returns \c ClangTidyStats containing issued and ignored diagnostic
   /// counters.
@@ -176,8 +187,8 @@ public:
   ///
   /// Setting a non-null pointer here will enable profile collection in
   /// clang-tidy.
-  void setCheckProfileData(ProfileData* Profile);
-  ProfileData* getCheckProfileData() const { return Profile; }
+  void setCheckProfileData(ProfileData *Profile);
+  ProfileData *getCheckProfileData() const { return Profile; }
 
 private:
   // Calls setDiagnosticsEngine() and storeError().
@@ -197,6 +208,8 @@ private:
   std::string CurrentFile;
   ClangTidyOptions CurrentOptions;
   std::unique_ptr<GlobList> CheckFilter;
+
+  LangOptions LangOpts;
 
   ClangTidyStats Stats;
 
@@ -220,15 +233,17 @@ public:
   void HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
                         const Diagnostic &Info) override;
 
-  /// \brief Sets \c HeaderFilter to the value configured for this file.
-  void BeginSourceFile(const LangOptions &LangOpts,
-                       const Preprocessor *PP) override;
-
   /// \brief Flushes the internal diagnostics buffer to the ClangTidyContext.
   void finish() override;
 
 private:
   void finalizeLastError();
+
+  void removeIncompatibleErrors(SmallVectorImpl<ClangTidyError> &Errors) const;
+
+  /// \brief Returns the \c HeaderFilter constructed for the options set in the
+  /// context.
+  llvm::Regex *getHeaderFilter();
 
   /// \brief Updates \c LastErrorRelatesToUserCode and LastErrorPassesLineFilter
   /// according to the diagnostic \p Location.

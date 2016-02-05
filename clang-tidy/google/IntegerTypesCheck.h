@@ -17,21 +17,21 @@ namespace tidy {
 namespace google {
 namespace runtime {
 
-/// \brief Finds uses of short, long and long long and suggest replacing them
-/// with u?intXX(_t)?.
-/// Correspondig cpplint.py check: runtime/int.
+/// Finds uses of `short`, `long` and `long long` and suggest replacing them
+/// with `u?intXX(_t)?`.
+///
+/// Correspondig cpplint.py check: 'runtime/int'.
 class IntegerTypesCheck : public ClangTidyCheck {
 public:
-  IntegerTypesCheck(StringRef Name, ClangTidyContext *Context)
-      : ClangTidyCheck(Name, Context), UnsignedTypePrefix("uint"),
-        SignedTypePrefix("int"), AddUnderscoreT(false) {}
+  IntegerTypesCheck(StringRef Name, ClangTidyContext *Context);
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
+  void storeOptions(ClangTidyOptions::OptionMap &Options) override;
 
 private:
-  const StringRef UnsignedTypePrefix;
-  const StringRef SignedTypePrefix;
-  const bool AddUnderscoreT;
+  const std::string UnsignedTypePrefix;
+  const std::string SignedTypePrefix;
+  const std::string TypeSuffix;
 };
 
 } // namespace runtime

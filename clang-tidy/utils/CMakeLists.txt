@@ -2,6 +2,9 @@ set(LLVM_LINK_COMPONENTS support)
 
 add_clang_library(clangTidyUtils
   HeaderGuard.cpp
+  IncludeInserter.cpp
+  IncludeSorter.cpp
+  TypeTraits.cpp
 
   LINK_LIBS
   clangAST

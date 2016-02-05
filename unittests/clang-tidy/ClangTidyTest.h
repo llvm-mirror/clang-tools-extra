@@ -17,6 +17,8 @@
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Tooling/Tooling.h"
+#include <map>
+#include <memory>
 
 namespace clang {
 namespace tidy {
@@ -24,52 +26,94 @@ namespace test {
 
 class TestClangTidyAction : public ASTFrontendAction {
 public:
-  TestClangTidyAction(ClangTidyCheck &Check, ast_matchers::MatchFinder &Finder,
+  TestClangTidyAction(SmallVectorImpl<std::unique_ptr<ClangTidyCheck>> &Checks,
+                      ast_matchers::MatchFinder &Finder,
                       ClangTidyContext &Context)
-      : Check(Check), Finder(Finder), Context(Context) {}
+      : Checks(Checks), Finder(Finder), Context(Context) {}
 
 private:
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &Compiler,
                                                  StringRef File) override {
     Context.setSourceManager(&Compiler.getSourceManager());
-    Check.registerPPCallbacks(Compiler);
+    Context.setCurrentFile(File);
+    Context.setASTContext(&Compiler.getASTContext());
+
+    for (auto &Check : Checks) {
+      Check->registerMatchers(&Finder);
+      Check->registerPPCallbacks(Compiler);
+    }
     return Finder.newASTConsumer();
   }
 
-  ClangTidyCheck &Check;
+  SmallVectorImpl<std::unique_ptr<ClangTidyCheck>> &Checks;
   ast_matchers::MatchFinder &Finder;
   ClangTidyContext &Context;
 };
 
-template <typename T>
+template <typename Check, typename... Checks> struct CheckFactory {
+  static void
+  createChecks(ClangTidyContext *Context,
+               SmallVectorImpl<std::unique_ptr<ClangTidyCheck>> &Result) {
+    CheckFactory<Check>::createChecks(Context, Result);
+    CheckFactory<Checks...>::createChecks(Context, Result);
+  }
+};
+
+template <typename Check> struct CheckFactory<Check> {
+  static void
+  createChecks(ClangTidyContext *Context,
+               SmallVectorImpl<std::unique_ptr<ClangTidyCheck>> &Result) {
+    Result.emplace_back(llvm::make_unique<Check>(
+        "test-check-" + std::to_string(Result.size()), Context));
+  }
+};
+
+template <typename... CheckList>
 std::string
 runCheckOnCode(StringRef Code, std::vector<ClangTidyError> *Errors = nullptr,
                const Twine &Filename = "input.cc",
                ArrayRef<std::string> ExtraArgs = None,
-               const ClangTidyOptions &ExtraOptions = ClangTidyOptions()) {
+               const ClangTidyOptions &ExtraOptions = ClangTidyOptions(),
+               std::map<StringRef, StringRef> PathsToContent =
+                   std::map<StringRef, StringRef>()) {
   ClangTidyOptions Options = ExtraOptions;
   Options.Checks = "*";
   ClangTidyContext Context(llvm::make_unique<DefaultOptionsProvider>(
       ClangTidyGlobalOptions(), Options));
   ClangTidyDiagnosticConsumer DiagConsumer(Context);
-  T Check("test-check", &Context);
-  ast_matchers::MatchFinder Finder;
-  Check.registerMatchers(&Finder);
-  Context.setCurrentFile(Filename.str());
 
   std::vector<std::string> ArgCXX11(1, "clang-tidy");
   ArgCXX11.push_back("-fsyntax-only");
   ArgCXX11.push_back("-std=c++11");
+  ArgCXX11.push_back("-Iinclude");
   ArgCXX11.insert(ArgCXX11.end(), ExtraArgs.begin(), ExtraArgs.end());
   ArgCXX11.push_back(Filename.str());
+
+  ast_matchers::MatchFinder Finder;
+  llvm::IntrusiveRefCntPtr<vfs::InMemoryFileSystem> InMemoryFileSystem(
+      new vfs::InMemoryFileSystem);
   llvm::IntrusiveRefCntPtr<FileManager> Files(
-      new FileManager(FileSystemOptions()));
+      new FileManager(FileSystemOptions(), InMemoryFileSystem));
+
+  SmallVector<std::unique_ptr<ClangTidyCheck>, 1> Checks;
+  CheckFactory<CheckList...>::createChecks(&Context, Checks);
   tooling::ToolInvocation Invocation(
-      ArgCXX11, new TestClangTidyAction(Check, Finder, Context), Files.get());
-  Invocation.mapVirtualFile(Filename.str(), Code);
+      ArgCXX11, new TestClangTidyAction(Checks, Finder, Context), Files.get());
+  InMemoryFileSystem->addFile(Filename, 0,
+                              llvm::MemoryBuffer::getMemBuffer(Code));
+  for (const auto &FileContent : PathsToContent) {
+    InMemoryFileSystem->addFile(
+        Twine("include/") + FileContent.first, 0,
+        llvm::MemoryBuffer::getMemBuffer(FileContent.second));
+  }
   Invocation.setDiagnosticConsumer(&DiagConsumer);
-  if (!Invocation.run())
-    return "";
+  if (!Invocation.run()) {
+    std::string ErrorText;
+    for (const auto &Error : Context.getErrors()) {
+      ErrorText += Error.Message.Message + "\n";
+    }
+    llvm::report_fatal_error(ErrorText);
+  }
 
   DiagConsumer.finish();
   tooling::Replacements Fixes;

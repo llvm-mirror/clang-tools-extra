@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s readability-simplify-boolean-expr %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s readability-simplify-boolean-expr %t
 
 bool a1 = false;
 

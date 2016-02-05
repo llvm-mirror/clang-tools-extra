@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s readability-redundant-string-cstr %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s readability-redundant-string-cstr %t
 
 namespace std {
 template <typename T>

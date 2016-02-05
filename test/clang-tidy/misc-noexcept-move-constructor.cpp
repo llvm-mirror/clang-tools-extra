@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-noexcept-move-constructor %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s misc-noexcept-move-constructor %t
 
 class A {
   A(A &&);

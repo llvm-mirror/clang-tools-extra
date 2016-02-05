@@ -83,6 +83,14 @@ struct ClangTidyOptions {
 
   /// \brief Key-value mapping used to store check-specific options.
   OptionMap CheckOptions;
+
+  typedef std::vector<std::string> ArgList;
+
+  /// \brief Add extra compilation arguments to the end of the list.
+  llvm::Optional<ArgList> ExtraArgs;
+
+  /// \brief Add extra compilation arguments to the start of the list.
+  llvm::Optional<ArgList> ExtraArgsBefore;
 };
 
 /// \brief Abstract interface for retrieving various ClangTidy options.
@@ -189,7 +197,7 @@ public:
 
   ClangTidyOptions getOptions(llvm::StringRef FileName) override;
 
-private:
+protected:
   /// \brief Try to read configuration files from \p Directory using registered
   /// \c ConfigHandlers.
   llvm::Optional<ClangTidyOptions> TryReadConfigFile(llvm::StringRef Directory);

@@ -1,5 +1,4 @@
-// RUN: $(dirname %s)/check_clang_tidy.sh %s misc-inefficient-algorithm %t
-// REQUIRES: shell
+// RUN: %check_clang_tidy %s misc-inefficient-algorithm %t
 
 namespace std {
 template <typename T> struct less {

@@ -34,7 +34,10 @@ void NamespaceCommentCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
 }
 
 void NamespaceCommentCheck::registerMatchers(MatchFinder *Finder) {
-  Finder->addMatcher(namespaceDecl().bind("namespace"), this);
+  // Only register the matchers for C++; the functionality currently does not
+  // provide any benefit to other languages, despite being benign.
+  if (getLangOpts().CPlusPlus)
+    Finder->addMatcher(namespaceDecl().bind("namespace"), this);
 }
 
 static bool locationsInSameFile(const SourceManager &Sources,
@@ -72,7 +75,8 @@ void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
   SourceLocation Loc = AfterRBrace;
   Token Tok;
   // Skip whitespace until we find the next token.
-  while (Lexer::getRawToken(Loc, Tok, Sources, Result.Context->getLangOpts())) {
+  while (Lexer::getRawToken(Loc, Tok, Sources, Result.Context->getLangOpts()) ||
+         Tok.is(tok::semi)) {
     Loc = Loc.getLocWithOffset(1);
   }
   if (!locationsInSameFile(Sources, ND->getRBraceLoc(), Loc))
