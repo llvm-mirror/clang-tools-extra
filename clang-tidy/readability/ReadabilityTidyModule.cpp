@@ -18,8 +18,10 @@
 #include "ImplicitBoolCastCheck.h"
 #include "InconsistentDeclarationParameterNameCheck.h"
 #include "NamedParameterCheck.h"
+#include "RedundantControlFlowCheck.h"
 #include "RedundantSmartptrGetCheck.h"
 #include "RedundantStringCStrCheck.h"
+#include "RedundantStringInitCheck.h"
 #include "SimplifyBooleanExprCheck.h"
 #include "UniqueptrDeleteReleaseCheck.h"
 
@@ -44,16 +46,20 @@ public:
         "readability-implicit-bool-cast");
     CheckFactories.registerCheck<InconsistentDeclarationParameterNameCheck>(
         "readability-inconsistent-declaration-parameter-name");
-    CheckFactories.registerCheck<UniqueptrDeleteReleaseCheck>(
-        "readability-uniqueptr-delete-release");
     CheckFactories.registerCheck<readability::NamedParameterCheck>(
         "readability-named-parameter");
+    CheckFactories.registerCheck<RedundantControlFlowCheck>(
+        "readability-redundant-control-flow");
     CheckFactories.registerCheck<RedundantSmartptrGetCheck>(
         "readability-redundant-smartptr-get");
     CheckFactories.registerCheck<RedundantStringCStrCheck>(
         "readability-redundant-string-cstr");
+    CheckFactories.registerCheck<RedundantStringInitCheck>(
+        "readability-redundant-string-init");
     CheckFactories.registerCheck<SimplifyBooleanExprCheck>(
         "readability-simplify-boolean-expr");
+    CheckFactories.registerCheck<UniqueptrDeleteReleaseCheck>(
+        "readability-uniqueptr-delete-release");
   }
 };
 

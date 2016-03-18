@@ -6,12 +6,15 @@ add_clang_library(clangTidyMiscModule
   AssignOperatorSignatureCheck.cpp
   BoolPointerImplicitConversionCheck.cpp
   DefinitionsInHeadersCheck.cpp
+  ForwardDeclarationNamespaceCheck.cpp
   InaccurateEraseCheck.cpp
+  IncorrectRoundings.cpp
   InefficientAlgorithmCheck.cpp
   MacroParenthesesCheck.cpp
   MacroRepeatedSideEffectsCheck.cpp
   MiscTidyModule.cpp
-  MoveConstantArgumentCheck.cpp 
+  MisplacedWideningCastCheck.cpp
+  MoveConstantArgumentCheck.cpp
   MoveConstructorInitCheck.cpp
   NewDeleteOverloadsCheck.cpp
   NoexceptMoveConstructorCheck.cpp
@@ -19,6 +22,7 @@ add_clang_library(clangTidyMiscModule
   SizeofContainerCheck.cpp
   StaticAssertCheck.cpp
   StringIntegerAssignmentCheck.cpp
+  SuspiciousSemicolonCheck.cpp
   SwappedArgumentsCheck.cpp
   ThrowByValueCatchByReferenceCheck.cpp
   UndelegatedConstructor.cpp

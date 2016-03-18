@@ -2,13 +2,16 @@
 Clang-Tidy
 ==========
 
+.. contents::
+
+See also:
+
 .. toctree::
    :maxdepth: 1
 
-   checks/list
+   The list of clang-tidy checks <checks/list>
 
-
-:program:`clang-tidy` is a clang-based C++ linter tool. Its purpose is to
+:program:`clang-tidy` is a clang-based C++ "linter" tool. Its purpose is to
 provide an extensible framework for diagnosing and fixing typical programming
 errors, like style violations, interface misuse, or bugs that can be deduced via
 static analysis. :program:`clang-tidy` is modular and provides a convenient
@@ -90,69 +93,92 @@ An overview of all the command-line options:
 
   OPTIONS:
 
-  General options:
+  Generic Options:
 
-    -help                    - Display available options (-help-hidden
-                               for more)
-    -help-list               - Display list of available options
-                               (-help-list-hidden for more)
-    -version                 - Display the version of this program
+    -help                        - Display available options (-help-hidden for more)
+    -help-list                   - Display list of available options (-help-list-hidden for more)
+    -version                     - Display the version of this program
 
   clang-tidy options:
 
-    -analyze-temporary-dtors   - Enable temporary destructor-aware analysis in
-                                 clang-analyzer- checks.
-                                 This option overrides the value read from a
-                                 .clang-tidy file.
-    -checks=<string>           - Comma-separated list of globs with optional '-'
-                                 prefix. Globs are processed in order of appearance
-                                 in the list. Globs without '-' prefix add checks
-                                 with matching names to the set, globs with the '-'
-                                 prefix remove checks with matching names from the
-                                 set of enabled checks.
-                                 This option's value is appended to the value read
-                                 from a .clang-tidy file, if any.
-    -config=<string>           - Specifies a configuration in YAML/JSON format:
-                                   -config="{Checks: '*', CheckOptions: [{key: x, value: y}]}"
-                                 When the value is empty, clang-tidy will attempt to find
-                                 a file named .clang-tidy for each source file in its parent
-                                 directories.
-    -dump-config               - Dumps configuration in the YAML format to stdout. This option
-                                 should be used along with a file name (and '--' if the file is
-                                 outside of a project with configured compilation database). The
-                                 configuration used for this file will be printed.
-    -enable-check-profile      - Enable per-check timing profiles, and print a report to stderr.
-    -export-fixes=<filename>   - YAML file to store suggested fixes in. The
-                                 stored fixes can be applied to the input source
-                                 code with clang-apply-replacements.
-    -extra-arg=<string>        - Additional argument to append to the compiler command line
-    -extra-arg-before=<string> - Additional argument to prepend to the compiler command line
-    -fix                       - Apply suggested fixes. Without -fix-errors
-                                 clang-tidy will bail out if any compilation
-                                 errors were found.
-    -fix-errors                - Apply suggested fixes even if compilation errors
-                                 were found. If compiler errors have attached
-                                 fix-its, clang-tidy will apply them as well.
-    -header-filter=<string>    - Regular expression matching the names of the
-                                 headers to output diagnostics from. Diagnostics
-                                 from the main file of each translation unit are
-                                 always displayed.
-                                 Can be used together with -line-filter.
-                                 This option overrides the value read from a
-                                 .clang-tidy file.
-    -line-filter=<string>      - List of files with line ranges to filter the
-                                 warnings. Can be used together with
-                                 -header-filter. The format of the list is a JSON
-                                 array of objects:
-                                   [
-                                     {"name":"file1.cpp","lines":[[1,3],[5,7]]},
-                                     {"name":"file2.h"}
-                                   ]
-    -list-checks               - List all enabled checks and exit. Use with
-                                 -checks=* to list all available checks.
-    -p=<string>                - Build path
-    -system-headers            - Display the errors from system headers.
-    -warnings-as-errors=<string> - Upgrades warnings to errors. Same format as '-checks'.
+    -analyze-temporary-dtors     - 
+                                   Enable temporary destructor-aware analysis in
+                                   clang-analyzer- checks.
+                                   This option overrides the value read from a
+                                   .clang-tidy file.
+    -checks=<string>             - 
+                                   Comma-separated list of globs with optional '-'
+                                   prefix. Globs are processed in order of
+                                   appearance in the list. Globs without '-'
+                                   prefix add checks with matching names to the
+                                   set, globs with the '-' prefix remove checks
+                                   with matching names from the set of enabled
+                                   checks.  This option's value is appended to the
+                                   value of the 'Checks' option in .clang-tidy
+                                   file, if any.
+    -config=<string>             - 
+                                   Specifies a configuration in YAML/JSON format:
+                                     -config="{Checks: '*',
+                                               CheckOptions: [{key: x,
+                                                               value: y}]}"
+                                   When the value is empty, clang-tidy will
+                                   attempt to find a file named .clang-tidy for
+                                   each source file in its parent directories.
+    -dump-config                 - 
+                                   Dumps configuration in the YAML format to
+                                   stdout. This option can be used along with a
+                                   file name (and '--' if the file is outside of a
+                                   project with configured compilation database).
+                                   The configuration used for this file will be
+                                   printed.
+                                   Use along with -checks=* to include
+                                   configuration of all checks.
+    -enable-check-profile        - 
+                                   Enable per-check timing profiles, and print a
+                                   report to stderr.
+    -export-fixes=<filename>     - 
+                                   YAML file to store suggested fixes in. The
+                                   stored fixes can be applied to the input sorce
+                                   code with clang-apply-replacements.
+    -extra-arg=<string>          - Additional argument to append to the compiler command line
+    -extra-arg-before=<string>   - Additional argument to prepend to the compiler command line
+    -fix                         - 
+                                   Apply suggested fixes. Without -fix-errors
+                                   clang-tidy will bail out if any compilation
+                                   errors were found.
+    -fix-errors                  - 
+                                   Apply suggested fixes even if compilation
+                                   errors were found. If compiler errors have
+                                   attached fix-its, clang-tidy will apply them as
+                                   well.
+    -header-filter=<string>      - 
+                                   Regular expression matching the names of the
+                                   headers to output diagnostics from. Diagnostics
+                                   from the main file of each translation unit are
+                                   always displayed.
+                                   Can be used together with -line-filter.
+                                   This option overrides the 'HeaderFilter' option
+                                   in .clang-tidy file, if any.
+    -line-filter=<string>        - 
+                                   List of files with line ranges to filter the
+                                   warnings. Can be used together with
+                                   -header-filter. The format of the list is a
+                                   JSON array of objects:
+                                     [
+                                       {"name":"file1.cpp","lines":[[1,3],[5,7]]},
+                                       {"name":"file2.h"}
+                                     ]
+    -list-checks                 - 
+                                   List all enabled checks and exit. Use with
+                                   -checks=* to list all available checks.
+    -p=<string>                  - Build path
+    -system-headers              - Display the errors from system headers.
+    -warnings-as-errors=<string> - 
+                                   Upgrades warnings to errors. Same format as
+                                   '-checks'.
+                                   This option's value is appended to the value of
+                                   the 'WarningsAsErrors' option in .clang-tidy
+                                   file, if any.
 
   -p <build-path> is used to read a compile command database.
 
@@ -173,6 +199,7 @@ An overview of all the command-line options:
           automatically removed, but the rest of a relative path must be a
           suffix of a path in the compile command database.
 
+
   Configuration files:
     clang-tidy attempts to read configuration for each source file from a
     .clang-tidy file located in the closest parent directory of the source
@@ -183,10 +210,11 @@ An overview of all the command-line options:
       $ clang-tidy -dump-config - --
       ---
       Checks:          '-*,some-check'
+      WarningsAsErrors: ''
       HeaderFilterRegex: ''
       AnalyzeTemporaryDtors: false
       User:            user
-      CheckOptions:    
+      CheckOptions:
         - key:             some-check.SomeOption
           value:           'some value'
       ...
@@ -204,8 +232,8 @@ checks, but its power is in the ability to easily write custom checks.
 Checks are organized in modules, which can be linked into :program:`clang-tidy`
 with minimal or no code changes in clang-tidy.
 
-Checks can plug the analysis on the preprocessor level using `PPCallbacks`_ or
-on the AST level using `AST Matchers`_. When an error is found, checks can
+Checks can plug into the analysis on the preprocessor level using `PPCallbacks`_
+or on the AST level using `AST Matchers`_. When an error is found, checks can
 report them in a way similar to how Clang diagnostics work. A fix-it hint can be
 attached to a diagnostic message.
 
@@ -213,8 +241,20 @@ The interface provided by clang-tidy makes it easy to write useful and precise
 checks in just a few lines of code. If you have an idea for a good check, the
 rest of this document explains how to do this.
 
+There are a few tools particularly useful when developing clang-tidy checks:
+  * ``add_new_check.py`` is a script to automate the process of adding a new
+    check, it will create the check, update the CMake file and create a test;
+  * ``rename_check.py`` does what the script name suggest, renames an existsing
+    check;
+  * :program:`clang-query` is invaluable for interactive prototyping of AST
+    matchers and exploration of the Clang AST;
+  * `clang-check`_ with the ``-ast-dump`` (and optionally ``-ast-dump-filter``)
+    provides a convenient way to dump AST of a C++ program.
+
+
 .. _AST Matchers: http://clang.llvm.org/docs/LibASTMatchers.html
 .. _PPCallbacks: http://clang.llvm.org/doxygen/classclang_1_1PPCallbacks.html
+.. _clang-check: http://clang.llvm.org/docs/ClangCheck.html
 
 
 Choosing the Right Place for your Check
@@ -288,10 +328,38 @@ Writing a clang-tidy Check
 
 So you have an idea of a useful check for :program:`clang-tidy`.
 
-You need to decide which module the check belongs to. If the check verifies
-conformance of the code to a certain coding style, it probably deserves a
-separate module and a directory in ``clang-tidy/`` (there are LLVM and Google
-modules already).
+First, if you're not familiar with LLVM development, read through the `Getting
+Started with LLVM`_ document for instructions on setting up your workflow and
+the `LLVM Coding Standards`_ document to familiarize yourself with the coding
+style used in the project. For code reviews we mostly use `LLVM Phabricator`_.
+
+.. _Getting Started with LLVM: http://llvm.org/docs/GettingStarted.html
+.. _LLVM Coding Standards: http://llvm.org/docs/CodingStandards.html
+.. _LLVM Phabricator: http://llvm.org/docs/Phabricator.html
+
+
+Next, you need to decide which module the check belongs to. If the check
+verifies conformance of the code to a certain coding style, it probably deserves
+a separate module and a directory in ``clang-tidy/``. There are already modules
+implementing checks related to:
+
+* `C++ Core Guidelines
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/cppcoreguidelines/>`_
+* `CERT Secure Coding Standards
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/cert/>`_
+* `Google Style Guide
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/google/>`_
+* `LLVM Style
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/llvm/>`_
+* `modernizing C/C++ code
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/modernize/>`_
+* potential `performance problems
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/performance/>`_
+* various `readability issues
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/readability/>`_
+* and `miscellaneous checks
+  <http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/misc/>`_
+  that we couldn't find a better category for.
 
 After choosing the module, you need to create a class for your check:
 
@@ -301,12 +369,20 @@ After choosing the module, you need to create a class for your check:
 
   namespace clang {
   namespace tidy {
+  namespace some_module {
 
   class MyCheck : public ClangTidyCheck {
+  public:
+    MyCheck(StringRef Name, ClangTidyContext *Context)
+        : ClangTidyCheck(Name, Context) {}
   };
 
+  } // namespace some_module
   } // namespace tidy
   } // namespace clang
+
+Constructor of the check receives the ``Name`` and ``Context`` parameters, and
+must forward them to the ``ClangTidyCheck`` constructor.
 
 Next, you need to decide whether it should operate on the preprocessor level or
 on the AST level. Let's imagine that we need to work with the AST in our check.
@@ -323,9 +399,6 @@ In this case we need to override two methods:
     void check(ast_matchers::MatchFinder::MatchResult &Result) override;
   };
 
-Constructor of the check receives the ``Name`` and ``Context`` parameters, and
-must forward them to the ``ClangTidyCheck`` constructor.
-
 In the ``registerMatchers`` method we create an AST Matcher (see `AST Matchers`_
 for more information) that will find the pattern in the AST that we want to
 inspect. The results of the matching are passed to the ``check`` method, which
@@ -340,8 +413,7 @@ can further inspect them and report diagnostics.
   }
 
   void ExplicitConstructorCheck::check(const MatchFinder::MatchResult &Result) {
-    const CXXConstructorDecl *Ctor =
-        Result.Nodes.getNodeAs<CXXConstructorDecl>("ctor");
+    const auto *Ctor = Result.Nodes.getNodeAs<CXXConstructorDecl>("ctor");
     // Do not be confused: isExplicit means 'explicit' keyword is present,
     // isImplicit means that it's a compiler-generated constructor.
     if (Ctor->isOutOfLine() || Ctor->isExplicit() || Ctor->isImplicit())
@@ -354,7 +426,10 @@ can further inspect them and report diagnostics.
   }
 
 (The full code for this check resides in
-``clang-tidy/google/ExplicitConstructorCheck.{h,cpp}``).
+`clang-tidy/google/ExplicitConstructorCheck.h
+<http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/google/ExplicitConstructorCheck.h>`_
+and `clang-tidy/google/ExplicitConstructorCheck.cpp
+<http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/clang-tidy/google/ExplicitConstructorCheck.cpp>`_).
 
 
 Registering your Check
@@ -471,11 +546,12 @@ It's advised to make the checks as specific as possible to avoid checks matching
 to incorrect parts of the input. Use ``[[@LINE+X]]``/``[[@LINE-X]]``
 substitutions and distinct function and variable names in the test code.
 
-Here's an example of a test using the ``check_clang_tidy.py`` script:
+Here's an example of a test using the ``check_clang_tidy.py`` script (the full
+source code is at `test/clang-tidy/google-readability-casting.cpp`_):
 
 .. code-block:: bash
 
-  // RUN: %python %S/check_clang_tidy.py %s google-readability-casting %t
+  // RUN: %check_clang_tidy %s google-readability-casting %t
 
   void f(int a) {
     int b = (int)a;
@@ -483,15 +559,32 @@ Here's an example of a test using the ``check_clang_tidy.py`` script:
     // CHECK-FIXES: int b = a;
   }
 
+There are many dark corners in the C++ language, and it may be difficult to make
+your check work perfectly in all cases, especially if it issues fixit hints. The
+most frequent pitfalls are macros and templates:
+
+1. code written in a macro body/template definition may have a different meaning
+   depending on the macro expansion/template instantiation;
+2. multiple macro expansions/template instantiations may result in the same code
+   being inspected by the check multiple times (possibly, with different
+   meanings, see 1), and the same warning (or a slightly different one) may be
+   issued by the check multipe times; clang-tidy will deduplicate _identical_
+   warnings, but if the warnings are slightly different, all of them will be
+   shown to the user (and used for applying fixes, if any);
+3. making replacements to a macro body/template definition may be fine for some
+   macro expansions/template instantiations, but easily break some other
+   expansions/instantiations.
+
 .. _lit: http://llvm.org/docs/CommandGuide/lit.html
 .. _FileCheck: http://llvm.org/docs/CommandGuide/FileCheck.html
+.. _test/clang-tidy/google-readability-casting.cpp: http://reviews.llvm.org/diffusion/L/browse/clang-tools-extra/trunk/test/clang-tidy/google-readability-casting.cpp
 
 
 Running clang-tidy on LLVM
 --------------------------
 
 To test a check it's best to try it out on a larger code base. LLVM and Clang
-are the natural targets as you already have the source around. The most
+are the natural targets as you already have the source code around. The most
 convenient way to run :program:`clang-tidy` is with a compile command database;
 CMake can automatically generate one, for a description of how to enable it see
 `How To Setup Tooling For LLVM`_. Once ``compile_commands.json`` is in place and
