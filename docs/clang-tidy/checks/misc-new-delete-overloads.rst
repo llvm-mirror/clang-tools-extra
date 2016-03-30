@@ -1,5 +1,9 @@
+.. title:: clang-tidy - misc-new-delete-overloads
+
 misc-new-delete-overloads
 =========================
+
+"cert-dcl54-cpp" redirects here as an alias for this check.
 
 The check flags overloaded operator new() and operator delete() functions that
 do not have a corresponding free store function defined within the same scope.

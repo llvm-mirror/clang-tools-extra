@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 #===- check_clang_tidy.py - ClangTidy Test Helper ------------*- python -*--===#
 #
@@ -52,6 +52,8 @@ def main():
   extension = '.cpp'
   if (input_file_name.endswith('.c')):
     extension = '.c'
+  if (input_file_name.endswith('.hpp')):
+    extension = '.hpp'
   temp_file_name = temp_file_name + extension
 
   clang_tidy_extra_args = extra_args

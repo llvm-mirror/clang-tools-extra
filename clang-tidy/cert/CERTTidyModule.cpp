@@ -16,6 +16,8 @@
 #include "../misc/NonCopyableObjects.h"
 #include "../misc/StaticAssertCheck.h"
 #include "../misc/ThrowByValueCatchByReferenceCheck.h"
+#include "CommandProcessorCheck.h"
+#include "FloatLoopCounter.h"
 #include "SetLongJmpCheck.h"
 #include "StaticObjectExceptionCheck.h"
 #include "ThrownExceptionTypeCheck.h"
@@ -23,7 +25,7 @@
 
 namespace clang {
 namespace tidy {
-namespace CERT {
+namespace cert {
 
 class CERTModule : public ClangTidyModule {
 public:
@@ -53,17 +55,22 @@ public:
     // DCL
     CheckFactories.registerCheck<StaticAssertCheck>(
         "cert-dcl03-c");
-
+    // ENV
+    CheckFactories.registerCheck<CommandProcessorCheck>(
+        "cert-env33-c");
+    // FLP
+    CheckFactories.registerCheck<FloatLoopCounter>(
+        "cert-flp30-c");
     // FIO
     CheckFactories.registerCheck<NonCopyableObjectsCheck>(
         "cert-fio38-c");
   }
 };
 
-} // namespace misc
+} // namespace cert
 
 // Register the MiscTidyModule using this statically initialized variable.
-static ClangTidyModuleRegistry::Add<CERT::CERTModule>
+static ClangTidyModuleRegistry::Add<cert::CERTModule>
 X("cert-module",
   "Adds lint checks corresponding to CERT secure coding guidelines.");
 
