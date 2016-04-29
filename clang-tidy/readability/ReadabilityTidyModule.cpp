@@ -10,8 +10,10 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "AvoidConstParamsInDecls.h"
 #include "BracesAroundStatementsCheck.h"
 #include "ContainerSizeEmptyCheck.h"
+#include "DeletedDefaultCheck.h"
 #include "ElseAfterReturnCheck.h"
 #include "FunctionSizeCheck.h"
 #include "IdentifierNamingCheck.h"
@@ -23,6 +25,7 @@
 #include "RedundantStringCStrCheck.h"
 #include "RedundantStringInitCheck.h"
 #include "SimplifyBooleanExprCheck.h"
+#include "StaticDefinitionInAnonymousNamespaceCheck.h"
 #include "UniqueptrDeleteReleaseCheck.h"
 
 namespace clang {
@@ -32,10 +35,14 @@ namespace readability {
 class ReadabilityModule : public ClangTidyModule {
 public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
+    CheckFactories.registerCheck<AvoidConstParamsInDecls>(
+        "readability-avoid-const-params-in-decls");
     CheckFactories.registerCheck<BracesAroundStatementsCheck>(
         "readability-braces-around-statements");
     CheckFactories.registerCheck<ContainerSizeEmptyCheck>(
         "readability-container-size-empty");
+    CheckFactories.registerCheck<DeletedDefaultCheck>(
+        "readability-deleted-default");
     CheckFactories.registerCheck<ElseAfterReturnCheck>(
         "readability-else-after-return");
     CheckFactories.registerCheck<FunctionSizeCheck>(
@@ -46,6 +53,8 @@ public:
         "readability-implicit-bool-cast");
     CheckFactories.registerCheck<InconsistentDeclarationParameterNameCheck>(
         "readability-inconsistent-declaration-parameter-name");
+    CheckFactories.registerCheck<StaticDefinitionInAnonymousNamespaceCheck>(
+        "readability-static-definition-in-anonymous-namespace");
     CheckFactories.registerCheck<readability::NamedParameterCheck>(
         "readability-named-parameter");
     CheckFactories.registerCheck<RedundantControlFlowCheck>(

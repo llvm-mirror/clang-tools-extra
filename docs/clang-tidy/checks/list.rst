@@ -16,6 +16,7 @@ Clang-Tidy Checks
    cert-fio38-c (redirects to misc-non-copyable-objects) <cert-fio38-c>
    cert-flp30-c
    cert-oop11-cpp (redirects to misc-move-constructor-init) <cert-oop11-cpp>
+   cppcoreguidelines-interfaces-global-init
    cppcoreguidelines-pro-bounds-array-to-pointer-decay
    cppcoreguidelines-pro-bounds-constant-array-index
    cppcoreguidelines-pro-bounds-pointer-arithmetic
@@ -31,9 +32,9 @@ Clang-Tidy Checks
    google-build-using-namespace
    google-explicit-constructor
    google-global-names-in-headers
-   google-readability-braces-around-statements
+   google-readability-braces-around-statements (redirects to readability-braces-around-statements) <google-readability-braces-around-statements>
    google-readability-casting
-   google-readability-function-size
+   google-readability-function-size (redirects to readability-function-size) <google-readability-function-size>
    google-readability-namespace-comments
    google-readability-redundant-smartptr-get
    google-readability-todo
@@ -50,7 +51,9 @@ Clang-Tidy Checks
    misc-assert-side-effect
    misc-assign-operator-signature
    misc-bool-pointer-implicit-conversion
+   misc-dangling-handle
    misc-definitions-in-headers
+   misc-fold-init-type
    misc-forward-declaration-namespace
    misc-inaccurate-erase
    misc-incorrect-roundings
@@ -58,14 +61,23 @@ Clang-Tidy Checks
    misc-macro-parentheses
    misc-macro-repeated-side-effects
    misc-misplaced-widening-cast
+   misc-move-const-arg
    misc-move-constructor-init
+   misc-multiple-statement-macro
    misc-new-delete-overloads
    misc-noexcept-move-constructor
    misc-non-copyable-objects
+   misc-pointer-and-integral-operation
+   misc-redundant-expression
    misc-sizeof-container
+   misc-sizeof-expression
    misc-static-assert
+   misc-string-constructor
    misc-string-integer-assignment
+   misc-string-literal-with-embedded-nul
+   misc-suspicious-missing-comma
    misc-suspicious-semicolon
+   misc-suspicious-string-compare
    misc-swapped-arguments
    misc-throw-by-value-catch-by-reference
    misc-undelegated-constructor
@@ -73,6 +85,7 @@ Clang-Tidy Checks
    misc-unused-alias-decls
    misc-unused-parameters
    misc-unused-raii
+   misc-unused-using-decls
    misc-virtual-near-miss
    modernize-deprecated-headers
    modernize-loop-convert
@@ -90,8 +103,11 @@ Clang-Tidy Checks
    performance-for-range-copy
    performance-implicit-cast-in-loop
    performance-unnecessary-copy-initialization
+   performance-unnecessary-value-param
+   readability-avoid-const-params-in-decls
    readability-braces-around-statements
    readability-container-size-empty
+   readability-deleted-default
    readability-else-after-return
    readability-function-size
    readability-identifier-naming
@@ -103,4 +119,5 @@ Clang-Tidy Checks
    readability-redundant-string-cstr
    readability-redundant-string-init
    readability-simplify-boolean-expr
+   readability-static-definition-in-anonymous-namespace
    readability-uniqueptr-delete-release
