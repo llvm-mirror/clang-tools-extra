@@ -16,6 +16,13 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace {
+bool isOverrideMethod(const FunctionDecl *Function) {
+  if (const auto *MD = dyn_cast<CXXMethodDecl>(Function))
+    return MD->size_overridden_methods() > 0 || MD->hasAttr<OverrideAttr>();
+  return false;
+}
+} // namespace
 
 void UnusedParametersCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(functionDecl().bind("function"), this);
@@ -60,23 +67,17 @@ void UnusedParametersCheck::warnOnUnusedParameter(
     const MatchFinder::MatchResult &Result, const FunctionDecl *Function,
     unsigned ParamIndex) {
   const auto *Param = Function->getParamDecl(ParamIndex);
-  auto MyDiag = diag(Param->getLocation(), "parameter '%0' is unused")
-                << Param->getName();
+  auto MyDiag = diag(Param->getLocation(), "parameter %0 is unused") << Param;
 
-  auto UsedByRef = [&] {
-    return !ast_matchers::match(
-                decl(hasDescendant(
-                    declRefExpr(to(equalsNode(Function)),
-                                unless(hasAncestor(
-                                    callExpr(callee(equalsNode(Function)))))))),
-                *Result.Context->getTranslationUnitDecl(), *Result.Context)
-                .empty();
-  };
+  auto DeclRefExpr =
+      declRefExpr(to(equalsNode(Function)),
+                  unless(hasAncestor(callExpr(callee(equalsNode(Function))))));
 
   // Comment out parameter name for non-local functions.
   if (Function->isExternallyVisible() ||
       !Result.SourceManager->isInMainFile(Function->getLocation()) ||
-      UsedByRef()) {
+      !ast_matchers::match(DeclRefExpr, *Result.Context).empty() ||
+      isOverrideMethod(Function)) {
     SourceRange RemovalRange(Param->getLocation(), Param->getLocEnd());
     // Note: We always add a space before the '/*' to not accidentally create a
     // '*/*' for pointer types, which doesn't start a comment. clang-format will

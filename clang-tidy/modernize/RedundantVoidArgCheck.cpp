@@ -50,7 +50,7 @@ void RedundantVoidArgCheck::registerMatchers(MatchFinder *Finder) {
                                   unless(isExternC()))
                          .bind(FunctionId),
                      this);
-  Finder->addMatcher(typedefDecl().bind(TypedefId), this);
+  Finder->addMatcher(typedefNameDecl().bind(TypedefId), this);
   auto ParenFunctionType = parenType(innerType(functionType()));
   auto PointerToFunctionType = pointee(ParenFunctionType);
   auto FunctionOrMemberPointer =
@@ -80,8 +80,9 @@ void RedundantVoidArgCheck::check(const MatchFinder::MatchResult &Result) {
   const BoundNodes &Nodes = Result.Nodes;
   if (const auto *Function = Nodes.getNodeAs<FunctionDecl>(FunctionId)) {
     processFunctionDecl(Result, Function);
-  } else if (const auto *Typedef = Nodes.getNodeAs<TypedefDecl>(TypedefId)) {
-    processTypedefDecl(Result, Typedef);
+  } else if (const auto *TypedefName =
+                 Nodes.getNodeAs<TypedefNameDecl>(TypedefId)) {
+    processTypedefNameDecl(Result, TypedefName);
   } else if (const auto *Member = Nodes.getNodeAs<FieldDecl>(FieldId)) {
     processFieldDecl(Result, Member);
   } else if (const auto *Var = Nodes.getNodeAs<VarDecl>(VarId)) {
@@ -102,13 +103,11 @@ void RedundantVoidArgCheck::check(const MatchFinder::MatchResult &Result) {
 
 void RedundantVoidArgCheck::processFunctionDecl(
     const MatchFinder::MatchResult &Result, const FunctionDecl *Function) {
-  SourceLocation Start = Function->getLocStart();
   if (Function->isThisDeclarationADefinition()) {
-    SourceLocation End;
-    if (Function->hasBody())
-      End = Function->getBody()->getLocStart().getLocWithOffset(-1);
-    else
-      End = Function->getLocEnd();
+    const Stmt *Body = Function->getBody();
+    SourceLocation Start = Function->getLocStart();
+    SourceLocation End =
+        Body ? Body->getLocStart().getLocWithOffset(-1) : Function->getLocEnd();
     removeVoidArgumentTokens(Result, SourceRange(Start, End),
                              "function definition");
   } else {
@@ -181,10 +180,13 @@ void RedundantVoidArgCheck::removeVoidToken(Token VoidToken,
   diag(VoidLoc, Diagnostic) << FixItHint::CreateRemoval(VoidRange);
 }
 
-void RedundantVoidArgCheck::processTypedefDecl(
-    const MatchFinder::MatchResult &Result, const TypedefDecl *Typedef) {
-  if (protoTypeHasNoParms(Typedef->getUnderlyingType())) {
-    removeVoidArgumentTokens(Result, Typedef->getSourceRange(), "typedef");
+void RedundantVoidArgCheck::processTypedefNameDecl(
+    const MatchFinder::MatchResult &Result,
+    const TypedefNameDecl *TypedefName) {
+  if (protoTypeHasNoParms(TypedefName->getUnderlyingType())) {
+    removeVoidArgumentTokens(Result, TypedefName->getSourceRange(),
+                             isa<TypedefDecl>(TypedefName) ? "typedef"
+                                                           : "type alias");
   }
 }
 
