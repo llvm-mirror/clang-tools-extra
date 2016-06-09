@@ -39,7 +39,7 @@ import json
 import multiprocessing
 import os
 import Queue
-import re
+import regex as re
 import shutil
 import subprocess
 import sys
