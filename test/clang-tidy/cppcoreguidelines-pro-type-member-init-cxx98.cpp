@@ -1,4 +1,4 @@
-// RUN: %check_clang_tidy %s cppcoreguidelines-pro-type-member-init %t -- -- -std=c++98
+// RUN: %check_clang_tidy %s cppcoreguidelines-pro-type-member-init %t -- -- -std=c++98 -fno-delayed-template-parsing
 
 struct PositiveFieldBeforeConstructor {
   int F;
@@ -102,4 +102,15 @@ public:
   // CHECK-FIXES: PositiveTemplateBase() : X() {}
 
   int X;
+};
+
+class PositiveIndirectMember {
+  struct {
+    int *A;
+  };
+
+  PositiveIndirectMember() : A() {}
+  PositiveIndirectMember(int) {}
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: constructor does not initialize these fields: A
+  // CHECK-FIXES: PositiveIndirectMember(int) : A() {}
 };

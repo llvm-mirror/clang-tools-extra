@@ -3,12 +3,14 @@
 Clang-Tidy Checks
 =========================
 
-.. toctree::   
+.. toctree::
+   boost-use-to-string
    cert-dcl03-c (redirects to misc-static-assert) <cert-dcl03-c>
    cert-dcl50-cpp
    cert-dcl54-cpp (redirects to misc-new-delete-overloads) <cert-dcl54-cpp>
    cert-dcl59-cpp (redirects to google-build-namespaces) <cert-dcl59-cpp>
    cert-env33-c
+   cert-err34-c
    cert-err52-cpp
    cert-err58-cpp
    cert-err60-cpp
@@ -30,6 +32,7 @@ Clang-Tidy Checks
    google-build-explicit-make-pair
    google-build-namespaces
    google-build-using-namespace
+   google-default-arguments
    google-explicit-constructor
    google-global-names-in-headers
    google-readability-braces-around-statements (redirects to readability-braces-around-statements) <google-readability-braces-around-statements>
@@ -49,7 +52,6 @@ Clang-Tidy Checks
    llvm-twine-local
    misc-argument-comment
    misc-assert-side-effect
-   misc-assign-operator-signature
    misc-bool-pointer-implicit-conversion
    misc-dangling-handle
    misc-definitions-in-headers
@@ -60,6 +62,7 @@ Clang-Tidy Checks
    misc-inefficient-algorithm
    misc-macro-parentheses
    misc-macro-repeated-side-effects
+   misc-misplaced-const
    misc-misplaced-widening-cast
    misc-move-const-arg
    misc-move-constructor-init
@@ -80,6 +83,7 @@ Clang-Tidy Checks
    misc-suspicious-string-compare
    misc-swapped-arguments
    misc-throw-by-value-catch-by-reference
+   misc-unconventional-assign-operator
    misc-undelegated-constructor
    misc-uniqueptr-reset-release
    misc-unused-alias-decls
@@ -87,8 +91,10 @@ Clang-Tidy Checks
    misc-unused-raii
    misc-unused-using-decls
    misc-virtual-near-miss
+   modernize-avoid-bind
    modernize-deprecated-headers
    modernize-loop-convert
+   modernize-make-shared
    modernize-make-unique
    modernize-pass-by-value
    modernize-raw-string-literal
@@ -96,6 +102,7 @@ Clang-Tidy Checks
    modernize-replace-auto-ptr
    modernize-shrink-to-fit
    modernize-use-auto
+   modernize-use-bool-literals
    modernize-use-default
    modernize-use-nullptr
    modernize-use-override

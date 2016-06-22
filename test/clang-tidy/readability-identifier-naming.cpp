@@ -61,6 +61,9 @@
 // RUN:     {key: readability-identifier-naming.VariableCase, value: lower_case}, \
 // RUN:     {key: readability-identifier-naming.VirtualMethodCase, value: UPPER_CASE}, \
 // RUN:     {key: readability-identifier-naming.VirtualMethodPrefix, value: 'v_'}, \
+// RUN:     {key: readability-identifier-naming.MacroDefinitionCase, value: UPPER_CASE}, \
+// RUN:     {key: readability-identifier-naming.TypeAliasCase, value: lower_case}, \
+// RUN:     {key: readability-identifier-naming.TypeAliasSuffix, value: '_t'}, \
 // RUN:     {key: readability-identifier-naming.IgnoreFailedSplit, value: 0} \
 // RUN:   ]}' -- -std=c++11 -fno-delayed-template-parsing \
 // RUN:   -I%S/Inputs/readability-identifier-naming \
@@ -191,8 +194,8 @@ class my_other_templated_class : my_templated_class<  my_class>, private my_deri
 // CHECK-FIXES: {{^}}class CMyOtherTemplatedClass : CMyTemplatedClass<  CMyClass>, private CMyDerivedClass {};{{$}}
 
 template<typename t_t>
-using MYSUPER_TPL = my_other_templated_class  <:: FOO_NS  ::my_class>;
-// CHECK-FIXES: {{^}}using MYSUPER_TPL = CMyOtherTemplatedClass  <:: foo_ns  ::CMyClass>;{{$}}
+using mysuper_tpl_t = my_other_templated_class  <:: FOO_NS  ::my_class>;
+// CHECK-FIXES: {{^}}using mysuper_tpl_t = CMyOtherTemplatedClass  <:: foo_ns  ::CMyClass>;{{$}}
 
 const int global_Constant = 6;
 // CHECK-MESSAGES: :[[@LINE-1]]:11: warning: invalid case style for global constant 'global_Constant'
@@ -305,6 +308,21 @@ typedef THIS___Structure struct_type;
 // CHECK-MESSAGES: :[[@LINE-1]]:26: warning: invalid case style for typedef 'struct_type'
 // CHECK-FIXES: {{^}}typedef this_structure struct_type_t;{{$}}
 
+struct_type GlobalTypedefTestFunction(struct_type a_argument1) {
+// CHECK-FIXES: {{^}}struct_type_t GlobalTypedefTestFunction(struct_type_t a_argument1) {
+    struct_type typedef_test_1;
+// CHECK-FIXES: {{^}}    struct_type_t typedef_test_1;
+}
+
+using my_struct_type = THIS___Structure;
+// CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for type alias 'my_struct_type'
+// CHECK-FIXES: {{^}}using my_struct_type_t = this_structure;{{$}}
+
+template<typename t_t>
+using SomeOtherTemplate = my_other_templated_class  <:: FOO_NS  ::my_class>;
+// CHECK-MESSAGES: :[[@LINE-1]]:7: warning: invalid case style for type alias 'SomeOtherTemplate'
+// CHECK-FIXES: {{^}}using some_other_template_t = CMyOtherTemplatedClass  <:: foo_ns  ::CMyClass>;{{$}}
+
 static void static_Function() {
 // CHECK-MESSAGES: :[[@LINE-1]]:13: warning: invalid case style for function 'static_Function'
 // CHECK-FIXES: {{^}}static void staticFunction() {{{$}}
@@ -318,5 +336,11 @@ static void static_Function() {
 // CHECK-FIXES: {{^}}  using ::foo_ns::inline_namespace::ce_function;{{$}}
 }
 
+#define MY_TEST_Macro(X) X()
+// CHECK-MESSAGES: :[[@LINE-1]]:9: warning: invalid case style for macro definition 'MY_TEST_Macro'
+// CHECK-FIXES: {{^}}#define MY_TEST_MACRO(X) X()
+
+void MY_TEST_Macro(function) {}
+// CHECK-FIXES: {{^}}void MY_TEST_MACRO(function) {}
 }
 }

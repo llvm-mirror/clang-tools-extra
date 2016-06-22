@@ -1,4 +1,4 @@
-//===-- FindAllSymbolsMain.cpp --------------------------------------------===//
+//===-- FindAllSymbolsMain.cpp - find all symbols tool ----------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,16 +7,31 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "FindAllSymbols.h"
+#include "FindAllSymbolsAction.h"
+#include "STLPostfixHeaderMap.h"
+#include "SymbolInfo.h"
+#include "SymbolReporter.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
+#include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
-
+#include "llvm/Support/ThreadPool.h"
+#include "llvm/Support/raw_ostream.h"
 #include <map>
+#include <mutex>
+#include <set>
 #include <string>
+#include <system_error>
 #include <vector>
 
 using namespace clang::tooling;
@@ -44,26 +59,26 @@ static cl::opt<std::string> MergeDir("merge-dir", cl::desc(R"(
 The directory for merging symbols.)"),
                                      cl::init(""),
                                      cl::cat(FindAllSymbolsCategory));
-
 namespace clang {
 namespace find_all_symbols {
 
-class YamlReporter
-    : public clang::find_all_symbols::FindAllSymbols::ResultReporter {
+class YamlReporter : public clang::find_all_symbols::SymbolReporter {
 public:
-  ~YamlReporter() {}
-
-  void reportResult(StringRef FileName, const SymbolInfo &Symbol) override {
-    Symbols[FileName].insert(Symbol);
+  ~YamlReporter() override {
+    for (const auto &Symbol : Symbols) {
+      int FD;
+      SmallString<128> ResultPath;
+      llvm::sys::fs::createUniqueFile(
+          OutputDir + "/" + llvm::sys::path::filename(Symbol.first) +
+              "-%%%%%%.yaml",
+          FD, ResultPath);
+      llvm::raw_fd_ostream OS(FD, /*shouldClose=*/true);
+      WriteSymbolInfosToStream(OS, Symbol.second);
+    }
   }
 
-  void Write(const std::string &Dir) {
-    for (const auto &Symbol : Symbols) {
-      SmallString<256> FilePath(Dir);
-      llvm::sys::path::append(
-          FilePath, llvm::sys::path::filename(Symbol.first) + ".yaml");
-      WriteSymboInfosToFile(FilePath, Symbol.second);
-    }
+  void reportSymbol(StringRef FileName, const SymbolInfo &Symbol) override {
+    Symbols[FileName].insert(Symbol);
   }
 
 private:
@@ -72,25 +87,51 @@ private:
 
 bool Merge(llvm::StringRef MergeDir, llvm::StringRef OutputFile) {
   std::error_code EC;
-  std::set<SymbolInfo> UniqueSymbols;
-  // Load all symbol files in MergeDir.
-  for (llvm::sys::fs::directory_iterator Dir(MergeDir, EC), DirEnd;
-       Dir != DirEnd && !EC; Dir.increment(EC)) {
-    int ReadFD = 0;
-    if (llvm::sys::fs::openFileForRead(Dir->path(), ReadFD)) {
-      llvm::errs() << "Cann't open " << Dir->path() << "\n";
-      continue;
-    }
-    auto Buffer = llvm::MemoryBuffer::getOpenFile(ReadFD, Dir->path(), -1);
-    if (!Buffer)
-      continue;
-    std::vector<SymbolInfo> Symbols =
-        ReadSymbolInfosFromYAML(Buffer.get()->getBuffer());
+  std::map<SymbolInfo, int> SymbolToNumOccurrences;
+  std::mutex SymbolMutex;
+  auto AddSymbols = [&](ArrayRef<SymbolInfo> Symbols) {
+    // Synchronize set accesses.
+    std::unique_lock<std::mutex> LockGuard(SymbolMutex);
     for (const auto &Symbol : Symbols)
-      UniqueSymbols.insert(Symbol);
+      ++SymbolToNumOccurrences[Symbol];
+  };
+
+  // Load all symbol files in MergeDir.
+  {
+    llvm::ThreadPool Pool;
+    for (llvm::sys::fs::directory_iterator Dir(MergeDir, EC), DirEnd;
+         Dir != DirEnd && !EC; Dir.increment(EC)) {
+      // Parse YAML files in parallel.
+      Pool.async(
+          [&AddSymbols](std::string Path) {
+            auto Buffer = llvm::MemoryBuffer::getFile(Path);
+            if (!Buffer) {
+              llvm::errs() << "Can't open " << Path << "\n";
+              return;
+            }
+            std::vector<SymbolInfo> Symbols =
+                ReadSymbolInfosFromYAML(Buffer.get()->getBuffer());
+            // FIXME: Merge without creating such a heavy contention point.
+            AddSymbols(Symbols);
+          },
+          Dir->path());
+    }
   }
 
-  WriteSymboInfosToFile(OutputFile, UniqueSymbols);
+  llvm::raw_fd_ostream OS(OutputFile, EC, llvm::sys::fs::F_None);
+  if (EC) {
+    llvm::errs() << "Can't open '" << OutputFile << "': " << EC.message()
+                 << '\n';
+    return false;
+  }
+  std::set<SymbolInfo> Result;
+  for (const auto &Entry : SymbolToNumOccurrences) {
+    const auto &Symbol = Entry.first;
+    Result.insert(SymbolInfo(Symbol.getName(), Symbol.getSymbolKind(),
+                             Symbol.getFilePath(), Symbol.getLineNumber(),
+                             Symbol.getContexts(), Entry.second));
+  }
+  WriteSymbolInfosToStream(OS, Result);
   return true;
 }
 
@@ -113,10 +154,9 @@ int main(int argc, const char **argv) {
   }
 
   clang::find_all_symbols::YamlReporter Reporter;
-  clang::find_all_symbols::FindAllSymbols Matcher(&Reporter);
-  clang::ast_matchers::MatchFinder MatchFinder;
-  Matcher.registerMatchers(&MatchFinder);
-  Tool.run(newFrontendActionFactory(&MatchFinder).get());
-  Reporter.Write(OutputDir);
-  return 0;
+
+  auto Factory =
+      llvm::make_unique<clang::find_all_symbols::FindAllSymbolsActionFactory>(
+          &Reporter, clang::find_all_symbols::getSTLPostfixHeaderMap());
+  return Tool.run(Factory.get());
 }

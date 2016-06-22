@@ -1,4 +1,4 @@
-//===-- SymbolInfo.cpp ----------------------------------------------------===//
+//===-- SymbolInfo.cpp - Symbol Info ----------------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -33,9 +33,7 @@ template <> struct MappingTraits<SymbolInfo> {
     io.mapRequired("FilePath", Symbol.FilePath);
     io.mapRequired("LineNumber", Symbol.LineNumber);
     io.mapRequired("Type", Symbol.Type);
-    io.mapOptional("Variable", Symbol.VariableInfos);
-    io.mapOptional("Function", Symbol.FunctionInfos);
-    io.mapOptional("TypedefName", Symbol.TypedefNameInfos);
+    io.mapRequired("NumOccurrences", Symbol.NumOccurrences);
   }
 };
 
@@ -43,6 +41,7 @@ template <> struct ScalarEnumerationTraits<ContextType> {
   static void enumeration(IO &io, ContextType &value) {
     io.enumCase(value, "Record", ContextType::Record);
     io.enumCase(value, "Namespace", ContextType::Namespace);
+    io.enumCase(value, "EnumDecl", ContextType::EnumDecl);
   }
 };
 
@@ -52,6 +51,10 @@ template <> struct ScalarEnumerationTraits<SymbolKind> {
     io.enumCase(value, "Function", SymbolKind::Function);
     io.enumCase(value, "Class", SymbolKind::Class);
     io.enumCase(value, "TypedefName", SymbolKind::TypedefName);
+    io.enumCase(value, "EnumDecl", SymbolKind::EnumDecl);
+    io.enumCase(value, "EnumConstantDecl", SymbolKind::EnumConstantDecl);
+    io.enumCase(value, "Macro", SymbolKind::Macro);
+    io.enumCase(value, "Unknown", SymbolKind::Unknown);
   }
 };
 
@@ -62,51 +65,36 @@ template <> struct MappingTraits<SymbolInfo::Context> {
   }
 };
 
-template <> struct MappingTraits<SymbolInfo::FunctionInfo> {
-  static void mapping(IO &io, SymbolInfo::FunctionInfo &Value) {
-    io.mapRequired("ReturnType", Value.ReturnType);
-    io.mapRequired("ParameterTypes", Value.ParameterTypes);
-  }
-};
-
-template <> struct MappingTraits<SymbolInfo::VariableInfo> {
-  static void mapping(IO &io, SymbolInfo::VariableInfo &Value) {
-    io.mapRequired("VariableType", Value.Type);
-  }
-};
-
-template <> struct MappingTraits<SymbolInfo::TypedefNameInfo> {
-  static void mapping(IO &io, SymbolInfo::TypedefNameInfo &Value) {
-    io.mapRequired("TypedefNameType", Value.UnderlyingType);
-  }
-};
-
 } // namespace yaml
 } // namespace llvm
 
 namespace clang {
 namespace find_all_symbols {
 
+SymbolInfo::SymbolInfo(llvm::StringRef Name, SymbolKind Type,
+                       llvm::StringRef FilePath, int LineNumber,
+                       const std::vector<Context> &Contexts,
+                       unsigned NumOccurrences)
+    : Name(Name), Type(Type), FilePath(FilePath), Contexts(Contexts),
+      LineNumber(LineNumber), NumOccurrences(NumOccurrences) {}
+
 bool SymbolInfo::operator==(const SymbolInfo &Symbol) const {
-  return Name == Symbol.Name && FilePath == Symbol.FilePath &&
-         LineNumber == Symbol.LineNumber && Contexts == Symbol.Contexts;
+  return std::tie(Name, Type, FilePath, LineNumber, Contexts) ==
+         std::tie(Symbol.Name, Symbol.Type, Symbol.FilePath, Symbol.LineNumber,
+                  Symbol.Contexts);
 }
 
 bool SymbolInfo::operator<(const SymbolInfo &Symbol) const {
-  return std::tie(Name, FilePath, LineNumber) <
-         std::tie(Symbol.Name, Symbol.FilePath, Symbol.LineNumber);
+  return std::tie(Name, Type, FilePath, LineNumber, Contexts) <
+         std::tie(Symbol.Name, Symbol.Type, Symbol.FilePath, Symbol.LineNumber,
+                  Symbol.Contexts);
 }
 
-bool WriteSymboInfosToFile(llvm::StringRef FilePath,
-                           const std::set<SymbolInfo> &Symbols) {
-  int FD = 0;
-  if (llvm::sys::fs::openFileForWrite(FilePath, FD, llvm::sys::fs::F_None))
-    return false;
-  llvm::raw_fd_ostream OS(FD, true);
+bool WriteSymbolInfosToStream(llvm::raw_ostream &OS,
+                              const std::set<SymbolInfo> &Symbols) {
   llvm::yaml::Output yout(OS);
   for (auto Symbol : Symbols)
     yout << Symbol;
-  OS.close();
   return true;
 }
 

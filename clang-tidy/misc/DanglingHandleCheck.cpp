@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DanglingHandleCheck.h"
+#include "../utils/OptionsUtils.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 
@@ -19,29 +20,15 @@ namespace misc {
 
 namespace {
 
-static const char HandleClassesDelimiter[] = ";";
-
-std::vector<std::string> parseClasses(StringRef Option) {
-  SmallVector<StringRef, 4> Classes;
-  Option.split(Classes, HandleClassesDelimiter);
-  std::vector<std::string> Result;
-  for (StringRef &Class : Classes) {
-    Class = Class.trim();
-    if (!Class.empty())
-      Result.push_back(Class);
-  }
-  return Result;
-}
-
 ast_matchers::internal::BindableMatcher<Stmt>
-handleFrom(ast_matchers::internal::Matcher<RecordDecl> IsAHandle,
-           ast_matchers::internal::Matcher<Expr> Arg) {
+handleFrom(const ast_matchers::internal::Matcher<RecordDecl> &IsAHandle,
+           const ast_matchers::internal::Matcher<Expr> &Arg) {
   return cxxConstructExpr(hasDeclaration(cxxMethodDecl(ofClass(IsAHandle))),
                           hasArgument(0, Arg));
 }
 
 ast_matchers::internal::Matcher<Stmt> handleFromTemporaryValue(
-    ast_matchers::internal::Matcher<RecordDecl> IsAHandle) {
+    const ast_matchers::internal::Matcher<RecordDecl> &IsAHandle) {
   // If a ternary operator returns a temporary value, then both branches hold a
   // temporary value. If one of them is not a temporary then it must be copied
   // into one to satisfy the type of the operator.
@@ -67,8 +54,8 @@ ast_matchers::internal::Matcher<RecordDecl> isAMap() {
                     "::std::unordered_multimap");
 }
 
-ast_matchers::internal::BindableMatcher<Stmt>
-makeContainerMatcher(ast_matchers::internal::Matcher<RecordDecl> IsAHandle) {
+ast_matchers::internal::BindableMatcher<Stmt> makeContainerMatcher(
+    const ast_matchers::internal::Matcher<RecordDecl> &IsAHandle) {
   // This matcher could be expanded to detect:
   //  - Constructors: eg. vector<string_view>(3, string("A"));
   //  - emplace*(): This requires a different logic to determine that
@@ -97,7 +84,7 @@ makeContainerMatcher(ast_matchers::internal::Matcher<RecordDecl> IsAHandle) {
 DanglingHandleCheck::DanglingHandleCheck(StringRef Name,
                                          ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context),
-      HandleClasses(parseClasses(Options.get(
+      HandleClasses(utils::options::parseStringList(Options.get(
           "HandleClasses",
           "std::basic_string_view;std::experimental::basic_string_view"))),
       IsAHandle(cxxRecordDecl(hasAnyName(std::vector<StringRef>(
@@ -106,8 +93,7 @@ DanglingHandleCheck::DanglingHandleCheck(StringRef Name,
 
 void DanglingHandleCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   Options.store(Opts, "HandleClasses",
-                llvm::join(HandleClasses.begin(), HandleClasses.end(),
-                           HandleClassesDelimiter));
+                utils::options::serializeStringList(HandleClasses));
 }
 
 void DanglingHandleCheck::registerMatchersForVariables(MatchFinder *Finder) {
@@ -117,15 +103,17 @@ void DanglingHandleCheck::registerMatchersForVariables(MatchFinder *Finder) {
   Finder->addMatcher(
       varDecl(hasType(cxxRecordDecl(IsAHandle)),
               hasInitializer(
-                  exprWithCleanups(has(ConvertedHandle)).bind("bad_stmt"))),
+                  exprWithCleanups(has(ignoringParenImpCasts(ConvertedHandle)))
+                      .bind("bad_stmt"))),
       this);
 
   // Find 'Handle foo = ReturnsAValue();'
   Finder->addMatcher(
-      varDecl(hasType(cxxRecordDecl(IsAHandle)), unless(parmVarDecl()),
-              hasInitializer(
-                  exprWithCleanups(has(handleFrom(IsAHandle, ConvertedHandle)))
-                      .bind("bad_stmt"))),
+      varDecl(
+          hasType(cxxRecordDecl(IsAHandle)), unless(parmVarDecl()),
+          hasInitializer(exprWithCleanups(has(ignoringParenImpCasts(handleFrom(
+                                              IsAHandle, ConvertedHandle))))
+                             .bind("bad_stmt"))),
       this);
   // Find 'foo = ReturnsAValue();  // foo is Handle'
   Finder->addMatcher(
@@ -147,7 +135,7 @@ void DanglingHandleCheck::registerMatchersForReturn(MatchFinder *Finder) {
           //   1. Value to Handle conversion.
           //   2. Handle copy construction.
           // We have to match both.
-          has(handleFrom(
+          has(ignoringParenImpCasts(handleFrom(
               IsAHandle,
               handleFrom(IsAHandle, declRefExpr(to(varDecl(
                                         // Is function scope ...
@@ -155,7 +143,7 @@ void DanglingHandleCheck::registerMatchersForReturn(MatchFinder *Finder) {
                                         // ... and it is a local array or Value.
                                         anyOf(hasType(arrayType()),
                                               hasType(recordDecl(
-                                                  unless(IsAHandle)))))))))),
+                                                  unless(IsAHandle))))))))))),
           // Temporary fix for false positives inside lambdas.
           unless(hasAncestor(lambdaExpr())))
           .bind("bad_stmt"),
@@ -163,8 +151,9 @@ void DanglingHandleCheck::registerMatchersForReturn(MatchFinder *Finder) {
 
   // Return a temporary.
   Finder->addMatcher(
-      returnStmt(has(exprWithCleanups(has(handleFrom(
-                     IsAHandle, handleFromTemporaryValue(IsAHandle))))))
+      returnStmt(
+          has(ignoringParenImpCasts(exprWithCleanups(has(ignoringParenImpCasts(
+              handleFrom(IsAHandle, handleFromTemporaryValue(IsAHandle))))))))
           .bind("bad_stmt"),
       this);
 }

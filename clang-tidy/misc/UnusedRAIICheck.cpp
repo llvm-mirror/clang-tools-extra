@@ -14,15 +14,15 @@
 using namespace clang::ast_matchers;
 
 namespace clang {
+namespace tidy {
+namespace misc {
+
 namespace {
 AST_MATCHER(CXXRecordDecl, hasNonTrivialDestructor) {
   // TODO: If the dtor is there but empty we don't want to warn either.
   return Node.hasDefinition() && Node.hasNonTrivialDestructor();
 }
 } // namespace
-
-namespace tidy {
-namespace misc {
 
 void UnusedRAIICheck::registerMatchers(MatchFinder *Finder) {
   // Only register the matchers for C++; the functionality currently does not
@@ -33,13 +33,16 @@ void UnusedRAIICheck::registerMatchers(MatchFinder *Finder) {
   // Look for temporaries that are constructed in-place and immediately
   // destroyed. Look for temporaries created by a functional cast but not for
   // those returned from a call.
-  auto BindTemp = cxxBindTemporaryExpr(unless(has(callExpr()))).bind("temp");
+  auto BindTemp =
+      cxxBindTemporaryExpr(unless(has(ignoringParenImpCasts(callExpr()))))
+          .bind("temp");
   Finder->addMatcher(
-      exprWithCleanups(
-          unless(isInTemplateInstantiation()),
-          hasParent(compoundStmt().bind("compound")),
-          hasType(cxxRecordDecl(hasNonTrivialDestructor())),
-          anyOf(has(BindTemp), has(cxxFunctionalCastExpr(has(BindTemp)))))
+      exprWithCleanups(unless(isInTemplateInstantiation()),
+                       hasParent(compoundStmt().bind("compound")),
+                       hasType(cxxRecordDecl(hasNonTrivialDestructor())),
+                       anyOf(has(ignoringParenImpCasts(BindTemp)),
+                             has(ignoringParenImpCasts(cxxFunctionalCastExpr(
+                                 has(ignoringParenImpCasts(BindTemp)))))))
           .bind("expr"),
       this);
 }

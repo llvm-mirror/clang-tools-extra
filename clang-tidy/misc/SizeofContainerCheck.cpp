@@ -15,16 +15,17 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace misc {  
 
 void SizeofContainerCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(
       expr(unless(isInTemplateInstantiation()),
-           expr(sizeOfExpr(has(
+           expr(sizeOfExpr(has(ignoringParenImpCasts(
                     expr(hasType(hasCanonicalType(hasDeclaration(cxxRecordDecl(
                         matchesName("^(::std::|::string)"),
                         unless(matchesName("^::std::(bitset|array)$")),
                         hasMethod(cxxMethodDecl(hasName("size"), isPublic(),
-                                                isConst()))))))))))
+                                                isConst())))))))))))
                .bind("sizeof"),
            // Ignore ARRAYSIZE(<array of containers>) pattern.
            unless(hasAncestor(binaryOperator(
@@ -43,6 +44,7 @@ void SizeofContainerCheck::check(const MatchFinder::MatchResult &Result) {
                                   "container; did you mean .size()?");
 }
 
+} // namespace misc
 } // namespace tidy
 } // namespace clang
 

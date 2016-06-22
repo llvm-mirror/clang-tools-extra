@@ -1,4 +1,4 @@
-//===-- FindAllSymbols.cpp - find all symbols -----------------------------===//
+//===-- FindAllSymbols.cpp - find all symbols--------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "FindAllSymbols.h"
+#include "HeaderMapCollector.h"
+#include "PathConfig.h"
 #include "SymbolInfo.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
@@ -15,6 +17,7 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Tooling.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/Support/FileSystem.h"
 
 using namespace clang::ast_matchers;
@@ -22,7 +25,15 @@ using namespace clang::ast_matchers;
 namespace clang {
 namespace find_all_symbols {
 namespace {
-void SetContext(const NamedDecl *ND, SymbolInfo *Symbol) {
+
+AST_MATCHER(EnumConstantDecl, isInScopedEnum) {
+  if (const auto *ED = dyn_cast<EnumDecl>(Node.getDeclContext()))
+    return ED->isScoped();
+  return false;
+}
+
+std::vector<SymbolInfo::Context> GetContexts(const NamedDecl *ND) {
+  std::vector<SymbolInfo::Context> Contexts;
   for (const auto *Context = ND->getDeclContext(); Context;
        Context = Context->getParent()) {
     if (llvm::isa<TranslationUnitDecl>(Context) ||
@@ -32,36 +43,64 @@ void SetContext(const NamedDecl *ND, SymbolInfo *Symbol) {
     assert(llvm::isa<NamedDecl>(Context) &&
            "Expect Context to be a NamedDecl");
     if (const auto *NSD = dyn_cast<NamespaceDecl>(Context)) {
-      Symbol->Contexts.emplace_back(
-              SymbolInfo::Namespace,
-                  NSD->isAnonymousNamespace() ? "" : NSD->getName().str());
+      if (!NSD->isInlineNamespace())
+        Contexts.emplace_back(SymbolInfo::ContextType::Namespace,
+                              NSD->getName().str());
+    } else if (const auto *ED = dyn_cast<EnumDecl>(Context)) {
+      Contexts.emplace_back(SymbolInfo::ContextType::EnumDecl,
+                            ED->getName().str());
     } else {
       const auto *RD = cast<RecordDecl>(Context);
-      Symbol->Contexts.emplace_back(SymbolInfo::Record, RD->getName().str());
+      Contexts.emplace_back(SymbolInfo::ContextType::Record,
+                            RD->getName().str());
     }
   }
+  return Contexts;
 }
 
-bool SetCommonInfo(const MatchFinder::MatchResult &Result,
-                   const NamedDecl *ND, SymbolInfo *Symbol) {
-  SetContext(ND, Symbol);
+llvm::Optional<SymbolInfo>
+CreateSymbolInfo(const NamedDecl *ND, const SourceManager &SM,
+                 const HeaderMapCollector *Collector) {
+  SymbolInfo::SymbolKind Type;
+  if (llvm::isa<VarDecl>(ND)) {
+    Type = SymbolInfo::SymbolKind::Variable;
+  } else if (llvm::isa<FunctionDecl>(ND)) {
+    Type = SymbolInfo::SymbolKind::Function;
+  } else if (llvm::isa<TypedefNameDecl>(ND)) {
+    Type = SymbolInfo::SymbolKind::TypedefName;
+  } else if (llvm::isa<EnumConstantDecl>(ND)) {
+    Type = SymbolInfo::SymbolKind::EnumConstantDecl;
+  } else if (llvm::isa<EnumDecl>(ND)) {
+    Type = SymbolInfo::SymbolKind::EnumDecl;
+    // Ignore anonymous enum declarations.
+    if (ND->getName().empty())
+      return llvm::None;
+  } else {
+    assert(llvm::isa<RecordDecl>(ND) &&
+           "Matched decl must be one of VarDecl, "
+           "FunctionDecl, TypedefNameDecl, EnumConstantDecl, "
+           "EnumDecl and RecordDecl!");
+    // C-style record decl can have empty name, e.g "struct { ... } var;".
+    if (ND->getName().empty())
+      return llvm::None;
+    Type = SymbolInfo::SymbolKind::Class;
+  }
 
-  Symbol->Name = ND->getNameAsString();
-  SourceLocation Loc = Result.SourceManager->getExpansionLoc(ND->getLocation());
+  SourceLocation Loc = SM.getExpansionLoc(ND->getLocation());
   if (!Loc.isValid()) {
     llvm::errs() << "Declaration " << ND->getNameAsString() << "("
                  << ND->getDeclKindName()
                  << ") has invalid declaration location.";
-    return false;
+    return llvm::None;
   }
-  std::string FilePath = Result.SourceManager->getFilename(Loc).str();
-  if (FilePath.empty())
-    return false;
 
-  Symbol->FilePath = FilePath;
-  Symbol->LineNumber = Result.SourceManager->getExpansionLineNumber(Loc);
-  return true;
+  std::string FilePath = getIncludePath(SM, Loc, Collector);
+  if (FilePath.empty()) return llvm::None;
+
+  return SymbolInfo(ND->getNameAsString(), Type, FilePath,
+                    SM.getExpansionLineNumber(Loc), GetContexts(ND));
 }
+
 } // namespace
 
 void FindAllSymbols::registerMatchers(MatchFinder *MatchFinder) {
@@ -122,9 +161,14 @@ void FindAllSymbols::registerMatchers(MatchFinder *MatchFinder) {
   MatchFinder->addMatcher(CxxRecordDecl.bind("decl"), this);
 
   // Matchers for function declarations.
-  MatchFinder->addMatcher(
-      functionDecl(CommonFilter, anyOf(ExternCMatcher, CCMatcher)).bind("decl"),
-      this);
+  // We want to exclude friend declaration, but the `DeclContext` of a friend
+  // function declaration is not the class in which it is declared, so we need
+  // to explicitly check if the parent is a `friendDecl`.
+  MatchFinder->addMatcher(functionDecl(CommonFilter,
+                                       unless(hasParent(friendDecl())),
+                                       anyOf(ExternCMatcher, CCMatcher))
+                              .bind("decl"),
+                          this);
 
   // Matcher for typedef and type alias declarations.
   //
@@ -142,6 +186,23 @@ void FindAllSymbols::registerMatchers(MatchFinder *MatchFinder) {
                                           hasDeclContext(linkageSpecDecl())))
           .bind("decl"),
       this);
+
+  // Matchers for enum declarations.
+  MatchFinder->addMatcher(enumDecl(CommonFilter, isDefinition(),
+                                   anyOf(HasNSOrTUCtxMatcher, ExternCMatcher))
+                              .bind("decl"),
+                          this);
+
+  // Matchers for enum constant declarations.
+  // We only match the enum constants in non-scoped enum declarations which are
+  // inside toplevel translation unit or a namespace.
+  MatchFinder->addMatcher(
+      enumConstantDecl(
+          CommonFilter,
+          unless(isInScopedEnum()),
+          anyOf(hasDeclContext(enumDecl(HasNSOrTUCtxMatcher)), ExternCMatcher))
+          .bind("decl"),
+      this);
 }
 
 void FindAllSymbols::run(const MatchFinder::MatchResult &Result) {
@@ -154,39 +215,11 @@ void FindAllSymbols::run(const MatchFinder::MatchResult &Result) {
   assert(ND && "Matched declaration must be a NamedDecl!");
   const SourceManager *SM = Result.SourceManager;
 
-  SymbolInfo Symbol;
-  if (!SetCommonInfo(Result, ND, &Symbol))
-    return;
-
-  if (const auto *VD = llvm::dyn_cast<VarDecl>(ND)) {
-    Symbol.Type = SymbolInfo::Variable;
-    SymbolInfo::VariableInfo VI;
-    VI.Type = VD->getType().getAsString();
-    Symbol.VariableInfos = VI;
-  } else if (const auto *FD = llvm::dyn_cast<FunctionDecl>(ND)) {
-    Symbol.Type = SymbolInfo::Function;
-    SymbolInfo::FunctionInfo FI;
-    FI.ReturnType = FD->getReturnType().getAsString();
-    for (const auto *Param : FD->params())
-      FI.ParameterTypes.push_back(Param->getType().getAsString());
-    Symbol.FunctionInfos = FI;
-  } else if (const auto *TD = llvm::dyn_cast<TypedefNameDecl>(ND)) {
-    Symbol.Type = SymbolInfo::TypedefName;
-    SymbolInfo::TypedefNameInfo TI;
-    TI.UnderlyingType = TD->getUnderlyingType().getAsString();
-    Symbol.TypedefNameInfos = TI;
-  } else {
-    assert(
-        llvm::isa<RecordDecl>(ND) &&
-        "Matched decl must be one of VarDecl, FunctionDecl, and RecordDecl!");
-    // C-style record decl can have empty name, e.g "struct { ... } var;".
-    if (ND->getName().empty())
-      return;
-    Symbol.Type = SymbolInfo::Class;
-  }
-
-  const FileEntry *FE = SM->getFileEntryForID(SM->getMainFileID());
-  Reporter->reportResult(FE->getName(), Symbol);
+  llvm::Optional<SymbolInfo> Symbol =
+      CreateSymbolInfo(ND, *SM, Collector);
+  if (Symbol)
+    Reporter->reportSymbol(
+        SM->getFileEntryForID(SM->getMainFileID())->getName(), *Symbol);
 }
 
 } // namespace find_all_symbols

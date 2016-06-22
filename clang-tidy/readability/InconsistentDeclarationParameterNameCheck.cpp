@@ -15,11 +15,11 @@
 #include <functional>
 #include <sstream>
 
+using namespace clang::ast_matchers;
+
 namespace clang {
 namespace tidy {
 namespace readability {
-
-using namespace ast_matchers;
 
 namespace {
 
@@ -186,7 +186,7 @@ getParameterSourceDeclaration(const FunctionDecl *OriginalDeclaration) {
 
 std::string joinParameterNames(
     const DifferingParamsContainer &DifferingParams,
-    std::function<StringRef(const DifferingParamInfo &)> ChooseParamName) {
+    llvm::function_ref<StringRef(const DifferingParamInfo &)> ChooseParamName) {
   llvm::SmallVector<char, 40> Buffer;
   llvm::raw_svector_ostream Str(Buffer);
   bool First = true;

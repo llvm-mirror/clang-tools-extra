@@ -8,11 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "IncludeFixer.h"
+#include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/TextDiagnosticPrinter.h"
+#include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/ParseAST.h"
-#include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/Sema/ExternalSemaSource.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/Support/Debug.h"
@@ -26,47 +26,18 @@ namespace clang {
 namespace include_fixer {
 namespace {
 
-class Action;
-
-class PreprocessorHooks : public clang::PPCallbacks {
-public:
-  explicit PreprocessorHooks(Action *EnclosingPass)
-      : EnclosingPass(EnclosingPass), TrackedFile(nullptr) {}
-
-  void FileChanged(clang::SourceLocation loc,
-                   clang::PPCallbacks::FileChangeReason reason,
-                   clang::SrcMgr::CharacteristicKind file_type,
-                   clang::FileID prev_fid) override;
-
-  void InclusionDirective(clang::SourceLocation HashLocation,
-                          const clang::Token &IncludeToken,
-                          llvm::StringRef FileName, bool IsAngled,
-                          clang::CharSourceRange FileNameRange,
-                          const clang::FileEntry *IncludeFile,
-                          llvm::StringRef SearchPath,
-                          llvm::StringRef relative_path,
-                          const clang::Module *imported) override;
-
-private:
-  /// The current Action.
-  Action *EnclosingPass;
-
-  /// The current FileEntry.
-  const clang::FileEntry *TrackedFile;
-};
-
 /// Manages the parse, gathers include suggestions.
 class Action : public clang::ASTFrontendAction,
                public clang::ExternalSemaSource {
 public:
-  explicit Action(XrefsDB &Xrefs) : Xrefs(Xrefs) {}
+  explicit Action(SymbolIndexManager &SymbolIndexMgr, bool MinimizeIncludePaths)
+      : SymbolIndexMgr(SymbolIndexMgr),
+        MinimizeIncludePaths(MinimizeIncludePaths) {}
 
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &Compiler,
                     StringRef InFile) override {
     Filename = InFile;
-    Compiler.getPreprocessor().addPPCallbacks(
-        llvm::make_unique<PreprocessorHooks>(this));
     return llvm::make_unique<clang::ASTConsumer>();
   }
 
@@ -94,8 +65,12 @@ public:
   /// have the fully qualified name ready. Just query that.
   bool MaybeDiagnoseMissingCompleteType(clang::SourceLocation Loc,
                                         clang::QualType T) override {
+    // Ignore spurious callbacks from SFINAE contexts.
+    if (getCompilerInstance().getSema().isSFINAEContext())
+      return false;
+
     clang::ASTContext &context = getCompilerInstance().getASTContext();
-    query(T.getUnqualifiedType().getAsString(context.getPrintingPolicy()));
+    query(T.getUnqualifiedType().getAsString(context.getPrintingPolicy()), Loc);
     return false;
   }
 
@@ -107,102 +82,102 @@ public:
                                     DeclContext *MemberContext,
                                     bool EnteringContext,
                                     const ObjCObjectPointerType *OPT) override {
-    // We don't want to look up inner parts of nested name specifies. Looking up
-    // the header where a namespace is defined in is rarely useful.
-    if (LookupKind == clang::Sema::LookupNestedNameSpecifierName) {
-      DEBUG(llvm::dbgs() << "ignoring " << Typo.getAsString() << "\n");
+    // Ignore spurious callbacks from SFINAE contexts.
+    if (getCompilerInstance().getSema().isSFINAEContext())
       return clang::TypoCorrection();
+
+    // We currently ignore the unidentified symbol which is not from the
+    // main file.
+    //
+    // However, this is not always true due to templates in a non-self contained
+    // header, consider the case:
+    //
+    //   // header.h
+    //   template <typename T>
+    //   class Foo {
+    //     T t;
+    //   };
+    //
+    //   // test.cc
+    //   // We need to add <bar.h> in test.cc instead of header.h.
+    //   class Bar;
+    //   Foo<Bar> foo;
+    //
+    // FIXME: Add the missing header to the header file where the symbol comes
+    // from.
+    if (!getCompilerInstance().getSourceManager().isWrittenInMainFile(
+            Typo.getLoc()))
+      return clang::TypoCorrection();
+
+    std::string TypoScopeString;
+    if (S) {
+      // FIXME: Currently we only use namespace contexts. Use other context
+      // types for query.
+      for (const auto *Context = S->getEntity(); Context;
+           Context = Context->getParent()) {
+        if (const auto *ND = dyn_cast<NamespaceDecl>(Context)) {
+          if (!ND->getName().empty())
+            TypoScopeString = ND->getNameAsString() + "::" + TypoScopeString;
+        }
+      }
     }
+
+    auto ExtendNestedNameSpecifier = [this](CharSourceRange Range) {
+      StringRef Source =
+          Lexer::getSourceText(Range, getCompilerInstance().getSourceManager(),
+                               getCompilerInstance().getLangOpts());
+
+      // Skip forward until we find a character that's neither identifier nor
+      // colon. This is a bit of a hack around the fact that we will only get a
+      // single callback for a long nested name if a part of the beginning is
+      // unknown. For example:
+      //
+      // llvm::sys::path::parent_path(...)
+      // ^~~~  ^~~
+      //    known
+      //            ^~~~
+      //      unknown, last callback
+      //                  ^~~~~~~~~~~
+      //                  no callback
+      //
+      // With the extension we get the full nested name specifier including
+      // parent_path.
+      // FIXME: Don't rely on source text.
+      const char *End = Source.end();
+      while (isIdentifierBody(*End) || *End == ':')
+        ++End;
+
+      return std::string(Source.begin(), End);
+    };
 
     /// If we have a scope specification, use that to get more precise results.
     std::string QueryString;
     if (SS && SS->getRange().isValid()) {
       auto Range = CharSourceRange::getTokenRange(SS->getRange().getBegin(),
                                                   Typo.getLoc());
-      QueryString =
-          Lexer::getSourceText(Range, getCompilerInstance().getSourceManager(),
-                               getCompilerInstance().getLangOpts());
+
+      QueryString = ExtendNestedNameSpecifier(Range);
+    } else if (Typo.getName().isIdentifier() && !Typo.getLoc().isMacroID()) {
+      auto Range =
+          CharSourceRange::getTokenRange(Typo.getBeginLoc(), Typo.getEndLoc());
+
+      QueryString = ExtendNestedNameSpecifier(Range);
     } else {
       QueryString = Typo.getAsString();
     }
 
-    return query(QueryString);
-  }
-
-  StringRef filename() const { return Filename; }
-
-  /// Called for each include file we discover is in the file.
-  /// \param SourceManager the active SourceManager
-  /// \param canonical_path the canonical path to the include file
-  /// \param uttered_path the path as it appeared in the program
-  /// \param IsAngled whether angle brackets were used
-  /// \param HashLocation the source location of the include's \#
-  /// \param EndLocation the source location following the include
-  void NextInclude(clang::SourceManager *SourceManager,
-                   llvm::StringRef canonical_path, llvm::StringRef uttered_path,
-                   bool IsAngled, clang::SourceLocation HashLocation,
-                   clang::SourceLocation EndLocation) {
-    unsigned Offset = SourceManager->getFileOffset(HashLocation);
-    if (FirstIncludeOffset == -1U)
-      FirstIncludeOffset = Offset;
-  }
-
-  /// Generate replacements for the suggested includes.
-  /// \return true if changes will be made, false otherwise.
-  bool Rewrite(clang::SourceManager &SourceManager,
-               std::vector<clang::tooling::Replacement> &replacements) {
-    for (const auto &ToTry : Untried) {
-      DEBUG(llvm::dbgs() << "Adding include " << ToTry << "\n");
-      std::string ToAdd = "#include " + ToTry + "\n";
-
-      if (FirstIncludeOffset == -1U)
-        FirstIncludeOffset = 0;
-
-      replacements.push_back(clang::tooling::Replacement(
-          SourceManager, FileBegin.getLocWithOffset(FirstIncludeOffset), 0,
-          ToAdd));
-
-      // We currently abort after the first inserted include. The more
-      // includes we have the less safe this becomes due to error recovery
-      // changing the results.
-      // FIXME: Handle multiple includes at once.
-      return true;
-    }
-    return false;
-  }
-
-  /// Gets the location at the very top of the file.
-  clang::SourceLocation file_begin() const { return FileBegin; }
-
-  /// Sets the location at the very top of the file.
-  void setFileBegin(clang::SourceLocation Location) { FileBegin = Location; }
-
-  /// Add an include to the set of includes to try.
-  /// \param include_path The include path to try.
-  void TryInclude(const std::string &query, const std::string &include_path) {
-    Untried.insert(include_path);
-  }
-
-private:
-  /// Query the database for a given identifier.
-  clang::TypoCorrection query(StringRef Query) {
-    assert(!Query.empty() && "Empty query!");
-
-    // Save database lookups by not looking up identifiers multiple times.
-    if (!SeenQueries.insert(Query).second)
-      return clang::TypoCorrection();
-
-    DEBUG(llvm::dbgs() << "Looking up " << Query << " ... ");
-
-    std::string error_text;
-    auto SearchReply = Xrefs.search(Query);
-    DEBUG(llvm::dbgs() << SearchReply.size() << " replies\n");
-    if (SearchReply.empty())
-      return clang::TypoCorrection();
-
-    // Add those files to the set of includes to try out.
-    // FIXME: Rank the results and pick the best one instead of the first one.
-    TryInclude(Query, SearchReply[0]);
+    // Follow C++ Lookup rules. Firstly, lookup the identifier with scoped
+    // namespace contexts. If fails, falls back to identifier.
+    // For example:
+    //
+    // namespace a {
+    // b::foo f;
+    // }
+    //
+    // 1. lookup a::b::foo.
+    // 2. lookup b::foo.
+    if (!query(TypoScopeString + QueryString, Typo.getLoc()))
+      query(QueryString, Typo.getLoc());
 
     // FIXME: We should just return the name we got as input here and prevent
     // clang from trying to correct the typo by itself. That may change the
@@ -210,69 +185,88 @@ private:
     return clang::TypoCorrection();
   }
 
-  /// The client to use to find cross-references.
-  XrefsDB &Xrefs;
+  StringRef filename() const { return Filename; }
 
-  // Remeber things we looked up to avoid querying things twice.
-  llvm::StringSet<> SeenQueries;
+  /// Get the minimal include for a given path.
+  std::string minimizeInclude(StringRef Include,
+                              const clang::SourceManager &SourceManager,
+                              clang::HeaderSearch &HeaderSearch) {
+    if (!MinimizeIncludePaths)
+      return Include;
+
+    // Get the FileEntry for the include.
+    StringRef StrippedInclude = Include.trim("\"<>");
+    const FileEntry *Entry =
+        SourceManager.getFileManager().getFile(StrippedInclude);
+
+    // If the file doesn't exist return the path from the database.
+    // FIXME: This should never happen.
+    if (!Entry)
+      return Include;
+
+    bool IsSystem;
+    std::string Suggestion =
+        HeaderSearch.suggestPathToFileForDiagnostics(Entry, &IsSystem);
+
+    return IsSystem ? '<' + Suggestion + '>' : '"' + Suggestion + '"';
+  }
+
+  /// Get the include fixer context for the queried symbol.
+  IncludeFixerContext
+  getIncludeFixerContext(const clang::SourceManager &SourceManager,
+                         clang::HeaderSearch &HeaderSearch) {
+    IncludeFixerContext FixerContext;
+    FixerContext.SymbolIdentifier = QuerySymbol;
+    for (const auto &Header : SymbolQueryResults)
+      FixerContext.Headers.push_back(
+          minimizeInclude(Header, SourceManager, HeaderSearch));
+
+    return FixerContext;
+  }
+
+private:
+  /// Query the database for a given identifier.
+  bool query(StringRef Query, SourceLocation Loc) {
+    assert(!Query.empty() && "Empty query!");
+
+    // Skip other identifers once we have discovered an identfier successfully.
+    if (!SymbolQueryResults.empty())
+      return false;
+
+    DEBUG(llvm::dbgs() << "Looking up '" << Query << "' at ");
+    DEBUG(Loc.print(llvm::dbgs(), getCompilerInstance().getSourceManager()));
+    DEBUG(llvm::dbgs() << " ...");
+
+    QuerySymbol = Query.str();
+    SymbolQueryResults = SymbolIndexMgr.search(Query);
+    DEBUG(llvm::dbgs() << SymbolQueryResults.size() << " replies\n");
+    return !SymbolQueryResults.empty();
+  }
+
+  /// The client to use to find cross-references.
+  SymbolIndexManager &SymbolIndexMgr;
 
   /// The absolute path to the file being processed.
   std::string Filename;
 
-  /// The location of the beginning of the tracked file.
-  clang::SourceLocation FileBegin;
+  /// The symbol being queried.
+  std::string QuerySymbol;
 
-  /// The offset of the last include in the original source file. This will
-  /// be used as the insertion point for new include directives.
-  unsigned FirstIncludeOffset = -1U;
+  /// The query results of an identifier. We only include the first discovered
+  /// identifier to avoid getting caught in results from error recovery.
+  std::vector<std::string> SymbolQueryResults;
 
-  /// Includes we have left to try.
-  std::set<std::string> Untried;
+  /// Whether we should use the smallest possible include path.
+  bool MinimizeIncludePaths = true;
 };
-
-void PreprocessorHooks::FileChanged(clang::SourceLocation Loc,
-                                    clang::PPCallbacks::FileChangeReason Reason,
-                                    clang::SrcMgr::CharacteristicKind FileType,
-                                    clang::FileID PrevFID) {
-  // Remember where the main file starts.
-  if (Reason == clang::PPCallbacks::EnterFile) {
-    clang::SourceManager *SourceManager =
-        &EnclosingPass->getCompilerInstance().getSourceManager();
-    clang::FileID loc_id = SourceManager->getFileID(Loc);
-    if (const clang::FileEntry *FileEntry =
-            SourceManager->getFileEntryForID(loc_id)) {
-      if (FileEntry->getName() == EnclosingPass->filename()) {
-        EnclosingPass->setFileBegin(Loc);
-        TrackedFile = FileEntry;
-      }
-    }
-  }
-}
-
-void PreprocessorHooks::InclusionDirective(
-    clang::SourceLocation HashLocation, const clang::Token &IncludeToken,
-    llvm::StringRef FileName, bool IsAngled,
-    clang::CharSourceRange FileNameRange, const clang::FileEntry *IncludeFile,
-    llvm::StringRef SearchPath, llvm::StringRef relative_path,
-    const clang::Module *imported) {
-  // Remember include locations so we can insert our new include at the end of
-  // the include block.
-  clang::SourceManager *SourceManager =
-      &EnclosingPass->getCompilerInstance().getSourceManager();
-  auto IDPosition = SourceManager->getDecomposedExpansionLoc(HashLocation);
-  const FileEntry *SourceFile =
-      SourceManager->getFileEntryForID(IDPosition.first);
-  if (!IncludeFile || TrackedFile != SourceFile)
-    return;
-  EnclosingPass->NextInclude(SourceManager, IncludeFile->getName(), FileName,
-                             IsAngled, HashLocation, FileNameRange.getEnd());
-}
 
 } // namespace
 
 IncludeFixerActionFactory::IncludeFixerActionFactory(
-    XrefsDB &Xrefs, std::vector<clang::tooling::Replacement> &Replacements)
-    : Xrefs(Xrefs), Replacements(Replacements) {}
+    SymbolIndexManager &SymbolIndexMgr, IncludeFixerContext &Context,
+    StringRef StyleName, bool MinimizeIncludePaths)
+    : SymbolIndexMgr(SymbolIndexMgr), Context(Context),
+      MinimizeIncludePaths(MinimizeIncludePaths) {}
 
 IncludeFixerActionFactory::~IncludeFixerActionFactory() = default;
 
@@ -293,16 +287,38 @@ bool IncludeFixerActionFactory::runInvocation(
                              /*ShouldOwnClient=*/true);
   Compiler.createSourceManager(*Files);
 
+  // We abort on fatal errors so don't let a large number of errors become
+  // fatal. A missing #include can cause thousands of errors.
+  Compiler.getDiagnostics().setErrorLimit(0);
+
   // Run the parser, gather missing includes.
-  auto ScopedToolAction = llvm::make_unique<Action>(Xrefs);
+  auto ScopedToolAction =
+      llvm::make_unique<Action>(SymbolIndexMgr, MinimizeIncludePaths);
   Compiler.ExecuteAction(*ScopedToolAction);
 
-  // Generate replacements.
-  ScopedToolAction->Rewrite(Compiler.getSourceManager(), Replacements);
+  Context = ScopedToolAction->getIncludeFixerContext(
+      Compiler.getSourceManager(),
+      Compiler.getPreprocessor().getHeaderSearchInfo());
 
   // Technically this should only return true if we're sure that we have a
-  // parseable file. We don't know that though.
-  return true;
+  // parseable file. We don't know that though. Only inform users of fatal
+  // errors.
+  return !Compiler.getDiagnostics().hasFatalErrorOccurred();
+}
+
+tooling::Replacements
+createInsertHeaderReplacements(StringRef Code, StringRef FilePath,
+                               StringRef Header,
+                               const clang::format::FormatStyle &Style) {
+  if (Header.empty())
+    return tooling::Replacements();
+  std::string IncludeName = "#include " + Header.str() + "\n";
+  // Create replacements for the new header.
+  clang::tooling::Replacements Insertions = {
+      tooling::Replacement(FilePath, UINT_MAX, 0, IncludeName)};
+
+  return formatReplacements(
+      Code, cleanupAroundReplacements(Code, Insertions, Style), Style);
 }
 
 } // namespace include_fixer

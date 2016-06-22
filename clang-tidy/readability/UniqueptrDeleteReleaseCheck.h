@@ -14,9 +14,10 @@
 
 namespace clang {
 namespace tidy {
+namespace readability {
 
-/// Flag statements of the form: delete <unique_ptr expr>.release()
-/// and replace them with: <unique_ptr expr> = nullptr
+/// Flags statements of the form ``delete <unique_ptr expr>.release();`` and
+/// replaces them with: ``<unique_ptr expr> = nullptr;``
 ///
 /// For the user-facing documentation see:
 /// http://clang.llvm.org/extra/clang-tidy/checks/readability-uniqueptr-delete-release.html
@@ -28,6 +29,7 @@ public:
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
 };
 
+} // namespace readability
 } // namespace tidy
 } // namespace clang
 
