@@ -14,8 +14,13 @@
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Lex/Lexer.h"
 
+using namespace clang::ast_matchers;
+
 namespace clang {
-namespace ast_matchers {
+namespace tidy {
+namespace misc {
+
+namespace {
 AST_MATCHER(FloatingLiteral, floatHalf) {
   const auto &literal = Node.getValue();
   if ((&Node.getSemantics()) == &llvm::APFloat::IEEEsingle)
@@ -24,14 +29,9 @@ AST_MATCHER(FloatingLiteral, floatHalf) {
     return literal.convertToDouble() == 0.5;
   return false;
 }
-} // namespace ast_matchers
-} // namespace clang
+} // namespace
 
-using namespace clang::ast_matchers;
 
-namespace clang {
-namespace tidy {
-namespace misc {
 void IncorrectRoundings::registerMatchers(MatchFinder *MatchFinder) {
   // Match a floating literal with value 0.5.
   auto FloatHalf = floatLiteral(floatHalf());
@@ -42,7 +42,8 @@ void IncorrectRoundings::registerMatchers(MatchFinder *MatchFinder) {
   // Match a floating literal of 0.5 or a floating literal of 0.5 implicitly.
   // cast to floating type.
   auto FloatOrCastHalf =
-      anyOf(FloatHalf, implicitCastExpr(FloatType, has(FloatHalf)));
+      anyOf(FloatHalf,
+            implicitCastExpr(FloatType, has(ignoringParenImpCasts(FloatHalf))));
 
   // Match if either the LHS or RHS is a floating literal of 0.5 or a floating
   // literal of 0.5 and the other is of type double or vice versa.

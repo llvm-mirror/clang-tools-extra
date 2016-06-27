@@ -22,6 +22,7 @@ using namespace clang::ast_matchers;
 
 namespace clang {
 namespace tidy {
+namespace misc {  
 
 StaticAssertCheck::StaticAssertCheck(StringRef Name, ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context) {}
@@ -32,12 +33,13 @@ void StaticAssertCheck::registerMatchers(MatchFinder *Finder) {
   if (!(getLangOpts().CPlusPlus11 || getLangOpts().C11))
     return;
 
-  auto IsAlwaysFalse = expr(ignoringParenImpCasts(
+  auto IsAlwaysFalse =
       expr(anyOf(cxxBoolLiteral(equals(false)), integerLiteral(equals(0)),
                  cxxNullPtrLiteralExpr(), gnuNullExpr()))
-          .bind("isAlwaysFalse")));
+          .bind("isAlwaysFalse");
   auto IsAlwaysFalseWithCast = ignoringParenImpCasts(anyOf(
-      IsAlwaysFalse, cStyleCastExpr(has(IsAlwaysFalse)).bind("castExpr")));
+      IsAlwaysFalse, cStyleCastExpr(has(ignoringParenImpCasts(IsAlwaysFalse)))
+                         .bind("castExpr")));
   auto AssertExprRoot = anyOf(
       binaryOperator(
           anyOf(hasOperatorName("&&"), hasOperatorName("==")),
@@ -62,11 +64,15 @@ void StaticAssertCheck::registerMatchers(MatchFinder *Finder) {
                 hasArgument(0, AssertCondition))),
             AssertCondition);
 
-  Finder->addMatcher(stmt(anyOf(conditionalOperator(hasCondition(Condition)),
-                                ifStmt(hasCondition(Condition))),
-                          unless(isInTemplateInstantiation()))
+  Finder->addMatcher(conditionalOperator(hasCondition(Condition),
+                                         unless(isInTemplateInstantiation()))
                          .bind("condStmt"),
                      this);
+
+  Finder->addMatcher(
+      ifStmt(hasCondition(Condition), unless(isInTemplateInstantiation()))
+          .bind("condStmt"),
+      this);
 }
 
 void StaticAssertCheck::check(const MatchFinder::MatchResult &Result) {
@@ -164,5 +170,6 @@ SourceLocation StaticAssertCheck::getLastParenLoc(const ASTContext *ASTCtx,
   return Token.getLocation();
 }
 
+} // namespace misc
 } // namespace tidy
 } // namespace clang

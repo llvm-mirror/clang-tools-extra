@@ -17,11 +17,13 @@ add_extra_unittest(IncludeFixerTests
 
 target_link_libraries(IncludeFixerTests
   clangBasic
+  clangFormat
   clangFrontend
   clangIncludeFixer
   clangRewrite
   clangTooling
   clangToolingCore
+  findAllSymbols
   )
 
 add_subdirectory(find-all-symbols)

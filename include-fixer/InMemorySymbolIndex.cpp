@@ -1,4 +1,4 @@
-//===-- InMemoryXrefsDB.cpp -----------------------------------------------===//
+//===-- InMemorySymbolIndex.cpp--------------------------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,12 +7,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "InMemoryXrefsDB.h"
+#include "InMemorySymbolIndex.h"
+
+using clang::find_all_symbols::SymbolInfo;
 
 namespace clang {
 namespace include_fixer {
 
-std::vector<std::string> InMemoryXrefsDB::search(llvm::StringRef Identifier) {
+InMemorySymbolIndex::InMemorySymbolIndex(
+    const std::vector<SymbolInfo> &Symbols) {
+  for (const auto &Symbol : Symbols)
+    LookupTable[Symbol.getName()].push_back(Symbol);
+}
+
+std::vector<SymbolInfo>
+InMemorySymbolIndex::search(llvm::StringRef Identifier) {
   auto I = LookupTable.find(Identifier);
   if (I != LookupTable.end())
     return I->second;

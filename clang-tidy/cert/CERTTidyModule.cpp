@@ -20,6 +20,7 @@
 #include "FloatLoopCounter.h"
 #include "SetLongJmpCheck.h"
 #include "StaticObjectExceptionCheck.h"
+#include "StrToNumCheck.h"
 #include "ThrownExceptionTypeCheck.h"
 #include "VariadicFunctionDefCheck.h"
 
@@ -39,7 +40,7 @@ public:
     CheckFactories.registerCheck<google::build::UnnamedNamespaceInHeaderCheck>(
         "cert-dcl59-cpp");
     // OOP
-    CheckFactories.registerCheck<MoveConstructorInitCheck>(
+    CheckFactories.registerCheck<misc::MoveConstructorInitCheck>(
         "cert-oop11-cpp");
     // ERR
     CheckFactories.registerCheck<SetLongJmpCheck>(
@@ -48,12 +49,12 @@ public:
         "cert-err58-cpp");
     CheckFactories.registerCheck<ThrownExceptionTypeCheck>(
         "cert-err60-cpp");
-    CheckFactories.registerCheck<ThrowByValueCatchByReferenceCheck>(
+    CheckFactories.registerCheck<misc::ThrowByValueCatchByReferenceCheck>(
         "cert-err61-cpp");
 
     // C checkers
     // DCL
-    CheckFactories.registerCheck<StaticAssertCheck>(
+    CheckFactories.registerCheck<misc::StaticAssertCheck>(
         "cert-dcl03-c");
     // ENV
     CheckFactories.registerCheck<CommandProcessorCheck>(
@@ -62,8 +63,16 @@ public:
     CheckFactories.registerCheck<FloatLoopCounter>(
         "cert-flp30-c");
     // FIO
-    CheckFactories.registerCheck<NonCopyableObjectsCheck>(
+    CheckFactories.registerCheck<misc::NonCopyableObjectsCheck>(
         "cert-fio38-c");
+    // ERR
+    CheckFactories.registerCheck<StrToNumCheck>(
+        "cert-err34-c");
+  }
+  ClangTidyOptions getModuleOptions() override {
+    ClangTidyOptions Options;
+    Options.CheckOptions["cert-oop11-cpp.UseCERTSemantics"] = "1";
+    return Options;
   }
 };
 

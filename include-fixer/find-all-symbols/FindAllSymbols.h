@@ -11,11 +11,14 @@
 #define LLVM_CLANG_TOOLS_EXTRA_FIND_ALL_SYMBOLS_SYMBOL_MATCHER_H
 
 #include "SymbolInfo.h"
+#include "SymbolReporter.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include <string>
 
 namespace clang {
 namespace find_all_symbols {
+
+class HeaderMapCollector;
 
 /// \brief FindAllSymbols collects all classes, free standing functions and
 /// global variables with some extra information such as the path of the header
@@ -31,15 +34,9 @@ namespace find_all_symbols {
 ///
 class FindAllSymbols : public clang::ast_matchers::MatchFinder::MatchCallback {
 public:
-  class ResultReporter {
-  public:
-    virtual ~ResultReporter() = default;
-
-    virtual void reportResult(llvm::StringRef FileName,
-                              const SymbolInfo &Symbol) = 0;
-  };
-
-  explicit FindAllSymbols(ResultReporter *Reporter) : Reporter(Reporter) {}
+  explicit FindAllSymbols(SymbolReporter *Reporter,
+                          HeaderMapCollector *Collector = nullptr)
+      : Reporter(Reporter), Collector(Collector) {}
 
   void registerMatchers(clang::ast_matchers::MatchFinder *MatchFinder);
 
@@ -47,7 +44,11 @@ public:
   run(const clang::ast_matchers::MatchFinder::MatchResult &result) override;
 
 private:
-  ResultReporter *const Reporter;
+  // Reporter for SymbolInfo.
+  SymbolReporter *const Reporter;
+  // A remapping header file collector allowing clients include a different
+  // header.
+  HeaderMapCollector *const Collector;
 };
 
 } // namespace find_all_symbols

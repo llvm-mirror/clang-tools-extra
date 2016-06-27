@@ -18,33 +18,55 @@ namespace clang {
 namespace tidy {
 namespace misc {
 
+// A function that helps to tell whether a TargetDecl in a UsingDecl will be
+// checked. Only variable, function, function template, class template and class
+// are considered.
+static bool ShouldCheckDecl(const Decl *TargetDecl) {
+  return isa<RecordDecl>(TargetDecl) || isa<ClassTemplateDecl>(TargetDecl) ||
+         isa<FunctionDecl>(TargetDecl) || isa<VarDecl>(TargetDecl) ||
+         isa<FunctionTemplateDecl>(TargetDecl);
+}
+
 void UnusedUsingDeclsCheck::registerMatchers(MatchFinder *Finder) {
   Finder->addMatcher(usingDecl(isExpansionInMainFile()).bind("using"), this);
   auto DeclMatcher = hasDeclaration(namedDecl().bind("used"));
   Finder->addMatcher(loc(recordType(DeclMatcher)), this);
   Finder->addMatcher(loc(templateSpecializationType(DeclMatcher)), this);
+  Finder->addMatcher(declRefExpr().bind("used"), this);
+  Finder->addMatcher(callExpr(callee(unresolvedLookupExpr().bind("used"))),
+                     this);
 }
 
 void UnusedUsingDeclsCheck::check(const MatchFinder::MatchResult &Result) {
   if (const auto *Using = Result.Nodes.getNodeAs<UsingDecl>("using")) {
-    // FIXME: Implement the correct behavior for using declarations with more
-    // than one shadow.
-    if (Using->shadow_size() != 1)
-      return;
-    const auto *TargetDecl =
-        Using->shadow_begin()->getTargetDecl()->getCanonicalDecl();
-
-    // FIXME: Handle other target types.
-    if (!isa<RecordDecl>(TargetDecl) && !isa<ClassTemplateDecl>(TargetDecl))
+    // Ignores using-declarations defined in macros.
+    if (Using->getLocation().isMacroID())
       return;
 
-    FoundDecls[TargetDecl] = Using;
-    FoundRanges[TargetDecl] = CharSourceRange::getCharRange(
+    // Ignores using-declarations defined in class definition.
+    if (isa<CXXRecordDecl>(Using->getDeclContext()))
+      return;
+
+    // FIXME: We ignore using-decls defined in function definitions at the
+    // moment because of false positives caused by ADL and different function
+    // scopes.
+    if (isa<FunctionDecl>(Using->getDeclContext()))
+      return;
+
+    UsingDeclContext Context(Using);
+    Context.UsingDeclRange = CharSourceRange::getCharRange(
         Using->getLocStart(),
         Lexer::findLocationAfterToken(
             Using->getLocEnd(), tok::semi, *Result.SourceManager,
             Result.Context->getLangOpts(),
             /*SkipTrailingWhitespaceAndNewLine=*/true));
+    for (const auto *UsingShadow : Using->shadows()) {
+      const auto *TargetDecl = UsingShadow->getTargetDecl()->getCanonicalDecl();
+      if (ShouldCheckDecl(TargetDecl))
+        Context.UsingTargetDecls.insert(TargetDecl);
+    }
+    if (!Context.UsingTargetDecls.empty())
+      Contexts.push_back(Context);
     return;
   }
 
@@ -57,21 +79,50 @@ void UnusedUsingDeclsCheck::check(const MatchFinder::MatchResult &Result) {
     if (const auto *Specialization =
             dyn_cast<ClassTemplateSpecializationDecl>(Used))
       Used = Specialization->getSpecializedTemplate();
-    auto I = FoundDecls.find(Used->getCanonicalDecl());
-    if (I != FoundDecls.end())
-      I->second = nullptr;
+    removeFromFoundDecls(Used);
+    return;
+  }
+
+  if (const auto *DRE = Result.Nodes.getNodeAs<DeclRefExpr>("used")) {
+    if (const auto *FD = dyn_cast<FunctionDecl>(DRE->getDecl())) {
+      if (const auto *FDT = FD->getPrimaryTemplate())
+        removeFromFoundDecls(FDT);
+      else
+        removeFromFoundDecls(FD);
+    } else if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+      removeFromFoundDecls(VD);
+    }
+  }
+  // Check the uninstantiated template function usage.
+  if (const auto *ULE = Result.Nodes.getNodeAs<UnresolvedLookupExpr>("used")) {
+    for (const NamedDecl* ND : ULE->decls()) {
+      if (const auto *USD = dyn_cast<UsingShadowDecl>(ND))
+        removeFromFoundDecls(USD->getTargetDecl()->getCanonicalDecl());
+    }
+  }
+}
+
+void UnusedUsingDeclsCheck::removeFromFoundDecls(const Decl *D) {
+  // FIXME: Currently, we don't handle the using-decls being used in different
+  // scopes (such as different namespaces, different functions). Instead of
+  // giving an incorrect message, we mark all of them as used.
+  //
+  // FIXME: Use a more efficient way to find a matching context.
+  for (auto &Context : Contexts) {
+    if (Context.UsingTargetDecls.count(D->getCanonicalDecl()) > 0)
+      Context.IsUsed = true;
   }
 }
 
 void UnusedUsingDeclsCheck::onEndOfTranslationUnit() {
-  for (const auto &FoundDecl : FoundDecls) {
-    if (FoundDecl.second == nullptr)
-      continue;
-    diag(FoundDecl.second->getLocation(), "using decl %0 is unused")
-        << FoundDecl.second
-        << FixItHint::CreateRemoval(FoundRanges[FoundDecl.first]);
+  for (const auto &Context : Contexts) {
+    if (!Context.IsUsed) {
+      diag(Context.FoundUsingDecl->getLocation(), "using decl %0 is unused")
+          << Context.FoundUsingDecl
+          << FixItHint::CreateRemoval(Context.UsingDeclRange);
+    }
   }
-  FoundDecls.clear();
+  Contexts.clear();
 }
 
 } // namespace misc

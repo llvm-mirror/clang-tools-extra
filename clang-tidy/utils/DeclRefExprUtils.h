@@ -15,17 +15,20 @@
 
 namespace clang {
 namespace tidy {
-namespace decl_ref_expr_utils {
+namespace utils {
+namespace decl_ref_expr {
 
-/// \brief Returns true if all DeclRefExpr to the variable within Stmt do not
-/// modify it.
+/// \brief Returns true if all ``DeclRefExpr`` to the variable within ``Stmt``
+/// do not modify it.
 ///
-/// Returns true if only const methods or operators are called on the variable
-/// or the variable is a const reference or value argument to a callExpr().
+/// Returns ``true`` if only const methods or operators are called on the
+/// variable or the variable is a const reference or value argument to a
+/// ``callExpr()``.
 bool isOnlyUsedAsConst(const VarDecl &Var, const Stmt &Stmt,
                        ASTContext &Context);
 
-} // namespace decl_ref_expr_utils
+} // namespace decl_ref_expr
+} // namespace utils
 } // namespace tidy
 } // namespace clang
 

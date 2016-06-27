@@ -338,7 +338,7 @@ static int clangTidyMain(int argc, const char **argv) {
       return 1;
     }
     llvm::outs() << "Enabled checks:";
-    for (auto CheckName : EnabledChecks)
+    for (const auto &CheckName : EnabledChecks)
       llvm::outs() << "\n    " << CheckName;
     llvm::outs() << "\n\n";
     return 0;
@@ -417,6 +417,11 @@ static int clangTidyMain(int argc, const char **argv) {
 extern volatile int CERTModuleAnchorSource;
 static int LLVM_ATTRIBUTE_UNUSED CERTModuleAnchorDestination =
     CERTModuleAnchorSource;
+
+// This anchor is used to force the linker to link the BoostModule.
+extern volatile int BoostModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED BoostModuleAnchorDestination =
+    BoostModuleAnchorSource;
 
 // This anchor is used to force the linker to link the LLVMModule.
 extern volatile int LLVMModuleAnchorSource;
