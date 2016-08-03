@@ -16,8 +16,10 @@ add_extra_unittest(ClangRenameTests
 
 target_link_libraries(ClangRenameTests
   clangAST
+  clangASTMatchers
   clangBasic
   clangFrontend
   clangIndex
+  clangLex
   clangTooling
   )

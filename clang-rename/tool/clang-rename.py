@@ -9,13 +9,13 @@ Before installing make sure one of the following is satisfied:
 
 To install, simply put this into your ~/.vimrc
 
-    map ,cr :pyf <path-to>/clang-rename.py<cr>
+    noremap <leader>cr :pyf <path-to>/clang-rename.py<cr>
 
 IMPORTANT NOTE: Before running the tool, make sure you saved the file.
 
 All you have to do now is to place a cursor on a variable/function/class which
-you would like to rename and press ',cr'. You will be prompted for a new name if
-the cursor points to a valid symbol.
+you would like to rename and press '<leader>cr'. You will be prompted for a new
+name if the cursor points to a valid symbol.
 '''
 
 import vim
@@ -25,7 +25,7 @@ import sys
 def main():
     binary = 'clang-rename'
     if vim.eval('exists("g:clang_rename_path")') == "1":
-        binary = vim.eval('g:clang_rename')
+        binary = vim.eval('g:clang_rename_path')
 
     # Get arguments for clang-rename binary.
     offset = int(vim.eval('line2byte(line("."))+col(".")')) - 2

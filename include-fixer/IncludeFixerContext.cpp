@@ -15,9 +15,17 @@ namespace include_fixer {
 
 namespace {
 
+// Splits a multiply qualified names (e.g. a::b::c).
+llvm::SmallVector<llvm::StringRef, 8>
+SplitQualifiers(llvm::StringRef StringQualifiers) {
+  llvm::SmallVector<llvm::StringRef, 8> Qualifiers;
+  StringQualifiers.split(Qualifiers, "::");
+  return Qualifiers;
+}
+
 std::string createQualifiedNameForReplacement(
     llvm::StringRef RawSymbolName,
-    llvm::StringRef SymbolScopedQualifiers,
+    llvm::StringRef SymbolScopedQualifiersName,
     const find_all_symbols::SymbolInfo &MatchedSymbol) {
   // No need to add missing qualifiers if SymbolIndentifer has a global scope
   // operator "::".
@@ -32,8 +40,7 @@ std::string createQualifiedNameForReplacement(
   // missing stripped qualifiers here.
   //
   // Get stripped qualifiers.
-  llvm::SmallVector<llvm::StringRef, 8> SymbolQualifiers;
-  RawSymbolName.split(SymbolQualifiers, "::");
+  auto SymbolQualifiers = SplitQualifiers(RawSymbolName);
   std::string StrippedQualifiers;
   while (!SymbolQualifiers.empty() &&
          !llvm::StringRef(QualifiedName).endswith(SymbolQualifiers.back())) {
@@ -43,25 +50,57 @@ std::string createQualifiedNameForReplacement(
   // Append the missing stripped qualifiers.
   std::string FullyQualifiedName = QualifiedName + StrippedQualifiers;
 
-  // Skips symbol scoped qualifiers prefix.
-  if (llvm::StringRef(FullyQualifiedName).startswith(SymbolScopedQualifiers))
-    return FullyQualifiedName.substr(SymbolScopedQualifiers.size());
-
-  return FullyQualifiedName;
+  // Try to find and skip the common prefix qualifiers.
+  auto FullySymbolQualifiers = SplitQualifiers(FullyQualifiedName);
+  auto ScopedQualifiers = SplitQualifiers(SymbolScopedQualifiersName);
+  auto FullySymbolQualifiersIter = FullySymbolQualifiers.begin();
+  auto SymbolScopedQualifiersIter = ScopedQualifiers.begin();
+  while (FullySymbolQualifiersIter != FullySymbolQualifiers.end() &&
+         SymbolScopedQualifiersIter != ScopedQualifiers.end()) {
+    if (*FullySymbolQualifiersIter != *SymbolScopedQualifiersIter)
+      break;
+    ++FullySymbolQualifiersIter;
+    ++SymbolScopedQualifiersIter;
+  }
+  std::string Result;
+  for (; FullySymbolQualifiersIter != FullySymbolQualifiers.end();
+       ++FullySymbolQualifiersIter) {
+    if (!Result.empty())
+      Result += "::";
+    Result += *FullySymbolQualifiersIter;
+  }
+  return Result;
 }
 
 } // anonymous namespace
 
 IncludeFixerContext::IncludeFixerContext(
-    llvm::StringRef Name, llvm::StringRef ScopeQualifiers,
-    std::vector<find_all_symbols::SymbolInfo> Symbols,
-    tooling::Range Range)
-    : SymbolIdentifier(Name), SymbolScopedQualifiers(ScopeQualifiers),
-      MatchedSymbols(std::move(Symbols)), SymbolRange(Range) {
+    std::vector<QuerySymbolInfo> QuerySymbols,
+    std::vector<find_all_symbols::SymbolInfo> Symbols)
+    : QuerySymbolInfos(std::move(QuerySymbols)),
+      MatchedSymbols(std::move(Symbols)) {
+  // Remove replicated QuerySymbolInfos with the same range.
+  //
+  // QuerySymbolInfos may contain replicated elements. Because CorrectTypo
+  // callback doesn't always work as we expected. In somecases, it will be
+  // triggered at the same position or unidentified symbol multiple times.
+  std::sort(QuerySymbolInfos.begin(), QuerySymbolInfos.end(),
+            [&](const QuerySymbolInfo &A, const QuerySymbolInfo &B) {
+              return std::make_pair(A.Range.getOffset(), A.Range.getLength()) <
+                     std::make_pair(B.Range.getOffset(), B.Range.getLength());
+            });
+  QuerySymbolInfos.erase(
+      std::unique(QuerySymbolInfos.begin(), QuerySymbolInfos.end(),
+                  [](const QuerySymbolInfo &A, const QuerySymbolInfo &B) {
+                    return A.Range == B.Range;
+                  }),
+      QuerySymbolInfos.end());
   for (const auto &Symbol : MatchedSymbols) {
-    HeaderInfos.push_back({Symbol.getFilePath().str(),
-                           createQualifiedNameForReplacement(
-                               SymbolIdentifier, ScopeQualifiers, Symbol)});
+    HeaderInfos.push_back(
+        {Symbol.getFilePath().str(),
+         createQualifiedNameForReplacement(
+             QuerySymbolInfos.front().RawIdentifier,
+             QuerySymbolInfos.front().ScopedQualifiers, Symbol)});
   }
   // Deduplicate header infos.
   HeaderInfos.erase(std::unique(HeaderInfos.begin(), HeaderInfos.end(),
