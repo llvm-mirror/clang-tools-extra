@@ -15,28 +15,27 @@
 
 #include "../USRFindingAction.h"
 #include "../RenamingAction.h"
-#include "clang/AST/ASTConsumer.h"
-#include "clang/AST/ASTContext.h"
+#include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/FileManager.h"
+#include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LangOptions.h"
-#include "clang/Basic/TargetInfo.h"
-#include "clang/Basic/TargetOptions.h"
-#include "clang/Frontend/CommandLineSourceLoc.h"
-#include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/FrontendAction.h"
+#include "clang/Basic/SourceManager.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
-#include "clang/Lex/Lexer.h"
-#include "clang/Lex/Preprocessor.h"
-#include "clang/Parse/ParseAST.h"
-#include "clang/Parse/Parser.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Tooling/ReplacementsYaml.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
-#include "llvm/Support/Host.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/YAMLTraits.h"
+#include <cstdlib>
 #include <string>
+#include <system_error>
 
 using namespace llvm;
 
@@ -79,12 +78,6 @@ ExportFixes(
     cl::value_desc("filename"),
     cl::cat(ClangRenameCategory));
 
-#define CLANG_RENAME_VERSION "0.0.1"
-
-static void PrintVersion() {
-  outs() << "clang-rename version " << CLANG_RENAME_VERSION << '\n';
-}
-
 using namespace clang;
 
 const char RenameUsage[] = "A tool to rename symbols in C/C++ code.\n\
@@ -93,13 +86,23 @@ clang-rename renames every occurrence of a symbol found at <offset> in\n\
 Otherwise, the results are written to stdout.\n";
 
 int main(int argc, const char **argv) {
-  cl::SetVersionPrinter(PrintVersion);
   tooling::CommonOptionsParser OP(argc, argv, ClangRenameCategory, RenameUsage);
 
   // Check the arguments for correctness.
 
   if (NewName.empty()) {
-    errs() << "clang-rename: no new name provided.\n\n";
+    errs() << "ERROR: no new name provided.\n\n";
+    exit(1);
+  }
+
+  // Check if NewName is a valid identifier in C++17.
+  LangOptions Options;
+  Options.CPlusPlus = true;
+  Options.CPlusPlus1z = true;
+  IdentifierTable Table(Options);
+  auto NewNameTokKind = Table.get(NewName).getTokenID();
+  if (!tok::isAnyIdentifier(NewNameTokKind)) {
+    errs() << "ERROR: new name is not a valid identifier in C++17.\n\n";
     exit(1);
   }
 
@@ -126,12 +129,12 @@ int main(int argc, const char **argv) {
   rename::RenamingAction RenameAction(NewName, PrevName, USRs,
                                       Tool.getReplacements(), PrintLocations);
   auto Factory = tooling::newFrontendActionFactory(&RenameAction);
-  int res;
+  int ExitCode;
 
   if (Inplace) {
-    res = Tool.runAndSave(Factory.get());
+    ExitCode = Tool.runAndSave(Factory.get());
   } else {
-    res = Tool.run(Factory.get());
+    ExitCode = Tool.run(Factory.get());
 
     if (!ExportFixes.empty()) {
       std::error_code EC;
@@ -175,5 +178,5 @@ int main(int argc, const char **argv) {
     }
   }
 
-  exit(res);
+  exit(ExitCode);
 }
