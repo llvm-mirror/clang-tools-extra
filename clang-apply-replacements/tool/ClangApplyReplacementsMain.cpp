@@ -108,7 +108,7 @@ getRewrittenData(const std::vector<tooling::Replacement> &Replacements,
                  Rewriter &Rewrites, std::string &Result) {
   if (Replacements.empty()) return true;
 
-  if (!tooling::applyAllReplacements(Replacements, Rewrites))
+  if (!applyAllReplacements(Replacements, Rewrites))
     return false;
 
   SourceManager &SM = Rewrites.getSourceMgr();
@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
       continue;
 
     std::string NewFileData;
-    const char *FileName = FileAndReplacements.first->getName();
+    StringRef FileName = FileAndReplacements.first->getName();
     if (!applyReplacements(FileAndReplacements.second, NewFileData,
                            Diagnostics)) {
       errs() << "Failed to apply replacements to " << FileName << "\n";

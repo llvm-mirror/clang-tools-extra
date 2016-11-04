@@ -1,5 +1,3 @@
-// RUN: clang-rename -old-name=Foo -new-name=Bar %s -- | FileCheck %s
-
 void foo() {
 }
 
@@ -11,3 +9,4 @@ int main() {
   return 0;
 }
 
+// RUN: clang-rename -qualified-name=Foo -new-name=Bar %s -- | sed 's,//.*,,' | FileCheck %s

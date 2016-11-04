@@ -62,7 +62,8 @@ struct ClangTidyError {
 
   std::string CheckName;
   ClangTidyMessage Message;
-  tooling::Replacements Fix;
+  // Fixes grouped by file path.
+  llvm::StringMap<tooling::Replacements> Fix;
   SmallVector<ClangTidyMessage, 1> Notes;
 
   // A build directory of the diagnostic source file.
@@ -285,6 +286,7 @@ private:
   std::unique_ptr<llvm::Regex> HeaderFilter;
   bool LastErrorRelatesToUserCode;
   bool LastErrorPassesLineFilter;
+  bool LastErrorWasIgnored;
 };
 
 } // end namespace tidy

@@ -60,13 +60,13 @@ public:
   // Expression visitors:
 
   bool VisitDeclRefExpr(const DeclRefExpr *Expr) {
-    const auto *Decl = Expr->getFoundDecl();
+    const NamedDecl *Decl = Expr->getFoundDecl();
     return setResult(Decl, Expr->getLocation(),
                      Decl->getNameAsString().length());
   }
 
   bool VisitMemberExpr(const MemberExpr *Expr) {
-    const auto *Decl = Expr->getFoundDecl().getDecl();
+    const NamedDecl *Decl = Expr->getFoundDecl().getDecl();
     return setResult(Decl, Expr->getMemberLoc(),
                      Decl->getNameAsString().length());
   }
@@ -74,11 +74,36 @@ public:
   // Other visitors:
 
   bool VisitTypeLoc(const TypeLoc Loc) {
-    const auto TypeBeginLoc = Loc.getBeginLoc();
-    const auto TypeEndLoc = Lexer::getLocForEndOfToken(
+    const SourceLocation TypeBeginLoc = Loc.getBeginLoc();
+    const SourceLocation TypeEndLoc = Lexer::getLocForEndOfToken(
         TypeBeginLoc, 0, Context.getSourceManager(), Context.getLangOpts());
+    if (const auto *TemplateTypeParm =
+            dyn_cast<TemplateTypeParmType>(Loc.getType()))
+      return setResult(TemplateTypeParm->getDecl(), TypeBeginLoc, TypeEndLoc);
+    if (const auto *TemplateSpecType =
+            dyn_cast<TemplateSpecializationType>(Loc.getType())) {
+      return setResult(TemplateSpecType->getTemplateName().getAsTemplateDecl(),
+                       TypeBeginLoc, TypeEndLoc);
+    }
     return setResult(Loc.getType()->getAsCXXRecordDecl(), TypeBeginLoc,
                      TypeEndLoc);
+  }
+
+  bool VisitCXXConstructorDecl(clang::CXXConstructorDecl *ConstructorDecl) {
+    for (const auto *Initializer : ConstructorDecl->inits()) {
+      // Ignore implicit initializers.
+      if (!Initializer->isWritten())
+        continue;
+      if (const clang::FieldDecl *FieldDecl = Initializer->getMember()) {
+        const SourceLocation InitBeginLoc = Initializer->getSourceLocation(),
+                             InitEndLoc = Lexer::getLocForEndOfToken(
+                                 InitBeginLoc, 0, Context.getSourceManager(),
+                                 Context.getLangOpts());
+        if (!setResult(FieldDecl, InitBeginLoc, InitEndLoc))
+          return false;
+      }
+    }
+    return true;
   }
 
   // Other:
@@ -89,7 +114,8 @@ public:
   // \returns false on success and sets Result.
   void handleNestedNameSpecifierLoc(NestedNameSpecifierLoc NameLoc) {
     while (NameLoc) {
-      const auto *Decl = NameLoc.getNestedNameSpecifier()->getAsNamespace();
+      const NamespaceDecl *Decl =
+          NameLoc.getNestedNameSpecifier()->getAsNamespace();
       setResult(Decl, NameLoc.getLocalBeginLoc(), NameLoc.getLocalEndLoc());
       NameLoc = NameLoc.getPrefix();
     }
@@ -100,20 +126,17 @@ private:
   // \returns false on success.
   bool setResult(const NamedDecl *Decl, SourceLocation Start,
                  SourceLocation End) {
-    if (!Decl) {
+    if (!Decl)
       return true;
-    }
     if (Name.empty()) {
       // Offset is used to find the declaration.
       if (!Start.isValid() || !Start.isFileID() || !End.isValid() ||
-          !End.isFileID() || !isPointWithin(Start, End)) {
+          !End.isFileID() || !isPointWithin(Start, End))
         return true;
-      }
     } else {
       // Fully qualified name is used to find the declaration.
-      if (Name != Decl->getQualifiedNameAsString()) {
+      if (Name != Decl->getQualifiedNameAsString())
         return true;
-      }
     }
     Result = Decl;
     return false;
@@ -145,24 +168,21 @@ private:
 
 const NamedDecl *getNamedDeclAt(const ASTContext &Context,
                                 const SourceLocation Point) {
-  const auto SearchFile = Context.getSourceManager().getFilename(Point);
+  StringRef SearchFile = Context.getSourceManager().getFilename(Point);
   NamedDeclFindingASTVisitor Visitor(Point, Context);
 
   // We only want to search the decls that exist in the same file as the point.
-  auto Decls = Context.getTranslationUnitDecl()->decls();
-  for (auto &CurrDecl : Decls) {
-    const auto FileLoc = CurrDecl->getLocStart();
-    const auto FileName = Context.getSourceManager().getFilename(FileLoc);
+  for (auto *CurrDecl : Context.getTranslationUnitDecl()->decls()) {
+    const SourceLocation FileLoc = CurrDecl->getLocStart();
+    StringRef FileName = Context.getSourceManager().getFilename(FileLoc);
     // FIXME: Add test.
-    if (FileName == SearchFile) {
+    if (FileName == SearchFile)
       Visitor.TraverseDecl(CurrDecl);
-    }
   }
 
   NestedNameSpecifierLocFinder Finder(const_cast<ASTContext &>(Context));
-  for (const auto &Location : Finder.getNestedNameSpecifierLocations()) {
+  for (const auto &Location : Finder.getNestedNameSpecifierLocations())
     Visitor.handleNestedNameSpecifierLoc(Location);
-  }
 
   return Visitor.getNamedDecl();
 }

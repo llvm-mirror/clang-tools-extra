@@ -10,10 +10,14 @@ add_clang_library(clangTidyReadabilityModule
   IdentifierNamingCheck.cpp
   ImplicitBoolCastCheck.cpp
   InconsistentDeclarationParameterNameCheck.cpp
+  MisplacedArrayIndexCheck.cpp
   NamedParameterCheck.cpp
   NamespaceCommentCheck.cpp
+  NonConstParameterCheck.cpp
   ReadabilityTidyModule.cpp
   RedundantControlFlowCheck.cpp
+  RedundantDeclarationCheck.cpp
+  RedundantMemberInitCheck.cpp
   RedundantStringCStrCheck.cpp
   RedundantSmartptrGetCheck.cpp
   RedundantStringInitCheck.cpp

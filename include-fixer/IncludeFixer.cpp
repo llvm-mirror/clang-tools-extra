@@ -37,6 +37,7 @@ public:
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &Compiler,
                     StringRef InFile) override {
+    FilePath = InFile;
     return llvm::make_unique<clang::ASTConsumer>();
   }
 
@@ -228,7 +229,7 @@ public:
                                     Symbol.getContexts(),
                                     Symbol.getNumOccurrences());
     }
-    return IncludeFixerContext(QuerySymbolInfos, SymbolCandidates);
+    return IncludeFixerContext(FilePath, QuerySymbolInfos, SymbolCandidates);
   }
 
 private:
@@ -275,8 +276,11 @@ private:
     // 1. lookup a::b::foo.
     // 2. lookup b::foo.
     std::string QueryString = ScopedQualifiers.str() + Query.str();
-    MatchedSymbols = SymbolIndexMgr.search(QueryString);
-    if (MatchedSymbols.empty() && !ScopedQualifiers.empty())
+    // It's unsafe to do nested search for the identifier with scoped namespace
+    // context, it might treat the identifier as a nested class of the scoped
+    // namespace.
+    MatchedSymbols = SymbolIndexMgr.search(QueryString, /*IsNestedSearch=*/false);
+    if (MatchedSymbols.empty())
       MatchedSymbols = SymbolIndexMgr.search(Query);
     DEBUG(llvm::dbgs() << "Having found " << MatchedSymbols.size()
                        << " symbols\n");
@@ -294,6 +298,9 @@ private:
   /// recovery.
   std::vector<find_all_symbols::SymbolInfo> MatchedSymbols;
 
+  /// The file path to the file being processed.
+  std::string FilePath;
+
   /// Whether we should use the smallest possible include path.
   bool MinimizeIncludePaths = true;
 };
@@ -301,9 +308,10 @@ private:
 } // namespace
 
 IncludeFixerActionFactory::IncludeFixerActionFactory(
-    SymbolIndexManager &SymbolIndexMgr, IncludeFixerContext &Context,
-    StringRef StyleName, bool MinimizeIncludePaths)
-    : SymbolIndexMgr(SymbolIndexMgr), Context(Context),
+    SymbolIndexManager &SymbolIndexMgr,
+    std::vector<IncludeFixerContext> &Contexts, StringRef StyleName,
+    bool MinimizeIncludePaths)
+    : SymbolIndexMgr(SymbolIndexMgr), Contexts(Contexts),
       MinimizeIncludePaths(MinimizeIncludePaths) {}
 
 IncludeFixerActionFactory::~IncludeFixerActionFactory() = default;
@@ -334,9 +342,9 @@ bool IncludeFixerActionFactory::runInvocation(
       llvm::make_unique<Action>(SymbolIndexMgr, MinimizeIncludePaths);
   Compiler.ExecuteAction(*ScopedToolAction);
 
-  Context = ScopedToolAction->getIncludeFixerContext(
+  Contexts.push_back(ScopedToolAction->getIncludeFixerContext(
       Compiler.getSourceManager(),
-      Compiler.getPreprocessor().getHeaderSearchInfo());
+      Compiler.getPreprocessor().getHeaderSearchInfo()));
 
   // Technically this should only return true if we're sure that we have a
   // parseable file. We don't know that though. Only inform users of fatal
@@ -345,30 +353,44 @@ bool IncludeFixerActionFactory::runInvocation(
 }
 
 llvm::Expected<tooling::Replacements> createIncludeFixerReplacements(
-    StringRef Code, StringRef FilePath, const IncludeFixerContext &Context,
+    StringRef Code, const IncludeFixerContext &Context,
     const clang::format::FormatStyle &Style, bool AddQualifiers) {
   if (Context.getHeaderInfos().empty())
     return tooling::Replacements();
+  StringRef FilePath = Context.getFilePath();
   std::string IncludeName =
       "#include " + Context.getHeaderInfos().front().Header + "\n";
   // Create replacements for the new header.
-  clang::tooling::Replacements Insertions = {
-      tooling::Replacement(FilePath, UINT_MAX, 0, IncludeName)};
+  clang::tooling::Replacements Insertions;
+  auto Err =
+      Insertions.add(tooling::Replacement(FilePath, UINT_MAX, 0, IncludeName));
+  if (Err)
+    return std::move(Err);
 
   auto CleanReplaces = cleanupAroundReplacements(Code, Insertions, Style);
   if (!CleanReplaces)
     return CleanReplaces;
 
+  auto Replaces = std::move(*CleanReplaces);
   if (AddQualifiers) {
     for (const auto &Info : Context.getQuerySymbolInfos()) {
       // Ignore the empty range.
-      if (Info.Range.getLength() > 0)
-        CleanReplaces->insert({FilePath, Info.Range.getOffset(),
-                               Info.Range.getLength(),
-                               Context.getHeaderInfos().front().QualifiedName});
+      if (Info.Range.getLength() > 0) {
+        auto R = tooling::Replacement(
+            {FilePath, Info.Range.getOffset(), Info.Range.getLength(),
+             Context.getHeaderInfos().front().QualifiedName});
+        auto Err = Replaces.add(R);
+        if (Err) {
+          llvm::consumeError(std::move(Err));
+          R = tooling::Replacement(
+              R.getFilePath(), Replaces.getShiftedCodePosition(R.getOffset()),
+              R.getLength(), R.getReplacementText());
+          Replaces = Replaces.merge(tooling::Replacements(R));
+        }
+      }
     }
   }
-  return formatReplacements(Code, *CleanReplaces, Style);
+  return formatReplacements(Code, Replaces, Style);
 }
 
 } // namespace include_fixer

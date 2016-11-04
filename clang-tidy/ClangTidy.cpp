@@ -22,6 +22,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/Format/Format.h"
 #include "clang/Frontend/ASTConsumers.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -47,7 +48,7 @@ using namespace clang::driver;
 using namespace clang::tooling;
 using namespace llvm;
 
-template class llvm::Registry<clang::tidy::ClangTidyModule>;
+LLVM_INSTANTIATE_REGISTRY(clang::tidy::ClangTidyModuleRegistry)
 
 namespace clang {
 namespace tidy {
@@ -101,9 +102,8 @@ public:
         DiagPrinter(new TextDiagnosticPrinter(llvm::outs(), &*DiagOpts)),
         Diags(IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs), &*DiagOpts,
               DiagPrinter),
-        SourceMgr(Diags, Files), Rewrite(SourceMgr, LangOpts),
-        ApplyFixes(ApplyFixes), TotalFixes(0), AppliedFixes(0),
-        WarningsAsErrors(0) {
+        SourceMgr(Diags, Files), ApplyFixes(ApplyFixes), TotalFixes(0),
+        AppliedFixes(0), WarningsAsErrors(0) {
     DiagOpts->ShowColors = llvm::sys::Process::StandardOutHasColors();
     DiagPrinter->BeginSourceFile(LangOpts);
   }
@@ -126,27 +126,59 @@ public:
       }
       auto Diag = Diags.Report(Loc, Diags.getCustomDiagID(Level, "%0 [%1]"))
                   << Message.Message << Name;
-      for (const tooling::Replacement &Fix : Error.Fix) {
-        // Retrieve the source range for applicable fixes. Macro definitions
-        // on the command line have locations in a virtual buffer and don't
-        // have valid file paths and are therefore not applicable.
-        SourceRange Range;
-        SourceLocation FixLoc;
-        if (Fix.isApplicable()) {
-          SmallString<128> FixAbsoluteFilePath = Fix.getFilePath();
-          Files.makeAbsolutePath(FixAbsoluteFilePath);
-          FixLoc = getLocation(FixAbsoluteFilePath, Fix.getOffset());
-          SourceLocation FixEndLoc = FixLoc.getLocWithOffset(Fix.getLength());
-          Range = SourceRange(FixLoc, FixEndLoc);
-          Diag << FixItHint::CreateReplacement(Range, Fix.getReplacementText());
-        }
+      for (const auto &FileAndReplacements : Error.Fix) {
+        for (const auto &Repl : FileAndReplacements.second) {
+          // Retrieve the source range for applicable fixes. Macro definitions
+          // on the command line have locations in a virtual buffer and don't
+          // have valid file paths and are therefore not applicable.
+          SourceRange Range;
+          SourceLocation FixLoc;
+          ++TotalFixes;
+          bool CanBeApplied = false;
+          if (Repl.isApplicable()) {
+            SmallString<128> FixAbsoluteFilePath = Repl.getFilePath();
+            Files.makeAbsolutePath(FixAbsoluteFilePath);
+            if (ApplyFixes) {
+              tooling::Replacement R(FixAbsoluteFilePath, Repl.getOffset(),
+                                     Repl.getLength(),
+                                     Repl.getReplacementText());
+              Replacements &Replacements = FileReplacements[R.getFilePath()];
+              llvm::Error Err = Replacements.add(R);
+              if (Err) {
+                // FIXME: Implement better conflict handling.
+                llvm::errs() << "Trying to resolve conflict: "
+                             << llvm::toString(std::move(Err)) << "\n";
+                unsigned NewOffset =
+                    Replacements.getShiftedCodePosition(R.getOffset());
+                unsigned NewLength = Replacements.getShiftedCodePosition(
+                                         R.getOffset() + R.getLength()) -
+                                     NewOffset;
+                if (NewLength == R.getLength()) {
+                  R = Replacement(R.getFilePath(), NewOffset, NewLength,
+                                  R.getReplacementText());
+                  Replacements = Replacements.merge(tooling::Replacements(R));
+                  CanBeApplied = true;
+                  ++AppliedFixes;
+                } else {
+                  llvm::errs()
+                      << "Can't resolve conflict, skipping the replacement.\n";
+                }
 
-        ++TotalFixes;
-        if (ApplyFixes) {
-          bool Success = Fix.isApplicable() && Fix.apply(Rewrite);
-          if (Success)
-            ++AppliedFixes;
-          FixLocations.push_back(std::make_pair(FixLoc, Success));
+              } else {
+                CanBeApplied = true;
+                ++AppliedFixes;
+              }
+            }
+            FixLoc = getLocation(FixAbsoluteFilePath, Repl.getOffset());
+            SourceLocation FixEndLoc =
+                FixLoc.getLocWithOffset(Repl.getLength());
+            Range = SourceRange(FixLoc, FixEndLoc);
+            Diag << FixItHint::CreateReplacement(Range,
+                                                 Repl.getReplacementText());
+          }
+
+          if (ApplyFixes)
+            FixLocations.push_back(std::make_pair(FixLoc, CanBeApplied));
         }
       }
     }
@@ -161,9 +193,37 @@ public:
   void Finish() {
     // FIXME: Run clang-format on changes.
     if (ApplyFixes && TotalFixes > 0) {
-      llvm::errs() << "clang-tidy applied " << AppliedFixes << " of "
-                   << TotalFixes << " suggested fixes.\n";
-      Rewrite.overwriteChangedFiles();
+      Rewriter Rewrite(SourceMgr, LangOpts);
+      for (const auto &FileAndReplacements : FileReplacements) {
+        StringRef File = FileAndReplacements.first();
+        llvm::ErrorOr<std::unique_ptr<MemoryBuffer>> Buffer =
+            SourceMgr.getFileManager().getBufferForFile(File);
+        if (!Buffer) {
+          llvm::errs() << "Can't get buffer for file " << File << ": "
+                       << Buffer.getError().message() << "\n";
+          // FIXME: Maybe don't apply fixes for other files as well.
+          continue;
+        }
+        StringRef Code = Buffer.get()->getBuffer();
+        // FIXME: Make the style customizable.
+        format::FormatStyle Style = format::getStyle("file", File, "LLVM");
+        llvm::Expected<Replacements> CleanReplacements =
+            format::cleanupAroundReplacements(Code, FileAndReplacements.second,
+                                              Style);
+        if (!CleanReplacements) {
+          llvm::errs() << llvm::toString(CleanReplacements.takeError()) << "\n";
+          continue;
+        }
+        if (!tooling::applyAllReplacements(CleanReplacements.get(), Rewrite)) {
+          llvm::errs() << "Can't apply replacements for file " << File << "\n";
+        }
+      }
+      if (Rewrite.overwriteChangedFiles()) {
+        llvm::errs() << "clang-tidy failed to apply suggested fixes.\n";
+      } else {
+        llvm::errs() << "clang-tidy applied " << AppliedFixes << " of "
+                     << TotalFixes << " suggested fixes.\n";
+      }
     }
   }
 
@@ -192,7 +252,7 @@ private:
   DiagnosticConsumer *DiagPrinter;
   DiagnosticsEngine Diags;
   SourceManager SourceMgr;
-  Rewriter Rewrite;
+  llvm::StringMap<Replacements> FileReplacements;
   bool ApplyFixes;
   unsigned TotalFixes;
   unsigned AppliedFixes;
@@ -411,7 +471,7 @@ ClangTidyOptions::OptionMap getCheckOptions(const ClangTidyOptions &Options) {
 
 ClangTidyStats
 runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
-             const tooling::CompilationDatabase &Compilations,
+             const CompilationDatabase &Compilations,
              ArrayRef<std::string> InputFiles,
              std::vector<ClangTidyError> *Errors, ProfileData *Profile) {
   ClangTool Tool(Compilations, InputFiles);
@@ -421,10 +481,14 @@ runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
   ArgumentsAdjuster PerFileExtraArgumentsInserter =
       [&Context](const CommandLineArguments &Args, StringRef Filename) {
         ClangTidyOptions Opts = Context.getOptionsForFile(Filename);
-        CommandLineArguments AdjustedArgs;
-        if (Opts.ExtraArgsBefore)
-          AdjustedArgs = *Opts.ExtraArgsBefore;
-        AdjustedArgs.insert(AdjustedArgs.begin(), Args.begin(), Args.end());
+        CommandLineArguments AdjustedArgs = Args;
+        if (Opts.ExtraArgsBefore) {
+          auto I = AdjustedArgs.begin();
+          if (I != AdjustedArgs.end() && !StringRef(*I).startswith("-"))
+            ++I; // Skip compiler binary name, if it is there.
+          AdjustedArgs.insert(I, Opts.ExtraArgsBefore->begin(),
+                              Opts.ExtraArgsBefore->end());
+        }
         if (Opts.ExtraArgs)
           AdjustedArgs.insert(AdjustedArgs.end(), Opts.ExtraArgs->begin(),
                               Opts.ExtraArgs->end());
@@ -510,10 +574,13 @@ void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix,
 
 void exportReplacements(const std::vector<ClangTidyError> &Errors,
                         raw_ostream &OS) {
-  tooling::TranslationUnitReplacements TUR;
-  for (const ClangTidyError &Error : Errors)
-    TUR.Replacements.insert(TUR.Replacements.end(), Error.Fix.begin(),
-                            Error.Fix.end());
+  TranslationUnitReplacements TUR;
+  for (const ClangTidyError &Error : Errors) {
+    for (const auto &FileAndFixes : Error.Fix)
+      TUR.Replacements.insert(TUR.Replacements.end(),
+                              FileAndFixes.second.begin(),
+                              FileAndFixes.second.end());
+  }
 
   yaml::Output YAML(OS);
   YAML << TUR;

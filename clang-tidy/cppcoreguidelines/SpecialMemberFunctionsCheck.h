@@ -1,4 +1,4 @@
-//===--- SpecialMemberFunctionsCheck.h - clang-tidy-------------------*- C++ -*-===//
+//===--- SpecialMemberFunctionsCheck.h - clang-tidy--------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -30,8 +30,8 @@ public:
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
   void onEndOfTranslationUnit() override;
-  
-  enum class SpecialMemberFunctionKind {
+
+  enum class SpecialMemberFunctionKind : uint8_t {
     Destructor,
     CopyConstructor,
     CopyAssignment,
@@ -41,15 +41,11 @@ public:
 
   using ClassDefId = std::pair<SourceLocation, std::string>;
 
-  using ClassDefiningSpecialMembersMap = llvm::DenseMap<ClassDefId, llvm::SmallVector<SpecialMemberFunctionKind, 5>>;
+  using ClassDefiningSpecialMembersMap =
+      llvm::DenseMap<ClassDefId,
+                     llvm::SmallVector<SpecialMemberFunctionKind, 5>>;
 
 private:
-  
-  static llvm::StringRef toString(SpecialMemberFunctionKind K);
-
-  static std::string join(llvm::ArrayRef<SpecialMemberFunctionKind> SMFS,
-                          llvm::StringRef AndOr);
-  
   ClassDefiningSpecialMembersMap ClassWithSpecialMembers;
 };
 
@@ -60,12 +56,12 @@ private:
 namespace llvm {
 /// Specialisation of DenseMapInfo to allow ClassDefId objects in DenseMaps
 /// FIXME: Move this to the corresponding cpp file as is done for
-/// clang-tidy/readability/IdentifierNamingCheck.cpp. 
+/// clang-tidy/readability/IdentifierNamingCheck.cpp.
 template <>
 struct DenseMapInfo<
     clang::tidy::cppcoreguidelines::SpecialMemberFunctionsCheck::ClassDefId> {
   using ClassDefId =
-    clang::tidy::cppcoreguidelines::SpecialMemberFunctionsCheck::ClassDefId;
+      clang::tidy::cppcoreguidelines::SpecialMemberFunctionsCheck::ClassDefId;
 
   static inline ClassDefId getEmptyKey() {
     return ClassDefId(
