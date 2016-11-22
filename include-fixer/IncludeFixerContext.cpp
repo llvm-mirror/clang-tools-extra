@@ -44,7 +44,8 @@ std::string createQualifiedNameForReplacement(
   std::string StrippedQualifiers;
   while (!SymbolQualifiers.empty() &&
          !llvm::StringRef(QualifiedName).endswith(SymbolQualifiers.back())) {
-    StrippedQualifiers = "::" + SymbolQualifiers.back().str();
+    StrippedQualifiers =
+        "::" + SymbolQualifiers.back().str() + StrippedQualifiers;
     SymbolQualifiers.pop_back();
   }
   // Append the missing stripped qualifiers.
@@ -75,9 +76,9 @@ std::string createQualifiedNameForReplacement(
 } // anonymous namespace
 
 IncludeFixerContext::IncludeFixerContext(
-    std::vector<QuerySymbolInfo> QuerySymbols,
+    StringRef FilePath, std::vector<QuerySymbolInfo> QuerySymbols,
     std::vector<find_all_symbols::SymbolInfo> Symbols)
-    : QuerySymbolInfos(std::move(QuerySymbols)),
+    : FilePath(FilePath), QuerySymbolInfos(std::move(QuerySymbols)),
       MatchedSymbols(std::move(Symbols)) {
   // Remove replicated QuerySymbolInfos with the same range.
   //

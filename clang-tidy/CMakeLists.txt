@@ -15,6 +15,7 @@ add_clang_library(clangTidy
   clangAST
   clangASTMatchers
   clangBasic
+  clangFormat
   clangFrontend
   clangLex
   clangRewrite
@@ -34,6 +35,7 @@ add_subdirectory(cppcoreguidelines)
 add_subdirectory(google)
 add_subdirectory(misc)
 add_subdirectory(modernize)
+add_subdirectory(mpi)
 add_subdirectory(performance)
 add_subdirectory(readability)
 add_subdirectory(utils)

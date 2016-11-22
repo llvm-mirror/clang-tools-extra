@@ -1,11 +1,14 @@
-// RUN: clang-rename -offset=74 -new-name=Bar %s -- | FileCheck %s
+class Foo /* Test 1 */ {              // CHECK: class Bar /* Test 1 */ {
+public:
+  void foo(int x);
+};
 
-class Foo {};       // CHECK: class Bar
+void Foo::foo(int x) /* Test 2 */ {}  // CHECK: void Bar::foo(int x) /* Test 2 */ {}
 
-int main() {
-  Foo *Pointer = 0; // CHECK: Bar *Pointer = 0;
-  return 0;
-}
+// Test 1.
+// RUN: clang-rename -offset=6 -new-name=Bar %s -- | sed 's,//.*,,' | FileCheck %s
+// Test 2.
+// RUN: clang-rename -offset=109 -new-name=Bar %s -- | sed 's,//.*,,' | FileCheck %s
 
-// Use grep -FUbo 'Foo' <file> to get the correct offset of Foo when changing
-// this file.
+// To find offsets after modifying the file, use:
+//   grep -Ubo 'Foo.*' <file>

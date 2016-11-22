@@ -1,4 +1,5 @@
-// RUN: %check_clang_tidy %s google-explicit-constructor,clang-diagnostic-unused-variable %t -- -extra-arg=-Wunused-variable --
+// RUN: %check_clang_tidy %s google-explicit-constructor,clang-diagnostic-unused-variable,clang-analyzer-core.UndefinedBinaryOperatorResult %t -- -extra-arg=-Wunused-variable -- -I%S/Inputs/nolint
+
 
 class A { A(int i); };
 // CHECK-MESSAGES: :[[@LINE-1]]:11: warning: single-argument constructors must be marked explicit
@@ -13,4 +14,26 @@ void f() {
   int j; // NOLINT
 }
 
-// CHECK-MESSAGES: Suppressed 3 warnings (3 NOLINT)
+#define MACRO(X) class X { X(int i); };
+MACRO(D)
+// CHECK-MESSAGES: :[[@LINE-1]]:7: warning: single-argument constructors must be marked explicit
+MACRO(E) // NOLINT
+
+#define MACRO_NOARG class F { F(int i); };
+MACRO_NOARG // NOLINT
+
+#define MACRO_NOLINT class G { G(int i); }; // NOLINT
+MACRO_NOLINT
+
+#define DOUBLE_MACRO MACRO(H) // NOLINT
+DOUBLE_MACRO
+
+#include "trigger_warning.h"
+void I(int& Out) {
+  int In;
+  A1(In, Out);
+}
+// CHECK-NOT: trigger_warning.h:{{.*}} warning: The left operand of '>' is a garbage value
+// CHECK-NOT: :[[@LINE-4]]:{{.*}} note
+
+// CHECK-MESSAGES: Suppressed 8 warnings (8 NOLINT)

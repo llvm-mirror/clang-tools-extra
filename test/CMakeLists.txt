@@ -42,9 +42,12 @@ set(CLANG_TOOLS_TEST_DEPS
 
   # Individual tools we test.
   clang-apply-replacements
+  clang-change-namespace
   clang-include-fixer
+  clang-move
   clang-query
   clang-rename
+  clang-reorder-fields
   clang-tidy
   find-all-symbols
   modularize
