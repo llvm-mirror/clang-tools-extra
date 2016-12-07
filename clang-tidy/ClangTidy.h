@@ -204,9 +204,6 @@ public:
   ClangTidyOptions::OptionMap getCheckOptions();
 
 private:
-  typedef std::vector<std::pair<std::string, bool>> CheckersList;
-  CheckersList getCheckersControlList(GlobList &Filter);
-
   ClangTidyContext &Context;
   std::unique_ptr<ClangTidyCheckFactories> CheckFactories;
 };
@@ -238,9 +235,10 @@ runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
 // FIXME: Implement confidence levels for displaying/fixing errors.
 //
 /// \brief Displays the found \p Errors to the users. If \p Fix is true, \p
-/// Errors containing fixes are automatically applied.
+/// Errors containing fixes are automatically applied and reformatted. If no
+/// clang-format configuration file is found, the given \P FormatStyle is used.
 void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix,
-                  unsigned &WarningsAsErrorsCount);
+                  StringRef FormatStyle, unsigned &WarningsAsErrorsCount);
 
 /// \brief Serializes replacements into YAML and writes them to the specified
 /// output stream.

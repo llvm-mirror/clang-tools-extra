@@ -39,6 +39,14 @@ bool isSubset(const S &SubsetCandidate, const S &SupersetCandidate) {
   return true;
 }
 
+bool isReferencedOutsideOfCallExpr(const FunctionDecl &Function,
+                                   ASTContext &Context) {
+  auto Matches = match(declRefExpr(to(functionDecl(equalsNode(&Function))),
+                                   unless(hasAncestor(callExpr()))),
+                       Context);
+  return !Matches.empty();
+}
+
 } // namespace
 
 UnnecessaryValueParamCheck::UnnecessaryValueParamCheck(
@@ -53,7 +61,8 @@ void UnnecessaryValueParamCheck::registerMatchers(MatchFinder *Finder) {
                                                  unless(referenceType())))),
                   decl().bind("param"));
   Finder->addMatcher(
-      functionDecl(isDefinition(), unless(cxxMethodDecl(isOverride())),
+      functionDecl(isDefinition(),
+                   unless(cxxMethodDecl(anyOf(isOverride(), isFinal()))),
                    unless(isInstantiated()),
                    has(typeLoc(forEach(ExpensiveValueParamDecl))),
                    decl().bind("functionDecl")),
@@ -118,17 +127,24 @@ void UnnecessaryValueParamCheck::check(const MatchFinder::MatchResult &Result) {
                               "invocation but only used as a const reference; "
                               "consider making it a const reference")
       << paramNameOrIndex(Param->getName(), Index);
-  // Do not propose fixes in macros since we cannot place them correctly, or if
-  // function is virtual as it might break overrides.
+  // Do not propose fixes when:
+  // 1. the ParmVarDecl is in a macro, since we cannot place them correctly
+  // 2. the function is virtual as it might break overrides
+  // 3. the function is referenced outside of a call expression within the
+  //    compilation unit as the signature change could introduce build errors.
   const auto *Method = llvm::dyn_cast<CXXMethodDecl>(Function);
-  if (Param->getLocStart().isMacroID() || (Method && Method->isVirtual()))
+  if (Param->getLocStart().isMacroID() || (Method && Method->isVirtual()) ||
+      isReferencedOutsideOfCallExpr(*Function, *Result.Context))
     return;
   for (const auto *FunctionDecl = Function; FunctionDecl != nullptr;
        FunctionDecl = FunctionDecl->getPreviousDecl()) {
     const auto &CurrentParam = *FunctionDecl->getParamDecl(Index);
     Diag << utils::fixit::changeVarDeclToReference(CurrentParam,
-                                                           *Result.Context);
-    if (!IsConstQualified)
+                                                   *Result.Context);
+    // The parameter of each declaration needs to be checked individually as to
+    // whether it is const or not as constness can differ between definition and
+    // declaration.
+    if (!CurrentParam.getType().getCanonicalType().isConstQualified())
       Diag << utils::fixit::changeVarDeclToConst(CurrentParam);
   }
 }

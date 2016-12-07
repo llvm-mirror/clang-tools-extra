@@ -1,4 +1,4 @@
-//===--- UseDefaultCheck.cpp - clang-tidy----------------------------------===//
+//===--- UseEqualsDefaultCheck.cpp - clang-tidy----------------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "UseDefaultCheck.h"
+#include "UseEqualsDefaultCheck.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Lex/Lexer.h"
@@ -197,7 +197,7 @@ static bool bodyEmpty(const ASTContext *Context, const CompoundStmt *Body) {
   return !Invalid && std::strspn(Text.data(), " \t\r\n") == Text.size();
 }
 
-void UseDefaultCheck::registerMatchers(MatchFinder *Finder) {
+void UseEqualsDefaultCheck::registerMatchers(MatchFinder *Finder) {
   if (getLangOpts().CPlusPlus) {
     // Destructor.
     Finder->addMatcher(cxxDestructorDecl(isDefinition()).bind(SpecialFunction),
@@ -229,7 +229,7 @@ void UseDefaultCheck::registerMatchers(MatchFinder *Finder) {
   }
 }
 
-void UseDefaultCheck::check(const MatchFinder::MatchResult &Result) {
+void UseEqualsDefaultCheck::check(const MatchFinder::MatchResult &Result) {
   std::string SpecialFunctionName;
 
   // Both CXXConstructorDecl and CXXDestructorDecl inherit from CXXMethodDecl.
@@ -241,6 +241,7 @@ void UseDefaultCheck::check(const MatchFinder::MatchResult &Result) {
   if (SpecialFunctionDecl->isDeleted() ||
       SpecialFunctionDecl->isExplicitlyDefaulted() ||
       SpecialFunctionDecl->isLateTemplateParsed() ||
+      SpecialFunctionDecl->isTemplateInstantiation() ||
       !SpecialFunctionDecl->isUserProvided() || !SpecialFunctionDecl->hasBody())
     return;
 
@@ -248,10 +249,13 @@ void UseDefaultCheck::check(const MatchFinder::MatchResult &Result) {
   if (!Body)
     return;
 
-  // If there are comments inside the body, don't do the change.
-  if (!SpecialFunctionDecl->isCopyAssignmentOperator() &&
-      !bodyEmpty(Result.Context, Body))
+  // If there is code inside the body, don't warn.
+  if (!SpecialFunctionDecl->isCopyAssignmentOperator() && !Body->body_empty())
     return;
+
+  // If there are comments inside the body, don't do the change.
+  bool ApplyFix = SpecialFunctionDecl->isCopyAssignmentOperator() ||
+                  bodyEmpty(Result.Context, Body);
 
   std::vector<FixItHint> RemoveInitializers;
 
@@ -276,10 +280,18 @@ void UseDefaultCheck::check(const MatchFinder::MatchResult &Result) {
     SpecialFunctionName = "copy-assignment operator";
   }
 
-  diag(SpecialFunctionDecl->getLocStart(),
-       "use '= default' to define a trivial " + SpecialFunctionName)
-      << FixItHint::CreateReplacement(Body->getSourceRange(), "= default;")
-      << RemoveInitializers;
+  // The location of the body is more useful inside a macro as spelling and
+  // expansion locations are reported.
+  SourceLocation Location = SpecialFunctionDecl->getLocation();
+  if (Location.isMacroID())
+    Location = Body->getLocStart();
+
+  auto Diag = diag(Location, "use '= default' to define a trivial " +
+                                 SpecialFunctionName);
+
+  if (ApplyFix)
+    Diag << FixItHint::CreateReplacement(Body->getSourceRange(), "= default;")
+         << RemoveInitializers;
 }
 
 } // namespace modernize

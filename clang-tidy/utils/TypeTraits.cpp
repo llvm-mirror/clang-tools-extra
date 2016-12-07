@@ -41,7 +41,7 @@ bool hasDeletedCopyConstructor(QualType Type) {
 
 llvm::Optional<bool> isExpensiveToCopy(QualType Type,
                                        const ASTContext &Context) {
-  if (Type->isDependentType())
+  if (Type->isDependentType() || Type->isIncompleteType())
     return llvm::None;
   return !Type.isTriviallyCopyableType(Context) &&
          !classHasTrivialCopyAndDestroy(Type) &&
@@ -65,7 +65,8 @@ bool recordIsTriviallyDefaultConstructible(const RecordDecl &RecordDecl,
   if (ClassDecl->hasTrivialDefaultConstructor())
     return true;
 
-  // If all its fields are trivially constructible and have no default initializers.
+  // If all its fields are trivially constructible and have no default
+  // initializers.
   for (const FieldDecl *Field : ClassDecl->fields()) {
     if (Field->hasInClassInitializer())
       return false;
@@ -84,8 +85,7 @@ bool recordIsTriviallyDefaultConstructible(const RecordDecl &RecordDecl,
 }
 
 // Based on QualType::isTrivial.
-bool isTriviallyDefaultConstructible(QualType Type,
-                                     const ASTContext &Context) {
+bool isTriviallyDefaultConstructible(QualType Type, const ASTContext &Context) {
   if (Type.isNull())
     return false;
 
