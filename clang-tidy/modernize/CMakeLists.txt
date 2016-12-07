@@ -16,10 +16,12 @@ add_clang_library(clangTidyModernizeModule
   ShrinkToFitCheck.cpp
   UseAutoCheck.cpp
   UseBoolLiteralsCheck.cpp
-  UseDefaultCheck.cpp
   UseEmplaceCheck.cpp
+  UseEqualsDefaultCheck.cpp
+  UseEqualsDeleteCheck.cpp
   UseNullptrCheck.cpp
   UseOverrideCheck.cpp
+  UseTransparentFunctorsCheck.cpp
   UseUsingCheck.cpp
 
   LINK_LIBS

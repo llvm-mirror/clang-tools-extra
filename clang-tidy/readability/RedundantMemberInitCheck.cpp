@@ -8,10 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "RedundantMemberInitCheck.h"
+#include "../utils/Matchers.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Lex/Lexer.h"
-#include "../utils/Matchers.h"
 #include <algorithm>
 
 using namespace clang::ast_matchers;
@@ -54,7 +54,7 @@ void RedundantMemberInitCheck::check(const MatchFinder::MatchResult &Result) {
     } else {
       diag(Init->getSourceLocation(),
            "initializer for base class %0 is redundant")
-          << Init->getTypeSourceInfo()->getType()
+          << Construct->getType()
           << FixItHint::CreateRemoval(Init->getSourceRange());
     }
   }

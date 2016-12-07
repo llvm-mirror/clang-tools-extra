@@ -9,13 +9,13 @@
 
 #include "IdentifierNamingCheck.h"
 
-#include "llvm/ADT/DenseMapInfo.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/Format.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
+#include "llvm/ADT/DenseMapInfo.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/Format.h"
 
 #define DEBUG_TYPE "clang-tidy"
 
@@ -395,6 +395,9 @@ static StyleKind findStyleKind(
     if (Decl->isAnonymousStructOrUnion())
       return SK_Invalid;
 
+    if (!Decl->getCanonicalDecl()->isThisDeclarationADefinition())
+      return SK_Invalid;
+
     if (Decl->hasDefinition() && Decl->isAbstract() &&
         NamingStyles[SK_AbstractClass].isSet())
       return SK_AbstractClass;
@@ -659,7 +662,8 @@ static void addUsage(IdentifierNamingCheck::NamingCheckFailureMap &Failures,
 
 /// Convenience method when the usage to be added is a NamedDecl
 static void addUsage(IdentifierNamingCheck::NamingCheckFailureMap &Failures,
-                     const NamedDecl *Decl, SourceRange Range, SourceManager *SourceMgr = nullptr) {
+                     const NamedDecl *Decl, SourceRange Range,
+                     SourceManager *SourceMgr = nullptr) {
   return addUsage(Failures, IdentifierNamingCheck::NamingCheckId(
                                 Decl->getLocation(), Decl->getNameAsString()),
                   Range, SourceMgr);
@@ -673,6 +677,15 @@ void IdentifierNamingCheck::check(const MatchFinder::MatchResult &Result) {
 
     addUsage(NamingCheckFailures, Decl->getParent(),
              Decl->getNameInfo().getSourceRange());
+
+    for (const auto *Init : Decl->inits()) {
+      if (!Init->isWritten() || Init->isInClassMemberInitializer())
+        continue;
+      if (const auto *FD = Init->getAnyMember())
+        addUsage(NamingCheckFailures, FD, SourceRange(Init->getMemberLocation()));
+      // Note: delegating constructors and base class initializers are handled
+      // via the "typeLoc" matcher.
+    }
     return;
   }
 
@@ -749,7 +762,8 @@ void IdentifierNamingCheck::check(const MatchFinder::MatchResult &Result) {
 
   if (const auto *DeclRef = Result.Nodes.getNodeAs<DeclRefExpr>("declRef")) {
     SourceRange Range = DeclRef->getNameInfo().getSourceRange();
-    addUsage(NamingCheckFailures, DeclRef->getDecl(), Range, Result.SourceManager);
+    addUsage(NamingCheckFailures, DeclRef->getDecl(), Range,
+             Result.SourceManager);
     return;
   }
 

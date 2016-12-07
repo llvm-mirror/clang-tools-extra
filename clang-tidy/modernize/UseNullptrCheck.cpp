@@ -38,8 +38,7 @@ AST_MATCHER(Type, sugaredNullptrType) {
 /// can be replaced instead of just the inner-most implicit cast.
 StatementMatcher makeCastSequenceMatcher() {
   StatementMatcher ImplicitCastToNull = implicitCastExpr(
-      anyOf(hasCastKind(CK_NullToPointer),
-            hasCastKind(CK_NullToMemberPointer)),
+      anyOf(hasCastKind(CK_NullToPointer), hasCastKind(CK_NullToMemberPointer)),
       unless(hasSourceExpression(hasType(sugaredNullptrType()))));
 
   return castExpr(anyOf(ImplicitCastToNull,
@@ -190,12 +189,20 @@ public:
   // within a cast expression.
   bool VisitStmt(Stmt *S) {
     CastExpr *C = dyn_cast<CastExpr>(S);
+    // Catch the castExpr inside cxxDefaultArgExpr.
+    if (auto *E = dyn_cast<CXXDefaultArgExpr>(S))
+      C = dyn_cast<CastExpr>(E->getExpr());
     if (!C) {
       FirstSubExpr = nullptr;
       return true;
     }
+
     if (!FirstSubExpr)
       FirstSubExpr = C->getSubExpr()->IgnoreParens();
+
+    // Ignore the expr if it is already a nullptr literal expr.
+    if (isa<CXXNullPtrLiteralExpr>(FirstSubExpr))
+      return true;
 
     if (C->getCastKind() != CK_NullToPointer &&
         C->getCastKind() != CK_NullToMemberPointer) {

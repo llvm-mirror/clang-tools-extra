@@ -13,6 +13,7 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Format/Format.h"
 #include "clang/Tooling/Core/Replacement.h"
+#include "llvm/Support/Regex.h"
 #include <string>
 
 namespace clang {
@@ -67,14 +68,18 @@ private:
 
   void replaceQualifiedSymbolInDeclContext(
       const ast_matchers::MatchFinder::MatchResult &Result,
-      const Decl *DeclContext, SourceLocation Start, SourceLocation End,
-      llvm::StringRef DeclName);
+      const DeclContext *DeclContext, SourceLocation Start, SourceLocation End,
+      const NamedDecl *FromDecl);
 
   void fixTypeLoc(const ast_matchers::MatchFinder::MatchResult &Result,
                   SourceLocation Start, SourceLocation End, TypeLoc Type);
 
   void fixUsingShadowDecl(const ast_matchers::MatchFinder::MatchResult &Result,
                           const UsingDecl *UsingDeclaration);
+
+  void fixDeclRefExpr(const ast_matchers::MatchFinder::MatchResult &Result,
+                      const DeclContext *UseContext, const NamedDecl *From,
+                      const DeclRefExpr *Ref);
 
   // Information about moving an old namespace.
   struct MoveNamespace {
@@ -127,6 +132,7 @@ private:
   std::string DiffNewNamespace;
   // A regex pattern that matches files to be processed.
   std::string FilePattern;
+  llvm::Regex FilePatternRE;
   // Information about moved namespaces grouped by file.
   // Since we are modifying code in old namespaces (e.g. add namespace
   // spedifiers) as well as moving them, we store information about namespaces
@@ -139,6 +145,15 @@ private:
   // will be done after removing the code from the old namespace and before
   // inserting it to the new namespace.
   std::map<std::string, std::vector<InsertForwardDeclaration>> InsertFwdDecls;
+  // Records all using declarations, which can be used to shorten namespace
+  // specifiers.
+  llvm::SmallPtrSet<const UsingDecl *, 8> UsingDecls;
+  // Records all using namespace declarations, which can be used to shorten
+  // namespace specifiers.
+  llvm::SmallPtrSet<const UsingDirectiveDecl *, 8> UsingNamespaceDecls;
+  // TypeLocs of CXXCtorInitializer. Types of CXXCtorInitializers do not need to
+  // be fixed.
+  llvm::SmallVector<TypeLoc, 8> BaseCtorInitializerTypeLocs;
 };
 
 } // namespace change_namespace

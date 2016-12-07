@@ -237,3 +237,37 @@ void PositiveConstRefNotMoveAssignable(ExpensiveToCopyType A) {
   ExpensiveToCopyType B;
   B = A;
 }
+
+// Case where parameter in declaration is already const-qualified but not in
+// implementation. Make sure a second 'const' is not added to the declaration.
+void PositiveConstDeclaration(const ExpensiveToCopyType A);
+// CHECK-FIXES: void PositiveConstDeclaration(const ExpensiveToCopyType& A);
+void PositiveConstDeclaration(ExpensiveToCopyType A) {
+  // CHECK-MESSAGES: [[@LINE-1]]:51: warning: the parameter 'A' is copied
+  // CHECK-FIXES: void PositiveConstDeclaration(const ExpensiveToCopyType& A) {
+}
+
+void PositiveNonConstDeclaration(ExpensiveToCopyType A);
+// CHECK-FIXES: void PositiveNonConstDeclaration(const ExpensiveToCopyType& A);
+void PositiveNonConstDeclaration(const ExpensiveToCopyType A) {
+  // CHECK-MESSAGES: [[@LINE-1]]:60: warning: the const qualified parameter 'A'
+  // CHECK-FIXES: void PositiveNonConstDeclaration(const ExpensiveToCopyType& A) {
+}
+
+void PositiveOnlyMessageAsReferencedInCompilationUnit(ExpensiveToCopyType A) {
+  // CHECK-MESSAGES: [[@LINE-1]]:75: warning: the parameter 'A' is copied
+  // CHECK-FIXES: void PositiveOnlyMessageAsReferencedInCompilationUnit(ExpensiveToCopyType A) {
+}
+
+void ReferenceFunctionOutsideOfCallExpr() {
+  void (*ptr)(ExpensiveToCopyType) = &PositiveOnlyMessageAsReferencedInCompilationUnit;
+}
+
+void PositiveMessageAndFixAsFunctionIsCalled(ExpensiveToCopyType A) {
+  // CHECK-MESSAGES: [[@LINE-1]]:66: warning: the parameter 'A' is copied
+  // CHECK-FIXES: void PositiveMessageAndFixAsFunctionIsCalled(const ExpensiveToCopyType& A) {
+}
+
+void ReferenceFunctionByCallingIt() {
+  PositiveMessageAndFixAsFunctionIsCalled(ExpensiveToCopyType());
+}

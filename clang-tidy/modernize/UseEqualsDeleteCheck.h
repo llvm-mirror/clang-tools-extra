@@ -1,4 +1,4 @@
-//===--- UseDefaultCheck.h - clang-tidy--------------------------*- C++ -*-===//
+//===--- UseEqualsDeleteCheck.h - clang-tidy---------------------------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MODERNIZE_USE_DEFAULT_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MODERNIZE_USE_DEFAULT_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MODERNIZE_USE_EQUALS_DELETE_H
+#define LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MODERNIZE_USE_EQUALS_DELETE_H
 
 #include "../ClangTidy.h"
 
@@ -16,28 +16,28 @@ namespace clang {
 namespace tidy {
 namespace modernize {
 
-/// \brief Replace default bodies of special member functions with '= default;'.
+/// \brief Mark unimplemented private special member functions with '= delete'.
 /// \code
 ///   struct A {
-///     A() {}
-///     ~A();
+///   private:
+///     A(const A&);
+///     A& operator=(const A&);
 ///   };
-///   A::~A() {}
 /// \endcode
 /// Is converted to:
 /// \code
 ///   struct A {
-///     A() = default;
-///     ~A();
+///   private:
+///     A(const A&) = delete;
+///     A& operator=(const A&) = delete;
 ///   };
-///   A::~A() = default;
 /// \endcode
 ///
 /// For the user-facing documentation see:
-/// http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-default.html
-class UseDefaultCheck : public ClangTidyCheck {
+/// http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-delete.html
+class UseEqualsDeleteCheck : public ClangTidyCheck {
 public:
-  UseDefaultCheck(StringRef Name, ClangTidyContext *Context)
+  UseEqualsDeleteCheck(StringRef Name, ClangTidyContext *Context)
       : ClangTidyCheck(Name, Context) {}
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
@@ -47,5 +47,4 @@ public:
 } // namespace tidy
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MODERNIZE_USE_DEFAULT_H
-
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANG_TIDY_MODERNIZE_USE_EQUALS_DELETE_H
