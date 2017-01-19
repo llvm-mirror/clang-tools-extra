@@ -19,6 +19,7 @@
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Signals.h"
+#include "version.h"
 
 using namespace clang::ast_matchers;
 using namespace clang::driver;
@@ -302,7 +303,7 @@ static std::unique_ptr<ClangTidyOptionsProvider> createOptionsProvider() {
 }
 
 static void tidyVersionPrinter() {
-  outs() << "Siemens PL version 0.1.1\n";
+  outs() << "Siemens PL version " << gGIT_VERSION << "\n";
 }
 
 static int clangTidyMain(int argc, const char **argv) {
@@ -466,9 +467,9 @@ extern volatile int PerformanceModuleAnchorSource;
 static int LLVM_ATTRIBUTE_UNUSED PerformanceModuleAnchorDestination =
     PerformanceModuleAnchorSource;
 
-extern volatile int QazModuleAnchorSource;
-static int LLVM_ATTRIBUTE_UNUSED QazModuleAnchorDestination =
-    QazModuleAnchorSource;
+// extern volatile int QazModuleAnchorSource;
+// static int LLVM_ATTRIBUTE_UNUSED QazModuleAnchorDestination =
+//     QazModuleAnchorSource;
 
 // This anchor is used to force the linker to link the ReadabilityModule.
 extern volatile int ReadabilityModuleAnchorSource;
