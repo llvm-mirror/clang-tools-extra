@@ -5,3 +5,4 @@ Key.snk
 clang-tidy.exe
 packages/
 *.csproj.user
+*.suo

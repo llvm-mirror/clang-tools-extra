@@ -1,0 +1,15 @@
+---
+Filters:
+  # Format output allowing VS internal auto navigation to source code line and column
+  - Pattern:     ":(\\d+):(\\d+)"
+    Replacement: "($1,$2)"
+  # Remove preprocessor-generated file missing error
+  - Pattern:     ".*(TPreprocessorGenerated).*(file not found).*\n.*\n.*\n"
+    Replacement: ""
+  # filter out system header file missing errors
+  - Pattern:     ".*file not found.*\n#include( *)<.*>.*\n.*"
+    Replacement: ""
+  # filter out unwanted warning messages
+  - Pattern:     "^warning:.*$\n"
+    Replacement: ""
+    Multiline:   true

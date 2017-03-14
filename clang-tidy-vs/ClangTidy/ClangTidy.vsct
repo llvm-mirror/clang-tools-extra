@@ -21,8 +21,6 @@
   <Extern href="vsshlids.h"/>
 
 
-
-
   <!--The Commands section is where we the commands, menus and menu groups are defined.
       This section uses a Guid to identify the package that provides the command defined inside it. -->
   <Commands package="guidClangTidyPkg">
@@ -34,6 +32,16 @@
     group; your package should define its own command set in order to avoid collisions  
     with command ids defined by other packages. -->
 
+    <Menus>
+      <Menu guid="guidClangTidyCmdSet" id="Toolbar"
+          type="Toolbar" >
+        <CommandFlag>DefaultDocked</CommandFlag>
+        <Strings>
+          <ButtonText>ClangTidy</ButtonText>
+          <CommandName>Clang Tidy</CommandName>
+        </Strings>
+      </Menu>
+    </Menus>
     
     <!-- In this section you can define new menu groups. A menu group is a container for 
          other menus or buttons (commands); from a visual point of view you can see the 
@@ -44,8 +52,11 @@
       <Group guid="guidClangTidyCmdSet" id="MyMenuGroup" priority="0x0600">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS"/>
       </Group>
-      
 
+      <Group guid="guidClangTidyCmdSet" id="ToolbarGroup"
+            priority="0x0000">
+        <Parent guid="guidClangTidyCmdSet" id="Toolbar"/>
+      </Group>
 
     </Groups>
     
@@ -63,13 +74,19 @@
 
       <Button guid="guidClangTidyCmdSet" id="cmdidClangTidy" priority="0x0100" type="Button">
         <Parent guid="guidClangTidyCmdSet" id="MyMenuGroup" />
-        <Icon guid="guidImages" id="bmpPic1" />
+        <Icon guid="guidTidyImage" id="bmpTidy" />
         <Strings>
-          <ButtonText>ClangTidy</ButtonText>
+          <ButtonText>Clang Tidy</ButtonText>
         </Strings>
       </Button>
 
-
+      <Button guid="guidClangTidyCmdSet" id="cmdidClangTidy" priority="0x0100" type="Button">
+        <Parent guid="guidClangTidyCmdSet" id="ToolbarGroup" />
+        <Icon guid="guidTidyImage" id="bmpTidy" />
+        <Strings>
+          <ButtonText>Clang Tidy</ButtonText>
+        </Strings>
+      </Button>
 
     </Buttons>
    
@@ -79,8 +96,8 @@
             the declaration starts with a guid for the bitmap strip, then there is the resource id of the 
             bitmap strip containing the bitmaps and then there are the numeric ids of the elements used 
             inside a button definition. An important aspect of this declaration is that the element id 
-            must be the actual index (1-based) of the bitmap inside the bitmap strip. -->
-      <Bitmap guid="guidImages" href="Resources\Images_32bit.bmp" usedList="bmpPic1, bmpPic2, bmpPicSearch, bmpPicX, bmpPicArrows"/>
+            must be the actual index (1-based) of the bitmap inside the bitmap strip. -->    
+      <Bitmap guid="guidTidyImage" href="Resources\ButtonTidy.png" usedList="bmpTidy"/>
       
     </Bitmaps>
  
@@ -101,17 +118,14 @@
     <GuidSymbol name="guidClangTidyCmdSet" value="{9E0F0493-6493-46DE-AEE1-ACD8F60F265E}">
       <IDSymbol name="MyMenuGroup" value="0x1020" />
       <IDSymbol name="cmdidClangTidy" value="0x0100" />
+      <IDSymbol name="Toolbar" value="0x1000" />
+      <IDSymbol name="ToolbarGroup" value="0x1050" />
     </GuidSymbol>
 
     <GuidSymbol name="guidTextEditor" value="{E10FAD35-7FB8-4991-A269-EF88F12166C9}" />
-
-
-    <GuidSymbol name="guidImages" value="{942F126F-942D-428A-84B4-4AC7C523D0B2}" >
-      <IDSymbol name="bmpPic1" value="1" />
-      <IDSymbol name="bmpPic2" value="2" />
-      <IDSymbol name="bmpPicSearch" value="3" />
-      <IDSymbol name="bmpPicX" value="4" />
-      <IDSymbol name="bmpPicArrows" value="5" />
+   
+    <GuidSymbol name="guidTidyImage" value="{1DDC3C3F-C9FC-4A57-A920-319695E6750C}" >
+      <IDSymbol name="bmpTidy" value="1" />
     </GuidSymbol>
   </Symbols>
 
