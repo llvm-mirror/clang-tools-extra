@@ -165,6 +165,7 @@ IdentifierNamingCheck::IdentifierNamingCheck(StringRef Name,
         .Case("CamelCase", CT_CamelCase)
         .Case("Camel_Snake_Case", CT_CamelSnakeCase)
         .Case("camel_Snake_Back", CT_CamelSnakeBack)
+        .Case("IgnoreCase", CT_IgnoreCase)
         .Default(CT_AnyCase);
   };
 
@@ -195,6 +196,8 @@ void IdentifierNamingCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
       return "Camel_Snake_Case";
     case CT_CamelSnakeBack:
       return "camel_Snake_Back";
+    case CT_IgnoreCase:
+      return "IgnoreCase";
     }
 
     llvm_unreachable("Unknown Case Type");
@@ -238,6 +241,7 @@ static bool matchesStyle(StringRef Name,
       llvm::Regex("^[A-Z][a-zA-Z0-9]*$"),
       llvm::Regex("^[A-Z]([a-z0-9]*(_[A-Z])?)*"),
       llvm::Regex("^[a-z]([a-z0-9]*(_[A-Z])?)*"),
+      llvm::Regex("^.*$"),
   };
 
   bool Matches = true;
@@ -291,6 +295,7 @@ static std::string fixupWithCase(StringRef Name,
   std::string Fixup;
   switch (Case) {
   case IdentifierNamingCheck::CT_AnyCase:
+  case IdentifierNamingCheck::CT_IgnoreCase:
     Fixup += Name;
     break;
 
