@@ -61,20 +61,60 @@ namespace LLVM.ClangTidy {
         }
         
         /// <summary>
+        ///   Looks up a localized resource of type System.Drawing.Bitmap.
+        /// </summary>
+        internal static System.Drawing.Bitmap ButtonTidy {
+            get {
+                object obj = ResourceManager.GetObject("ButtonTidy", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to ---
         ///Checks:
-        ///Checks:
-        ///  - Name:        cert-dcl54-cpp
+        ///   # This file should be updated when new checks are added, and eventually we should
+        ///   # generate this file automatically from the .rst files in clang-tidy.
+        ///  - Category:    CERT Secure Coding Standards
         ///    Label:       Overloaded allocation function pairs
         ///    Description: Checks for violations of CERT DCL54-CPP - Overload allocation and deallocation functions as a pair in the same scope
-        ///    Category:    CERT Secure Coding Standards
-        ///  - Name:        cppcoreguidelines-interfaces-global-init
-        ///    Label:       I.22 - Complex Global Initializers
-        ///    Description: Checks for violations of Core Guideline I.22 - Avoid complex initializers of global object [rest of string was truncated]&quot;;.
+        ///    Name:        cert-dcl54-cpp
+        ///  - Category:    C++ Core Guidelines
+        ///    Label:       I.22 - Comple [rest of string was truncated]&quot;;.
         /// </summary>
         internal static string ClangTidyChecks {
             get {
                 return ResourceManager.GetString("ClangTidyChecks", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Drawing.Icon similar to (Icon).
+        /// </summary>
+        internal static System.Drawing.Icon Package {
+            get {
+                object obj = ResourceManager.GetObject("Package", resourceCulture);
+                return ((System.Drawing.Icon)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to ---
+        ///Filters:
+        ///  #Format output allowing auto navigation to source code line and column
+        ///  - Pattern:     &quot;:(\d+):(\d+)&quot;
+        ///    Replacement: &quot;($1,$2)&quot;
+        ///  - Pattern:     &quot;.*(TPreprocessorGenerated).*(file not found).*\n.*\n.*\n&quot;
+        ///    Replacement:
+        ///  - Pattern:     &quot;.*file not found.*\n#include( *)&lt;.*&gt;.*\n.*&quot;
+        ///    Replacement:
+        ///  - Pattern:     &quot;\nwarning: .*\n&quot;
+        ///    Replacement: &quot;\n&quot;
+        ///.
+        /// </summary>
+        internal static string VSOutputFilter {
+            get {
+                return ResourceManager.GetString("VSOutputFilter", resourceCulture);
             }
         }
     }
