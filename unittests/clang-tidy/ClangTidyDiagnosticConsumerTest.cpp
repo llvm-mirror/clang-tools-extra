@@ -14,7 +14,7 @@ public:
     Finder->addMatcher(ast_matchers::varDecl().bind("var"), this);
   }
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override {
-    const VarDecl *Var = Result.Nodes.getNodeAs<VarDecl>("var");
+    const auto *Var = Result.Nodes.getNodeAs<VarDecl>("var");
     // Add diagnostics in the wrong order.
     diag(Var->getLocation(), "variable");
     diag(Var->getTypeSpecStartLoc(), "type specifier");
@@ -67,7 +67,7 @@ TEST(GlobList, Simple) {
 }
 
 TEST(GlobList, Complex) {
-  GlobList Filter("*,-a.*,-b.*,a.1.*,-a.1.A.*,-..,-...,-..+,-*$,-*qwe*");
+  GlobList Filter("*,-a.*, -b.*,   a.1.* ,-a.1.A.*,-..,-...,-..+,-*$, -*qwe* ");
 
   EXPECT_TRUE(Filter.contains("aaa"));
   EXPECT_TRUE(Filter.contains("qqq"));

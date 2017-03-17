@@ -50,6 +50,7 @@ public:
   // files matching `FilePattern`.
   ChangeNamespaceTool(
       llvm::StringRef OldNs, llvm::StringRef NewNs, llvm::StringRef FilePattern,
+      llvm::ArrayRef<std::string> WhiteListedSymbolPatterns,
       std::map<std::string, tooling::Replacements> *FileToReplacements,
       llvm::StringRef FallbackStyle = "LLVM");
 
@@ -154,9 +155,19 @@ private:
   // Records all using namespace declarations, which can be used to shorten
   // namespace specifiers.
   llvm::SmallPtrSet<const UsingDirectiveDecl *, 8> UsingNamespaceDecls;
+  // Records all namespace alias declarations, which can be used to shorten
+  // namespace specifiers.
+  llvm::SmallPtrSet<const NamespaceAliasDecl *, 8> NamespaceAliasDecls;
   // TypeLocs of CXXCtorInitializer. Types of CXXCtorInitializers do not need to
   // be fixed.
   llvm::SmallVector<TypeLoc, 8> BaseCtorInitializerTypeLocs;
+  // Since a DeclRefExpr for a function call can be matched twice (one as
+  // CallExpr and one as DeclRefExpr), we record all DeclRefExpr's that have
+  // been processed so that we don't handle them twice.
+  llvm::SmallPtrSet<const clang::DeclRefExpr*, 16> ProcessedFuncRefs;
+  // Patterns of symbol names whose references are not expected to be updated
+  // when changing namespaces around them.
+  std::vector<llvm::Regex> WhiteListedSymbolRegexes;
 };
 
 } // namespace change_namespace

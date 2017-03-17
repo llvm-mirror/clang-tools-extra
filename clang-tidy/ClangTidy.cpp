@@ -35,6 +35,7 @@
 #include "clang/Rewrite/Frontend/FrontendActions.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/PathDiagnostic.h"
 #include "clang/StaticAnalyzer/Frontend/AnalysisConsumer.h"
+#include "clang/Tooling/DiagnosticsYaml.h"
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Tooling/ReplacementsYaml.h"
 #include "clang/Tooling/Tooling.h"
@@ -102,14 +103,14 @@ public:
   SourceManager &getSourceManager() { return SourceMgr; }
 
   void reportDiagnostic(const ClangTidyError &Error) {
-    const ClangTidyMessage &Message = Error.Message;
+    const tooling::DiagnosticMessage &Message = Error.Message;
     SourceLocation Loc = getLocation(Message.FilePath, Message.FileOffset);
     // Contains a pair for each attempted fix: location and whether the fix was
     // applied successfully.
     SmallVector<std::pair<SourceLocation, bool>, 4> FixLocations;
     {
       auto Level = static_cast<DiagnosticsEngine::Level>(Error.DiagLevel);
-      std::string Name = Error.CheckName;
+      std::string Name = Error.DiagnosticName;
       if (Error.IsWarningAsError) {
         Name += ",-warnings-as-errors";
         Level = DiagnosticsEngine::Error;
@@ -177,12 +178,11 @@ public:
       Diags.Report(Fix.first, Fix.second ? diag::note_fixit_applied
                                          : diag::note_fixit_failed);
     }
-    for (const ClangTidyMessage &Note : Error.Notes)
+    for (const auto &Note : Error.Notes)
       reportNote(Note);
   }
 
   void Finish() {
-    // FIXME: Run clang-format on changes.
     if (ApplyFixes && TotalFixes > 0) {
       Rewriter Rewrite(SourceMgr, LangOpts);
       for (const auto &FileAndReplacements : FileReplacements) {
@@ -196,15 +196,28 @@ public:
           continue;
         }
         StringRef Code = Buffer.get()->getBuffer();
-        format::FormatStyle Style = format::getStyle("file", File, FormatStyle);
-        llvm::Expected<Replacements> CleanReplacements =
-            format::cleanupAroundReplacements(Code, FileAndReplacements.second,
-                                              Style);
-        if (!CleanReplacements) {
-          llvm::errs() << llvm::toString(CleanReplacements.takeError()) << "\n";
+        auto Style = format::getStyle(FormatStyle, File, "none");
+        if (!Style) {
+          llvm::errs() << llvm::toString(Style.takeError()) << "\n";
           continue;
         }
-        if (!tooling::applyAllReplacements(CleanReplacements.get(), Rewrite)) {
+        llvm::Expected<tooling::Replacements> Replacements =
+            format::cleanupAroundReplacements(Code, FileAndReplacements.second,
+                                              *Style);
+        if (!Replacements) {
+          llvm::errs() << llvm::toString(Replacements.takeError()) << "\n";
+          continue;
+        }
+        if (llvm::Expected<tooling::Replacements> FormattedReplacements =
+                format::formatReplacements(Code, *Replacements, *Style)) {
+          Replacements = std::move(FormattedReplacements);
+          if (!Replacements)
+            llvm_unreachable("!Replacements");
+        } else {
+          llvm::errs() << llvm::toString(FormattedReplacements.takeError())
+                       << ". Skipping formatting.\n";
+        }
+        if (!tooling::applyAllReplacements(Replacements.get(), Rewrite)) {
           llvm::errs() << "Can't apply replacements for file " << File << "\n";
         }
       }
@@ -229,10 +242,9 @@ private:
     return SourceMgr.getLocForStartOfFile(ID).getLocWithOffset(Offset);
   }
 
-  void reportNote(const ClangTidyMessage &Message) {
+  void reportNote(const tooling::DiagnosticMessage &Message) {
     SourceLocation Loc = getLocation(Message.FilePath, Message.FileOffset);
-    DiagnosticBuilder Diag =
-        Diags.Report(Loc, Diags.getCustomDiagID(DiagnosticsEngine::Note, "%0"))
+    Diags.Report(Loc, Diags.getCustomDiagID(DiagnosticsEngine::Note, "%0"))
         << Message.Message;
   }
 
@@ -487,7 +499,7 @@ runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
 
   // Remove plugins arguments.
   ArgumentsAdjuster PluginArgumentsRemover =
-      [&Context](const CommandLineArguments &Args, StringRef Filename) {
+      [](const CommandLineArguments &Args, StringRef Filename) {
         CommandLineArguments AdjustedArgs;
         for (size_t I = 0, E = Args.size(); I < E; ++I) {
           if (I + 4 < Args.size() && Args[I] == "-Xclang" &&
@@ -562,18 +574,18 @@ void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix,
   WarningsAsErrorsCount += Reporter.getWarningsAsErrorsCount();
 }
 
-void exportReplacements(const std::vector<ClangTidyError> &Errors,
+void exportReplacements(const llvm::StringRef MainFilePath,
+                        const std::vector<ClangTidyError> &Errors,
                         raw_ostream &OS) {
-  TranslationUnitReplacements TUR;
-  for (const ClangTidyError &Error : Errors) {
-    for (const auto &FileAndFixes : Error.Fix)
-      TUR.Replacements.insert(TUR.Replacements.end(),
-                              FileAndFixes.second.begin(),
-                              FileAndFixes.second.end());
+  TranslationUnitDiagnostics TUD;
+  TUD.MainSourceFile = MainFilePath;
+  for (const auto &Error : Errors) {
+    tooling::Diagnostic Diag = Error;
+    TUD.Diagnostics.insert(TUD.Diagnostics.end(), Diag);
   }
 
   yaml::Output YAML(OS);
-  YAML << TUR;
+  YAML << TUD;
 }
 
 } // namespace tidy

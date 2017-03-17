@@ -47,6 +47,17 @@ bool isReferencedOutsideOfCallExpr(const FunctionDecl &Function,
   return !Matches.empty();
 }
 
+bool hasLoopStmtAncestor(const DeclRefExpr &DeclRef, const Decl &Decl,
+                         ASTContext &Context) {
+  auto Matches =
+      match(decl(forEachDescendant(declRefExpr(
+                equalsNode(&DeclRef),
+                unless(hasAncestor(stmt(anyOf(forStmt(), cxxForRangeStmt(),
+                                              whileStmt(), doStmt()))))))),
+            Decl, Context);
+  return Matches.empty();
+}
+
 } // namespace
 
 UnnecessaryValueParamCheck::UnnecessaryValueParamCheck(
@@ -61,9 +72,9 @@ void UnnecessaryValueParamCheck::registerMatchers(MatchFinder *Finder) {
                                                  unless(referenceType())))),
                   decl().bind("param"));
   Finder->addMatcher(
-      functionDecl(isDefinition(),
+      functionDecl(hasBody(stmt()), isDefinition(),
                    unless(cxxMethodDecl(anyOf(isOverride(), isFinal()))),
-                   unless(isInstantiated()),
+                   unless(anyOf(isInstantiated(), isImplicit())),
                    has(typeLoc(forEach(ExpensiveValueParamDecl))),
                    decl().bind("functionDecl")),
       this);
@@ -78,22 +89,13 @@ void UnnecessaryValueParamCheck::check(const MatchFinder::MatchResult &Result) {
   bool IsConstQualified =
       Param->getType().getCanonicalType().isConstQualified();
 
-  // Skip declarations delayed by late template parsing without a body.
-  if (!Function->getBody())
-    return;
-
-  // Do not trigger on non-const value parameters when:
-  // 1. they are in a constructor definition since they can likely trigger
-  //    misc-move-constructor-init which will suggest to move the argument.
-  if (!IsConstQualified && (llvm::isa<CXXConstructorDecl>(Function) ||
-                            !Function->doesThisDeclarationHaveABody()))
-    return;
-
   auto AllDeclRefExprs = utils::decl_ref_expr::allDeclRefExprs(
-      *Param, *Function->getBody(), *Result.Context);
+      *Param, *Function, *Result.Context);
   auto ConstDeclRefExprs = utils::decl_ref_expr::constReferenceDeclRefExprs(
-      *Param, *Function->getBody(), *Result.Context);
-  // 2. they are not only used as const.
+      *Param, *Function, *Result.Context);
+
+  // Do not trigger on non-const value parameters when they are not only used as
+  // const.
   if (!isSubset(AllDeclRefExprs, ConstDeclRefExprs))
     return;
 
@@ -102,18 +104,18 @@ void UnnecessaryValueParamCheck::check(const MatchFinder::MatchResult &Result) {
   // move assignment operator and is only referenced once when copy-assigned.
   // In this case wrap DeclRefExpr with std::move() to avoid the unnecessary
   // copy.
-  if (!IsConstQualified) {
+  if (!IsConstQualified && AllDeclRefExprs.size() == 1) {
     auto CanonicalType = Param->getType().getCanonicalType();
-    if (AllDeclRefExprs.size() == 1 &&
+    const auto &DeclRefExpr  = **AllDeclRefExprs.begin();
+
+    if (!hasLoopStmtAncestor(DeclRefExpr, *Function, *Result.Context) &&
         ((utils::type_traits::hasNonTrivialMoveConstructor(CanonicalType) &&
           utils::decl_ref_expr::isCopyConstructorArgument(
-              **AllDeclRefExprs.begin(), *Function->getBody(),
-              *Result.Context)) ||
+              DeclRefExpr, *Function, *Result.Context)) ||
          (utils::type_traits::hasNonTrivialMoveAssignment(CanonicalType) &&
           utils::decl_ref_expr::isCopyAssignmentArgument(
-              **AllDeclRefExprs.begin(), *Function->getBody(),
-              *Result.Context)))) {
-      handleMoveFix(*Param, **AllDeclRefExprs.begin(), *Result.Context);
+              DeclRefExpr, *Function, *Result.Context)))) {
+      handleMoveFix(*Param, DeclRefExpr, *Result.Context);
       return;
     }
   }

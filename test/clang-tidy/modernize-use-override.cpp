@@ -1,4 +1,4 @@
-// RUN: %check_clang_tidy %s modernize-use-override %t
+// RUN: %check_clang_tidy %s modernize-use-override %t -- -- -std=c++11 -fexceptions
 
 #define ABSTRACT = 0
 
@@ -288,3 +288,17 @@ struct MembersOfSpecializations : public Base2 {
 };
 template <> void MembersOfSpecializations<3>::a() {}
 void ff() { MembersOfSpecializations<3>().a(); };
+
+// In case try statement is used as a method body,
+// make sure that override fix is placed before try keyword.
+struct TryStmtAsBody : public Base {
+  void a() try
+  // CHECK-MESSAGES: :[[@LINE-1]]:8: warning: annotate this
+  // CHECK-FIXES: {{^}}  void a() override try
+  { b(); } catch(...) { c(); }
+
+  virtual void d() try
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: prefer using
+  // CHECK-FIXES: {{^}}  void d() override try
+  { e(); } catch(...) { f(); }
+};

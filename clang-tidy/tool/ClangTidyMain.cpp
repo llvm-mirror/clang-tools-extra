@@ -60,7 +60,7 @@ appearance in the list. Globs without '-'
 prefix add checks with matching names to the
 set, globs with the '-' prefix remove checks
 with matching names from the set of enabled
-checks.  This option's value is appended to the
+checks. This option's value is appended to the
 value of the 'Checks' option in .clang-tidy
 file, if any.
 )"),
@@ -120,12 +120,20 @@ well.
 )"),
                                cl::init(false), cl::cat(ClangTidyCategory));
 
-static cl::opt<std::string> FormatStyle("style", cl::desc(R"(
-Fallback style for reformatting after inserting fixes
-if there is no clang-format config file found.
+static cl::opt<std::string> FormatStyle("format-style", cl::desc(R"(
+Style for formatting code around applied fixes:
+  - 'none' (default) turns off formatting
+  - 'file' (literally 'file', not a placeholder)
+    uses .clang-format file in the closest parent
+    directory
+  - '{ <json> }' specifies options inline, e.g.
+    -format-style='{BasedOnStyle: llvm, IndentWidth: 8}'
+  - 'llvm', 'google', 'webkit', 'mozilla'
+See clang-format documentation for the up-to-date
+information about formatting styles and options.
 )"),
-                                        cl::init("llvm"),
-                                        cl::cat(ClangTidyCategory));
+                                   cl::init("none"),
+                                   cl::cat(ClangTidyCategory));
 
 static cl::opt<bool> ListChecks("list-checks", cl::desc(R"(
 List all enabled checks and exit. Use with
@@ -187,6 +195,15 @@ code with clang-apply-replacements.
 )"),
                                         cl::value_desc("filename"),
                                         cl::cat(ClangTidyCategory));
+
+static cl::opt<bool> Quiet("quiet", cl::desc(R"(
+Run clang-tidy in quiet mode. This suppresses
+printing statistics about ignored warnings and
+warnings treated as errors if the respective
+options are specified.
+)"),
+                           cl::init(false),
+                           cl::cat(ClangTidyCategory));
 
 namespace clang {
 namespace tidy {
@@ -403,22 +420,26 @@ static int clangTidyMain(int argc, const char **argv) {
       llvm::errs() << "Error opening output file: " << EC.message() << '\n';
       return 1;
     }
-    exportReplacements(Errors, OS);
+    exportReplacements(FilePath.str(), Errors, OS);
   }
 
-  printStats(Stats);
-  if (DisableFixes)
-    llvm::errs()
-        << "Found compiler errors, but -fix-errors was not specified.\n"
-           "Fixes have NOT been applied.\n\n";
+  if (!Quiet) {
+    printStats(Stats);
+    if (DisableFixes)
+      llvm::errs()
+          << "Found compiler errors, but -fix-errors was not specified.\n"
+             "Fixes have NOT been applied.\n\n";
+  }
 
   if (EnableCheckProfile)
     printProfileData(Profile, llvm::errs());
 
   if (WErrorCount) {
-    StringRef Plural = WErrorCount == 1 ? "" : "s";
-    llvm::errs() << WErrorCount << " warning" << Plural << " treated as error"
-                 << Plural << "\n";
+    if (!Quiet) {
+      StringRef Plural = WErrorCount == 1 ? "" : "s";
+      llvm::errs() << WErrorCount << " warning" << Plural << " treated as error"
+                   << Plural << "\n";
+    }
     return WErrorCount;
   }
 
@@ -474,6 +495,11 @@ static int LLVM_ATTRIBUTE_UNUSED PerformanceModuleAnchorDestination =
 extern volatile int ReadabilityModuleAnchorSource;
 static int LLVM_ATTRIBUTE_UNUSED ReadabilityModuleAnchorDestination =
     ReadabilityModuleAnchorSource;
+
+// This anchor is used to force the linker to link the SafetyModule.
+extern volatile int SafetyModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED SafetyModuleAnchorDestination =
+    SafetyModuleAnchorSource;
 
 } // namespace tidy
 } // namespace clang
