@@ -12,38 +12,67 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Path.h"
 
 #define DEBUG_TYPE "include-fixer"
 
 namespace clang {
 namespace include_fixer {
 
-using clang::find_all_symbols::SymbolInfo;
+using find_all_symbols::SymbolInfo;
+using find_all_symbols::SymbolAndSignals;
 
-/// Sorts SymbolInfos based on the popularity info in SymbolInfo.
-static void rankByPopularity(std::vector<SymbolInfo> &Symbols) {
-  // First collect occurrences per header file.
-  llvm::DenseMap<llvm::StringRef, unsigned> HeaderPopularity;
-  for (const SymbolInfo &Symbol : Symbols) {
-    unsigned &Popularity = HeaderPopularity[Symbol.getFilePath()];
-    Popularity = std::max(Popularity, Symbol.getNumOccurrences());
+// Calculate a score based on whether we think the given header is closely
+// related to the given source file.
+static double similarityScore(llvm::StringRef FileName,
+                              llvm::StringRef Header) {
+  // Compute the maximum number of common path segements between Header and
+  // a suffix of FileName.
+  // We do not do a full longest common substring computation, as Header
+  // specifies the path we would directly #include, so we assume it is rooted
+  // relatively to a subproject of the repository.
+  int MaxSegments = 1;
+  for (auto FileI = llvm::sys::path::begin(FileName),
+            FileE = llvm::sys::path::end(FileName);
+       FileI != FileE; ++FileI) {
+    int Segments = 0;
+    for (auto HeaderI = llvm::sys::path::begin(Header),
+              HeaderE = llvm::sys::path::end(Header), I = FileI;
+         HeaderI != HeaderE && *I == *HeaderI && I != FileE; ++I, ++HeaderI) {
+      ++Segments;
+    }
+    MaxSegments = std::max(Segments, MaxSegments);
   }
+  return MaxSegments;
+}
 
-  // Sort by the gathered popularities. Use file name as a tie breaker so we can
+static void rank(std::vector<SymbolAndSignals> &Symbols,
+                 llvm::StringRef FileName) {
+  llvm::DenseMap<llvm::StringRef, double> Score;
+  for (const auto &Symbol : Symbols) {
+    // Calculate a score from the similarity of the header the symbol is in
+    // with the current file and the popularity of the symbol.
+    double NewScore = similarityScore(FileName, Symbol.Symbol.getFilePath()) *
+                      (1.0 + std::log2(1 + Symbol.Signals.Seen));
+    double &S = Score[Symbol.Symbol.getFilePath()];
+    S = std::max(S, NewScore);
+  }
+  // Sort by the gathered scores. Use file name as a tie breaker so we can
   // deduplicate.
   std::sort(Symbols.begin(), Symbols.end(),
-            [&](const SymbolInfo &A, const SymbolInfo &B) {
-              auto APop = HeaderPopularity[A.getFilePath()];
-              auto BPop = HeaderPopularity[B.getFilePath()];
-              if (APop != BPop)
-                return APop > BPop;
-              return A.getFilePath() < B.getFilePath();
+            [&](const SymbolAndSignals &A, const SymbolAndSignals &B) {
+              auto AS = Score[A.Symbol.getFilePath()];
+              auto BS = Score[B.Symbol.getFilePath()];
+              if (AS != BS)
+                return AS > BS;
+              return A.Symbol.getFilePath() < B.Symbol.getFilePath();
             });
 }
 
 std::vector<find_all_symbols::SymbolInfo>
 SymbolIndexManager::search(llvm::StringRef Identifier,
-                           bool IsNestedSearch) const {
+                           bool IsNestedSearch,
+                           llvm::StringRef FileName) const {
   // The identifier may be fully qualified, so split it and get all the context
   // names.
   llvm::SmallVector<llvm::StringRef, 8> Names;
@@ -60,67 +89,70 @@ SymbolIndexManager::search(llvm::StringRef Identifier,
   // Eventually we will either hit a class (namespaces aren't in the database
   // either) and can report that result.
   bool TookPrefix = false;
-  std::vector<clang::find_all_symbols::SymbolInfo> MatchedSymbols;
+  std::vector<SymbolAndSignals> MatchedSymbols;
   do {
-    std::vector<clang::find_all_symbols::SymbolInfo> Symbols;
+    std::vector<SymbolAndSignals> Symbols;
     for (const auto &DB : SymbolIndices) {
-      auto Res = DB->search(Names.back().str());
+      auto Res = DB.get()->search(Names.back());
       Symbols.insert(Symbols.end(), Res.begin(), Res.end());
     }
 
     DEBUG(llvm::dbgs() << "Searching " << Names.back() << "... got "
                        << Symbols.size() << " results...\n");
 
-    for (const auto &Symbol : Symbols) {
+    for (auto &SymAndSig : Symbols) {
+      const SymbolInfo &Symbol = SymAndSig.Symbol;
       // Match the identifier name without qualifier.
-      if (Symbol.getName() == Names.back()) {
-        bool IsMatched = true;
-        auto SymbolContext = Symbol.getContexts().begin();
-        auto IdentiferContext = Names.rbegin() + 1; // Skip identifier name.
-        // Match the remaining context names.
-        while (IdentiferContext != Names.rend() &&
-               SymbolContext != Symbol.getContexts().end()) {
-          if (SymbolContext->second == *IdentiferContext) {
-            ++IdentiferContext;
-            ++SymbolContext;
-          } else if (SymbolContext->first ==
-                     find_all_symbols::SymbolInfo::ContextType::EnumDecl) {
-            // Skip non-scoped enum context.
-            ++SymbolContext;
-          } else {
-            IsMatched = false;
-            break;
-          }
+      bool IsMatched = true;
+      auto SymbolContext = Symbol.getContexts().begin();
+      auto IdentiferContext = Names.rbegin() + 1; // Skip identifier name.
+      // Match the remaining context names.
+      while (IdentiferContext != Names.rend() &&
+             SymbolContext != Symbol.getContexts().end()) {
+        if (SymbolContext->second == *IdentiferContext) {
+          ++IdentiferContext;
+          ++SymbolContext;
+        } else if (SymbolContext->first ==
+                   find_all_symbols::SymbolInfo::ContextType::EnumDecl) {
+          // Skip non-scoped enum context.
+          ++SymbolContext;
+        } else {
+          IsMatched = false;
+          break;
         }
+      }
 
-        // If the name was qualified we only want to add results if we evaluated
-        // all contexts.
-        if (IsFullyQualified)
-          IsMatched &= (SymbolContext == Symbol.getContexts().end());
+      // If the name was qualified we only want to add results if we evaluated
+      // all contexts.
+      if (IsFullyQualified)
+        IsMatched &= (SymbolContext == Symbol.getContexts().end());
 
-        // FIXME: Support full match. At this point, we only find symbols in
-        // database which end with the same contexts with the identifier.
-        if (IsMatched && IdentiferContext == Names.rend()) {
-          // If we're in a situation where we took a prefix but the thing we
-          // found couldn't possibly have a nested member ignore it.
-          if (TookPrefix &&
-              (Symbol.getSymbolKind() == SymbolInfo::SymbolKind::Function ||
-               Symbol.getSymbolKind() == SymbolInfo::SymbolKind::Variable ||
-               Symbol.getSymbolKind() ==
-                   SymbolInfo::SymbolKind::EnumConstantDecl ||
-               Symbol.getSymbolKind() == SymbolInfo::SymbolKind::Macro))
-            continue;
+      // FIXME: Support full match. At this point, we only find symbols in
+      // database which end with the same contexts with the identifier.
+      if (IsMatched && IdentiferContext == Names.rend()) {
+        // If we're in a situation where we took a prefix but the thing we
+        // found couldn't possibly have a nested member ignore it.
+        if (TookPrefix &&
+            (Symbol.getSymbolKind() == SymbolInfo::SymbolKind::Function ||
+             Symbol.getSymbolKind() == SymbolInfo::SymbolKind::Variable ||
+             Symbol.getSymbolKind() ==
+                 SymbolInfo::SymbolKind::EnumConstantDecl ||
+             Symbol.getSymbolKind() == SymbolInfo::SymbolKind::Macro))
+          continue;
 
-          MatchedSymbols.push_back(Symbol);
-        }
+        MatchedSymbols.push_back(std::move(SymAndSig));
       }
     }
     Names.pop_back();
     TookPrefix = true;
   } while (MatchedSymbols.empty() && !Names.empty() && IsNestedSearch);
 
-  rankByPopularity(MatchedSymbols);
-  return MatchedSymbols;
+  rank(MatchedSymbols, FileName);
+  // Strip signals, they are no longer needed.
+  std::vector<SymbolInfo> Res;
+  for (auto &SymAndSig : MatchedSymbols)
+    Res.push_back(std::move(SymAndSig.Symbol));
+  return Res;
 }
 
 } // namespace include_fixer

@@ -25,45 +25,50 @@ void UseUsingCheck::registerMatchers(MatchFinder *Finder) {
 
 // Checks if 'typedef' keyword can be removed - we do it only if
 // it is the only declaration in a declaration chain.
-static bool CheckRemoval(SourceManager &SM, const SourceLocation &LocStart,
-                         const SourceLocation &LocEnd, ASTContext &Context,
-                         SourceRange &ResultRange) {
-  FileID FID = SM.getFileID(LocEnd);
-  llvm::MemoryBuffer *Buffer = SM.getBuffer(FID, LocEnd);
-  Lexer DeclLexer(SM.getLocForStartOfFile(FID), Context.getLangOpts(),
-                  Buffer->getBufferStart(), SM.getCharacterData(LocStart),
-                  Buffer->getBufferEnd());
-  Token DeclToken;
-  bool result = false;
-  int parenthesisLevel = 0;
+static bool CheckRemoval(SourceManager &SM, SourceLocation StartLoc,
+                         ASTContext &Context) {
+  assert(StartLoc.isFileID() && "StartLoc must not be in a macro");
+  std::pair<FileID, unsigned> LocInfo = SM.getDecomposedLoc(StartLoc);
+  StringRef File = SM.getBufferData(LocInfo.first);
+  const char *TokenBegin = File.data() + LocInfo.second;
+  Lexer DeclLexer(SM.getLocForStartOfFile(LocInfo.first), Context.getLangOpts(),
+                  File.begin(), TokenBegin, File.end());
 
-  while (!DeclLexer.LexFromRawLexer(DeclToken)) {
-    if (DeclToken.getKind() == tok::TokenKind::l_paren)
-      parenthesisLevel++;
-    if (DeclToken.getKind() == tok::TokenKind::r_paren)
-      parenthesisLevel--;
-    if (DeclToken.getKind() == tok::TokenKind::semi)
-      break;
-    // if there is comma and we are not between open parenthesis then it is
-    // two or more declatarions in this chain
-    if (parenthesisLevel == 0 && DeclToken.getKind() == tok::TokenKind::comma)
+  Token Tok;
+  int ParenLevel = 0;
+  bool FoundTypedef = false;
+
+  while (!DeclLexer.LexFromRawLexer(Tok) && !Tok.is(tok::semi)) {
+    switch (Tok.getKind()) {
+    case tok::l_brace:
+    case tok::r_brace:
+      // This might be the `typedef struct {...} T;` case.
       return false;
-
-    if (DeclToken.isOneOf(tok::TokenKind::identifier,
-                          tok::TokenKind::raw_identifier)) {
-      auto TokenStr = DeclToken.getRawIdentifier().str();
-
-      if (TokenStr == "typedef") {
-        ResultRange =
-            SourceRange(DeclToken.getLocation(), DeclToken.getEndLoc());
-        result = true;
+    case tok::l_paren:
+      ParenLevel++;
+      break;
+    case tok::r_paren:
+      ParenLevel--;
+      break;
+    case tok::comma:
+      if (ParenLevel == 0) {
+        // If there is comma and we are not between open parenthesis then it is
+        // two or more declarations in this chain.
+        return false;
       }
+      break;
+    case tok::raw_identifier:
+      if (Tok.getRawIdentifier() == "typedef") {
+        FoundTypedef = true;
+      }
+      break;
+    default:
+      break;
     }
   }
-  // assert if there was keyword 'typedef' in declaration
-  assert(result && "No typedef found");
 
-  return result;
+  // Sanity check against weird macro cases.
+  return FoundTypedef;
 }
 
 void UseUsingCheck::check(const MatchFinder::MatchResult &Result) {
@@ -76,12 +81,12 @@ void UseUsingCheck::check(const MatchFinder::MatchResult &Result) {
 
   auto Diag =
       diag(MatchedDecl->getLocStart(), "use 'using' instead of 'typedef'");
-  if (MatchedDecl->getLocStart().isMacroID()) {
+
+  SourceLocation StartLoc = MatchedDecl->getLocStart();
+  if (StartLoc.isMacroID())
     return;
-  }
-  SourceRange RemovalRange;
-  if (CheckRemoval(SM, MatchedDecl->getLocStart(), MatchedDecl->getLocEnd(),
-                   Context, RemovalRange)) {
+
+  if (CheckRemoval(SM, StartLoc, Context)) {
     Diag << FixItHint::CreateReplacement(
         MatchedDecl->getSourceRange(),
         "using " + MatchedDecl->getNameAsString() + " = " +

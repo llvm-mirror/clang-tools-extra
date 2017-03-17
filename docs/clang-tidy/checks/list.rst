@@ -8,6 +8,7 @@ Clang-Tidy Checks
    cert-dcl03-c (redirects to misc-static-assert) <cert-dcl03-c>
    cert-dcl50-cpp
    cert-dcl54-cpp (redirects to misc-new-delete-overloads) <cert-dcl54-cpp>
+   cert-dcl58-cpp
    cert-dcl59-cpp (redirects to google-build-namespaces) <cert-dcl59-cpp>
    cert-env33-c
    cert-err09-cpp (redirects to misc-throw-by-value-catch-by-reference) <cert-err09-cpp>
@@ -22,6 +23,7 @@ Clang-Tidy Checks
    cert-msc50-cpp
    cert-oop11-cpp (redirects to misc-move-constructor-init) <cert-oop11-cpp>
    cppcoreguidelines-interfaces-global-init
+   cppcoreguidelines-no-malloc
    cppcoreguidelines-pro-bounds-array-to-pointer-decay
    cppcoreguidelines-pro-bounds-constant-array-index
    cppcoreguidelines-pro-bounds-pointer-arithmetic
@@ -80,9 +82,11 @@ Clang-Tidy Checks
    misc-sizeof-container
    misc-sizeof-expression
    misc-static-assert
+   misc-string-compare
    misc-string-constructor
    misc-string-integer-assignment
    misc-string-literal-with-embedded-nul
+   misc-suspicious-enum-usage
    misc-suspicious-missing-comma
    misc-suspicious-semicolon
    misc-suspicious-string-compare
@@ -106,9 +110,11 @@ Clang-Tidy Checks
    modernize-raw-string-literal
    modernize-redundant-void-arg
    modernize-replace-auto-ptr
+   modernize-return-braced-init-list
    modernize-shrink-to-fit
    modernize-use-auto
    modernize-use-bool-literals
+   modernize-use-default-member-init
    modernize-use-emplace
    modernize-use-equals-default
    modernize-use-equals-delete
@@ -122,22 +128,26 @@ Clang-Tidy Checks
    performance-for-range-copy
    performance-implicit-cast-in-loop
    performance-inefficient-string-concatenation
+   performance-type-promotion-in-math-fn
    performance-unnecessary-copy-initialization
    performance-unnecessary-value-param
    readability-avoid-const-params-in-decls
    readability-braces-around-statements
    readability-container-size-empty
+   readability-delete-null-pointer
    readability-deleted-default
    readability-else-after-return
    readability-function-size
    readability-identifier-naming
    readability-implicit-bool-cast
    readability-inconsistent-declaration-parameter-name
+   readability-misleading-indentation
    readability-misplaced-array-index
    readability-named-parameter
    readability-non-const-parameter
    readability-redundant-control-flow
    readability-redundant-declaration
+   readability-redundant-function-ptr-dereference
    readability-redundant-member-init
    readability-redundant-smartptr-get
    readability-redundant-string-cstr
@@ -145,3 +155,4 @@ Clang-Tidy Checks
    readability-simplify-boolean-expr
    readability-static-definition-in-anonymous-namespace
    readability-uniqueptr-delete-release
+   safety-no-assembler

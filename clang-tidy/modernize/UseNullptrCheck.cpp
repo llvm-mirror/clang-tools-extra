@@ -26,7 +26,7 @@ const char CastSequence[] = "sequence";
 
 AST_MATCHER(Type, sugaredNullptrType) {
   const Type *DesugaredType = Node.getUnqualifiedDesugaredType();
-  if (const BuiltinType *BT = dyn_cast<BuiltinType>(DesugaredType))
+  if (const auto *BT = dyn_cast<BuiltinType>(DesugaredType))
     return BT->getKind() == BuiltinType::NullPtr;
   return false;
 }
@@ -39,6 +39,7 @@ AST_MATCHER(Type, sugaredNullptrType) {
 StatementMatcher makeCastSequenceMatcher() {
   StatementMatcher ImplicitCastToNull = implicitCastExpr(
       anyOf(hasCastKind(CK_NullToPointer), hasCastKind(CK_NullToMemberPointer)),
+      unless(hasImplicitDestinationType(qualType(substTemplateTypeParmType()))),
       unless(hasSourceExpression(hasType(sugaredNullptrType()))));
 
   return castExpr(anyOf(ImplicitCastToNull,
@@ -188,10 +189,12 @@ public:
   // Only VisitStmt is overridden as we shouldn't find other base AST types
   // within a cast expression.
   bool VisitStmt(Stmt *S) {
-    CastExpr *C = dyn_cast<CastExpr>(S);
+    auto *C = dyn_cast<CastExpr>(S);
     // Catch the castExpr inside cxxDefaultArgExpr.
-    if (auto *E = dyn_cast<CXXDefaultArgExpr>(S))
+    if (auto *E = dyn_cast<CXXDefaultArgExpr>(S)) {
       C = dyn_cast<CastExpr>(E->getExpr());
+      FirstSubExpr = nullptr;
+    }
     if (!C) {
       FirstSubExpr = nullptr;
       return true;

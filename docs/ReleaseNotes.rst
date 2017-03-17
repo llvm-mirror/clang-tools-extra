@@ -1,5 +1,5 @@
 ===================================================
-Extra Clang Tools 4.0.0 (In-Progress) Release Notes
+Extra Clang Tools 5.0.0 (In-Progress) Release Notes
 ===================================================
 
 .. contents::
@@ -10,15 +10,15 @@ Written by the `LLVM Team <http://llvm.org/>`_
 
 .. warning::
 
-   These are in-progress notes for the upcoming Extra Clang Tools 4.0 release.
-   You may prefer the `Extra Clang Tools 3.9 Release Notes
-   <http://llvm.org/releases/3.9.0/tools/clang/tools/extra/docs/ReleaseNotes.html>`_.
+   These are in-progress notes for the upcoming Extra Clang Tools 5 release.
+   Release notes for previous releases can be found on
+   `the Download Page <http://releases.llvm.org/download.html>`_.
 
 Introduction
 ============
 
 This document contains the release notes for the Extra Clang Tools, part of the
-Clang release 4.0.0. Here we describe the status of the Extra Clang Tools in
+Clang release 5.0.0. Here we describe the status of the Extra Clang Tools in
 some detail, including major improvements from the previous release and new
 feature work. All LLVM releases may be downloaded from the `LLVM releases web
 site <http://llvm.org/releases/>`_.
@@ -32,7 +32,7 @@ main Clang web page, this document applies to the *next* release, not
 the current one. To see the release notes for a specific release, please
 see the `releases page <http://llvm.org/releases/>`_.
 
-What's New in Extra Clang Tools 4.0.0?
+What's New in Extra Clang Tools 5.0.0?
 ======================================
 
 Some of the major new features and improvements to Extra Clang Tools are listed
@@ -52,118 +52,48 @@ The improvements are...
 Improvements to clang-rename
 ----------------------------
 
-- Emacs integration was added.
+The improvements are...
 
 Improvements to clang-tidy
 --------------------------
 
-- New `cppcoreguidelines-slicing
-  <http://clang.llvm.org/extra/clang-tidy/checks/cppcoreguidelines-slicing.html>`_ check
+- New `cert-dcl58-cpp
+  <http://clang.llvm.org/extra/clang-tidy/checks/cert-dcl58-cpp.html>`_ check
 
-  Flags slicing of member variables or vtable.
+  Finds modification of the ``std`` or ``posix`` namespace.
 
-- New `cppcoreguidelines-special-member-functions
-  <http://clang.llvm.org/extra/clang-tidy/checks/cppcoreguidelines-special-member-functions.html>`_ check
+- Improved `cppcoreguidelines-no-malloc 
+  <http://clang.llvm.org/extra/clang-tidy/checks/cppcoreguidelines-no-malloc.html>`_ check
 
-  Flags classes where some, but not all, special member functions are user-defined.
+  Allow custom memory management functions to be considered as well.
 
-- New `misc-move-forwarding-reference
-  <http://clang.llvm.org/extra/clang-tidy/checks/misc-move-forwarding-reference.html>`_ check
+- New `readability-misleading-indentation
+  <http://clang.llvm.org/extra/clang-tidy/checks/readability-misleading-indentation.html>`_ check
 
-  Warns when ``std::move`` is applied to a forwarding reference instead of
-  ``std::forward``.
+  Finds misleading indentation where braces should be introduced or the code should be reformatted.
 
-- `misc-pointer-and-integral-operation` check was removed.
+- Added `ParameterThreshold` to `readability-function-size`.
 
-- New `misc-use-after-move
-  <http://clang.llvm.org/extra/clang-tidy/checks/misc-use-after-move.html>`_ check
+  Finds functions that have more then `ParameterThreshold` parameters and emits a warning.
 
-  Warns if an object is used after it has been moved, without an intervening
-  reinitialization.
+- New `safety-no-assembler
+  <http://clang.llvm.org/extra/clang-tidy/checks/safety-no-assembler.html>`_ check
 
-- `modernize-make-unique
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-unique.html>`_
-  and `modernize-make-shared
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-shared.html>`_
-  now handle calls to the smart pointer's ``reset()`` method.
+  Finds uses of inline assembler.
 
-- The `modernize-use-auto
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-auto.html>`_ check
-  now warns about variable declarations that are initialized with a cast.
+- New `modernize-return-braced-init-list
+  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-return-braced-init-list.html>`_ check
 
-- The modernize-use-default check has been renamed to `modernize-use-equals-default
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-default.html>`_.
+  Finds and replaces explicit calls to the constructor in a return statement by
+  a braced initializer list so that the return type is not needlessly repeated.
 
-- New `modernize-use-equals-delete
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-equals-delete.html>`_ check
-
-  Adds ``= delete`` to unimplemented private special member functions.
-
-- New `modernize-use-transparent-functors
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-use-transparent-functors.html>`_ check
-
-  Replaces uses of non-transparent functors with transparent ones where applicable.
-
-- New `mpi-buffer-deref
-  <http://clang.llvm.org/extra/clang-tidy/checks/mpi-buffer-deref.html>`_ check
-
-  Flags buffers which are insufficiently dereferenced when passed to an MPI function call.
-
-- New `mpi-type-mismatch
-  <http://clang.llvm.org/extra/clang-tidy/checks/mpi-type-mismatch.html>`_ check
-
-  Flags MPI function calls with a buffer type and MPI data type mismatch.
-
-- New `performance-inefficient-string-concatenation
-  <http://clang.llvm.org/extra/clang-tidy/checks/performance-inefficient-string-concatenation.html>`_ check
-
-  Warns about the performance overhead arising from concatenating strings using
-  the ``operator+``, instead of ``operator+=``.
-
-- `readability-container-size-empty
-  <http://clang.llvm.org/extra/clang-tidy/checks/readability-container-size-empty.html>`_ check
-  supports arbitrary containers with with suitable ``empty()`` and ``size()``
-  methods.
-
-- New `readability-misplaced-array-index
-  <http://clang.llvm.org/extra/clang-tidy/checks/readability-misplaced-array-index.html>`_ check
-
-  Warns when there is array index before the [] instead of inside it.
-
-- New `readability-non-const-parameter
-  <http://clang.llvm.org/extra/clang-tidy/checks/readability-non-const-parameter.html>`_ check
-
-  Flags function parameters of a pointer type that could be changed to point to
-  a constant type instead.
-
-- New `readability-redundant-declaration
-  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-declaration.html>`_ check
-
-  Finds redundant variable and function declarations.
-
-- New `readability-redundant-member-init
-  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-member-init.html>`_ check
-
-  Flags member initializations that are unnecessary because the same default
-  constructor would be called if they were not present.
-
-- The `readability-redundant-string-cstr
-  <http://clang.llvm.org/extra/clang-tidy/checks/readability-redundant-string-cstr.html>`_ check
-  now warns about redundant calls to data() too.
-
-Fixed bugs:
-
-- `modernize-make-unique
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-unique.html>`_
-  and `modernize-make-shared
-  <http://clang.llvm.org/extra/clang-tidy/checks/modernize-make-shared.html>`_
-  Calling ``make_{unique|shared}`` from within a member function of a type
-  with a private or protected constructor would be ill-formed.
+- Support clang-formatting of the code around applied fixes (``-format-style``
+  command-line option).
 
 Improvements to include-fixer
 -----------------------------
 
-- Emacs integration was added.
+The improvements are...
 
 Improvements to modularize
 --------------------------

@@ -139,7 +139,7 @@ Example:
    public:
  =  // using -fdelayed-template-parsing (default on Windows)
  =  C(const std::string &S) : S(S) {}
- 
+
  +  // using -fno-delayed-template-parsing (default on non-Windows systems)
  +  C(std::string S) : S(std::move(S)) {}
    };
@@ -150,7 +150,7 @@ Example:
 
   For more information about the pass-by-value idiom, read: `Want Speed? Pass by Value`_.
 
-  .. _Want Speed? Pass by Value: http://cpp-next.com/archive/2009/08/want-speed-pass-by-value/
+  .. _Want Speed? Pass by Value: https://web.archive.org/web/20140205194657/http://cpp-next.com/archive/2009/08/want-speed-pass-by-value/
 
 Options
 -------
@@ -159,3 +159,8 @@ Options
 
    A string specifying which include-style is used, `llvm` or `google`. Default
    is `llvm`.
+
+.. option:: ValuesOnly
+
+   When non-zero, the check only warns about copied parameters that are already
+   passed by value. Default is `0`.
