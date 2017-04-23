@@ -27,7 +27,7 @@ namespace rename {
 
 // NamedDeclFindingASTVisitor recursively visits each AST node to find the
 // symbol underneath the cursor.
-// FIXME: move to seperate .h/.cc file if this gets too large.
+// FIXME: move to separate .h/.cc file if this gets too large.
 namespace {
 class NamedDeclFindingASTVisitor
     : public clang::RecursiveASTVisitor<NamedDeclFindingASTVisitor> {
@@ -135,7 +135,8 @@ private:
         return true;
     } else {
       // Fully qualified name is used to find the declaration.
-      if (Name != Decl->getQualifiedNameAsString())
+      if (Name != Decl->getQualifiedNameAsString() &&
+          Name != "::" + Decl->getQualifiedNameAsString())
         return true;
     }
     Result = Decl;

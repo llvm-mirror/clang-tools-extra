@@ -62,7 +62,7 @@ Improvements to clang-tidy
 
   Finds modification of the ``std`` or ``posix`` namespace.
 
-- Improved `cppcoreguidelines-no-malloc 
+- Improved `cppcoreguidelines-no-malloc
   <http://clang.llvm.org/extra/clang-tidy/checks/cppcoreguidelines-no-malloc.html>`_ check
 
   Allow custom memory management functions to be considered as well.
@@ -76,19 +76,30 @@ Improvements to clang-tidy
 
   Finds functions that have more then `ParameterThreshold` parameters and emits a warning.
 
-- New `safety-no-assembler
-  <http://clang.llvm.org/extra/clang-tidy/checks/safety-no-assembler.html>`_ check
+- New `hicpp` module
 
-  Finds uses of inline assembler.
+  Adds checks that implement the `High Integrity C++ Coding Standard <http://www.codingstandard.com/section/index/>`_ and other safety
+  standards. Many checks are aliased to other modules.
 
 - New `modernize-return-braced-init-list
   <http://clang.llvm.org/extra/clang-tidy/checks/modernize-return-braced-init-list.html>`_ check
 
   Finds and replaces explicit calls to the constructor in a return statement by
   a braced initializer list so that the return type is not needlessly repeated.
+  
+- New `misc-forwarding-reference-overload
+  <http://clang.llvm.org/extra/clang-tidy/checks/misc-forwarding-reference-overload.html>`_ check
+
+  Finds perfect forwarding constructors that can unintentionally hide copy or move constructors.
 
 - Support clang-formatting of the code around applied fixes (``-format-style``
   command-line option).
+
+- New `performance-inefficient-vector-operation
+  <http://clang.llvm.org/extra/clang-tidy/checks/performance-inefficient-vector-operation.html>`_ check
+
+  Finds possible inefficient vector operations in for loops that may cause
+  unnecessary memory reallocations.
 
 Improvements to include-fixer
 -----------------------------
