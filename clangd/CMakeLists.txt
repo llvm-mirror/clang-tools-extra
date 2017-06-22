@@ -1,19 +1,27 @@
-add_clang_executable(clangd
-  ASTManager.cpp
-  ClangdMain.cpp
+set(LLVM_LINK_COMPONENTS
+  Support
+  )
+
+add_clang_library(clangDaemon
+  ClangdLSPServer.cpp
+  ClangdServer.cpp
+  ClangdUnit.cpp
+  ClangdUnitStore.cpp
+  DraftStore.cpp
+  GlobalCompilationDatabase.cpp
   JSONRPCDispatcher.cpp
   Protocol.cpp
   ProtocolHandlers.cpp
-  )
 
-install(TARGETS clangd RUNTIME DESTINATION bin)
-
-target_link_libraries(clangd
+  LINK_LIBS
+  clangAST
   clangBasic
   clangFormat
   clangFrontend
   clangSema
   clangTooling
   clangToolingCore
-  LLVMSupport
+  ${LLVM_PTHREAD_LIB}
   )
+
+add_subdirectory(tool)
