@@ -4,6 +4,10 @@ Clang-Tidy Checks
 =================
 
 .. toctree::
+   android-cloexec-creat
+   android-cloexec-fopen
+   android-cloexec-open
+   android-cloexec-socket
    boost-use-to-string
    cert-dcl03-c (redirects to misc-static-assert) <cert-dcl03-c>
    cert-dcl21-cpp
@@ -129,6 +133,7 @@ Clang-Tidy Checks
    modernize-replace-random-shuffle
    modernize-return-braced-init-list
    modernize-shrink-to-fit
+   modernize-unary-static-assert
    modernize-use-auto
    modernize-use-bool-literals
    modernize-use-default-member-init
