@@ -36,6 +36,8 @@ class PCHContainerOperations;
 
 namespace clangd {
 
+class Logger;
+
 /// Turn a [line, column] pair into an offset in Code.
 size_t positionToOffset(StringRef Code, Position P);
 
@@ -179,6 +181,9 @@ public:
   /// AsyncThreadsCount worker threads. However, if \p AsyncThreadsCount is 0,
   /// all requests will be processed on the calling thread.
   ///
+  /// When \p SnippetCompletions is true, completion items will be presented
+  /// with embedded snippets. Otherwise, plaintext items will be presented.
+  ///
   /// ClangdServer uses \p FSProvider to get an instance of vfs::FileSystem for
   /// each parsing request. Results of code completion and diagnostics also
   /// include a tag, that \p FSProvider returns along with the vfs::FileSystem.
@@ -198,9 +203,12 @@ public:
   /// \p DiagConsumer. Note that a callback to \p DiagConsumer happens on a
   /// worker thread. Therefore, instances of \p DiagConsumer must properly
   /// synchronize access to shared state.
+  ///
+  /// Various messages are logged using \p Logger.
   ClangdServer(GlobalCompilationDatabase &CDB,
                DiagnosticsConsumer &DiagConsumer,
                FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
+               bool SnippetCompletions, clangd::Logger &Logger,
                llvm::Optional<StringRef> ResourceDir = llvm::None);
 
   /// Add a \p File to the list of tracked C++ files or update the contents if
@@ -263,6 +271,7 @@ private:
 
   std::future<void> scheduleCancelRebuild(std::shared_ptr<CppFile> Resources);
 
+  clangd::Logger &Logger;
   GlobalCompilationDatabase &CDB;
   DiagnosticsConsumer &DiagConsumer;
   FileSystemProvider &FSProvider;
@@ -270,6 +279,13 @@ private:
   CppFileCollection Units;
   std::string ResourceDir;
   std::shared_ptr<PCHContainerOperations> PCHs;
+  bool SnippetCompletions;
+  /// Used to serialize diagnostic callbacks.
+  /// FIXME(ibiryukov): get rid of an extra map and put all version counters
+  /// into CppFile.
+  std::mutex DiagnosticsMutex;
+  /// Maps from a filename to the latest version of reported diagnostics.
+  llvm::StringMap<DocVersion> ReportedDiagnosticVersions;
   // WorkScheduler has to be the last member, because its destructor has to be
   // called before all other members to stop the worker thread that references
   // ClangdServer

@@ -9,6 +9,7 @@
 
 #include "ClangdUnit.h"
 
+#include "Logger.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -272,14 +273,22 @@ CompletionItemKind getKind(CXCursorKind K) {
   }
 }
 
+std::string escapeSnippet(const llvm::StringRef Text) {
+  std::string Result;
+  Result.reserve(Text.size()); // Assume '$', '}' and '\\' are rare.
+  for (const auto Character : Text) {
+    if (Character == '$' || Character == '}' || Character == '\\')
+      Result.push_back('\\');
+    Result.push_back(Character);
+  }
+  return Result;
+}
+
 class CompletionItemsCollector : public CodeCompleteConsumer {
-  std::vector<CompletionItem> *Items;
-  std::shared_ptr<clang::GlobalCodeCompletionAllocator> Allocator;
-  CodeCompletionTUInfo CCTUInfo;
 
 public:
-  CompletionItemsCollector(std::vector<CompletionItem> *Items,
-                           const CodeCompleteOptions &CodeCompleteOpts)
+  CompletionItemsCollector(const CodeCompleteOptions &CodeCompleteOpts,
+                           std::vector<CompletionItem> &Items)
       : CodeCompleteConsumer(CodeCompleteOpts, /*OutputIsBinary=*/false),
         Items(Items),
         Allocator(std::make_shared<clang::GlobalCodeCompletionAllocator>()),
@@ -287,53 +296,263 @@ public:
 
   void ProcessCodeCompleteResults(Sema &S, CodeCompletionContext Context,
                                   CodeCompletionResult *Results,
-                                  unsigned NumResults) override {
-    for (unsigned I = 0; I != NumResults; ++I) {
-      CodeCompletionResult &Result = Results[I];
-      CodeCompletionString *CCS = Result.CreateCodeCompletionString(
+                                  unsigned NumResults) override final {
+    Items.reserve(NumResults);
+    for (unsigned I = 0; I < NumResults; ++I) {
+      auto &Result = Results[I];
+      const auto *CCS = Result.CreateCodeCompletionString(
           S, Context, *Allocator, CCTUInfo,
           CodeCompleteOpts.IncludeBriefComments);
-      if (CCS) {
-        CompletionItem Item;
-        for (CodeCompletionString::Chunk C : *CCS) {
-          switch (C.Kind) {
-          case CodeCompletionString::CK_ResultType:
-            Item.detail = C.Text;
-            break;
-          case CodeCompletionString::CK_Optional:
-            break;
-          default:
-            Item.label += C.Text;
-            break;
-          }
-        }
-        assert(CCS->getTypedText());
-        Item.kind = getKind(Result.CursorKind);
-        // Priority is a 16-bit integer, hence at most 5 digits.
-        assert(CCS->getPriority() < 99999 && "Expecting code completion result "
-                                             "priority to have at most "
-                                             "5-digits");
-        llvm::raw_string_ostream(Item.sortText)
-            << llvm::format("%05d%s", CCS->getPriority(), CCS->getTypedText());
-        Item.insertText = Item.filterText = CCS->getTypedText();
-        if (CCS->getBriefComment())
-          Item.documentation = CCS->getBriefComment();
-        Items->push_back(std::move(Item));
-      }
+      assert(CCS && "Expected the CodeCompletionString to be non-null");
+      Items.push_back(ProcessCodeCompleteResult(Result, *CCS));
     }
   }
 
   GlobalCodeCompletionAllocator &getAllocator() override { return *Allocator; }
 
   CodeCompletionTUInfo &getCodeCompletionTUInfo() override { return CCTUInfo; }
-};
+
+private:
+  CompletionItem
+  ProcessCodeCompleteResult(const CodeCompletionResult &Result,
+                            const CodeCompletionString &CCS) const {
+
+    // Adjust this to InsertTextFormat::Snippet iff we encounter a
+    // CK_Placeholder chunk in SnippetCompletionItemsCollector.
+    CompletionItem Item;
+    Item.insertTextFormat = InsertTextFormat::PlainText;
+
+    FillDocumentation(CCS, Item);
+
+    // Fill in the label, detail, insertText and filterText fields of the
+    // CompletionItem.
+    ProcessChunks(CCS, Item);
+
+    // Fill in the kind field of the CompletionItem.
+    Item.kind = getKind(Result.CursorKind);
+
+    FillSortText(CCS, Item);
+
+    return Item;
+  }
+
+  virtual void ProcessChunks(const CodeCompletionString &CCS,
+                             CompletionItem &Item) const = 0;
+
+  void FillDocumentation(const CodeCompletionString &CCS,
+                         CompletionItem &Item) const {
+    // Things like __attribute__((nonnull(1,3))) and [[noreturn]]. Present this
+    // information in the documentation field.
+    const unsigned AnnotationCount = CCS.getAnnotationCount();
+    if (AnnotationCount > 0) {
+      Item.documentation += "Annotation";
+      if (AnnotationCount == 1) {
+        Item.documentation += ": ";
+      } else /* AnnotationCount > 1 */ {
+        Item.documentation += "s: ";
+      }
+      for (unsigned I = 0; I < AnnotationCount; ++I) {
+        Item.documentation += CCS.getAnnotation(I);
+        Item.documentation.push_back(I == AnnotationCount - 1 ? '\n' : ' ');
+      }
+    }
+
+    // Add brief documentation (if there is any).
+    if (CCS.getBriefComment() != nullptr) {
+      if (!Item.documentation.empty()) {
+        // This means we previously added annotations. Add an extra newline
+        // character to make the annotations stand out.
+        Item.documentation.push_back('\n');
+      }
+      Item.documentation += CCS.getBriefComment();
+    }
+  }
+
+  static int GetSortPriority(const CodeCompletionString &CCS) {
+    int Score = CCS.getPriority();
+    // Fill in the sortText of the CompletionItem.
+    assert(Score <= 99999 && "Expecting code completion result "
+                             "priority to have at most 5-digits");
+
+    const int Penalty = 100000;
+    switch (static_cast<CXAvailabilityKind>(CCS.getAvailability())) {
+    case CXAvailability_Available:
+      // No penalty.
+      break;
+    case CXAvailability_Deprecated:
+      Score += Penalty;
+      break;
+    case CXAvailability_NotAccessible:
+      Score += 2 * Penalty;
+      break;
+    case CXAvailability_NotAvailable:
+      Score += 3 * Penalty;
+      break;
+    }
+
+    return Score;
+  }
+
+  static void FillSortText(const CodeCompletionString &CCS,
+                           CompletionItem &Item) {
+    int Priority = GetSortPriority(CCS);
+    // Fill in the sortText of the CompletionItem.
+    assert(Priority <= 999999 &&
+           "Expecting sort priority to have at most 6-digits");
+    llvm::raw_string_ostream(Item.sortText)
+        << llvm::format("%06d%s", Priority, Item.filterText.c_str());
+  }
+
+  std::vector<CompletionItem> &Items;
+  std::shared_ptr<clang::GlobalCodeCompletionAllocator> Allocator;
+  CodeCompletionTUInfo CCTUInfo;
+
+}; // CompletionItemsCollector
+
+class PlainTextCompletionItemsCollector final
+    : public CompletionItemsCollector {
+
+public:
+  PlainTextCompletionItemsCollector(const CodeCompleteOptions &CodeCompleteOpts,
+                                    std::vector<CompletionItem> &Items)
+      : CompletionItemsCollector(CodeCompleteOpts, Items) {}
+
+private:
+  void ProcessChunks(const CodeCompletionString &CCS,
+                     CompletionItem &Item) const override {
+    for (const auto &Chunk : CCS) {
+      switch (Chunk.Kind) {
+      case CodeCompletionString::CK_TypedText:
+        // There's always exactly one CK_TypedText chunk.
+        Item.insertText = Item.filterText = Chunk.Text;
+        Item.label += Chunk.Text;
+        break;
+      case CodeCompletionString::CK_ResultType:
+        assert(Item.detail.empty() && "Unexpected extraneous CK_ResultType");
+        Item.detail = Chunk.Text;
+        break;
+      case CodeCompletionString::CK_Optional:
+        break;
+      default:
+        Item.label += Chunk.Text;
+        break;
+      }
+    }
+  }
+}; // PlainTextCompletionItemsCollector
+
+class SnippetCompletionItemsCollector final : public CompletionItemsCollector {
+
+public:
+  SnippetCompletionItemsCollector(const CodeCompleteOptions &CodeCompleteOpts,
+                                  std::vector<CompletionItem> &Items)
+      : CompletionItemsCollector(CodeCompleteOpts, Items) {}
+
+private:
+  void ProcessChunks(const CodeCompletionString &CCS,
+                     CompletionItem &Item) const override {
+    unsigned ArgCount = 0;
+    for (const auto &Chunk : CCS) {
+      switch (Chunk.Kind) {
+      case CodeCompletionString::CK_TypedText:
+        // The piece of text that the user is expected to type to match
+        // the code-completion string, typically a keyword or the name of
+        // a declarator or macro.
+        Item.filterText = Chunk.Text;
+        // Note intentional fallthrough here.
+      case CodeCompletionString::CK_Text:
+        // A piece of text that should be placed in the buffer,
+        // e.g., parentheses or a comma in a function call.
+        Item.label += Chunk.Text;
+        Item.insertText += Chunk.Text;
+        break;
+      case CodeCompletionString::CK_Optional:
+        // A code completion string that is entirely optional.
+        // For example, an optional code completion string that
+        // describes the default arguments in a function call.
+
+        // FIXME: Maybe add an option to allow presenting the optional chunks?
+        break;
+      case CodeCompletionString::CK_Placeholder:
+        // A string that acts as a placeholder for, e.g., a function call
+        // argument.
+        ++ArgCount;
+        Item.insertText += "${" + std::to_string(ArgCount) + ':' +
+                           escapeSnippet(Chunk.Text) + '}';
+        Item.label += Chunk.Text;
+        Item.insertTextFormat = InsertTextFormat::Snippet;
+        break;
+      case CodeCompletionString::CK_Informative:
+        // A piece of text that describes something about the result
+        // but should not be inserted into the buffer.
+        // For example, the word "const" for a const method, or the name of
+        // the base class for methods that are part of the base class.
+        Item.label += Chunk.Text;
+        // Don't put the informative chunks in the insertText.
+        break;
+      case CodeCompletionString::CK_ResultType:
+        // A piece of text that describes the type of an entity or,
+        // for functions and methods, the return type.
+        assert(Item.detail.empty() && "Unexpected extraneous CK_ResultType");
+        Item.detail = Chunk.Text;
+        break;
+      case CodeCompletionString::CK_CurrentParameter:
+        // A piece of text that describes the parameter that corresponds to
+        // the code-completion location within a function call, message send,
+        // macro invocation, etc.
+        //
+        // This should never be present while collecting completion items,
+        // only while collecting overload candidates.
+        llvm_unreachable("Unexpected CK_CurrentParameter while collecting "
+                         "CompletionItems");
+        break;
+      case CodeCompletionString::CK_LeftParen:
+        // A left parenthesis ('(').
+      case CodeCompletionString::CK_RightParen:
+        // A right parenthesis (')').
+      case CodeCompletionString::CK_LeftBracket:
+        // A left bracket ('[').
+      case CodeCompletionString::CK_RightBracket:
+        // A right bracket (']').
+      case CodeCompletionString::CK_LeftBrace:
+        // A left brace ('{').
+      case CodeCompletionString::CK_RightBrace:
+        // A right brace ('}').
+      case CodeCompletionString::CK_LeftAngle:
+        // A left angle bracket ('<').
+      case CodeCompletionString::CK_RightAngle:
+        // A right angle bracket ('>').
+      case CodeCompletionString::CK_Comma:
+        // A comma separator (',').
+      case CodeCompletionString::CK_Colon:
+        // A colon (':').
+      case CodeCompletionString::CK_SemiColon:
+        // A semicolon (';').
+      case CodeCompletionString::CK_Equal:
+        // An '=' sign.
+      case CodeCompletionString::CK_HorizontalSpace:
+        // Horizontal whitespace (' ').
+        Item.insertText += Chunk.Text;
+        Item.label += Chunk.Text;
+        break;
+      case CodeCompletionString::CK_VerticalSpace:
+        // Vertical whitespace ('\n' or '\r\n', depending on the
+        // platform).
+        Item.insertText += Chunk.Text;
+        // Don't even add a space to the label.
+        break;
+      }
+    }
+  }
+}; // SnippetCompletionItemsCollector
 } // namespace
 
 std::vector<CompletionItem>
 clangd::codeComplete(PathRef FileName, tooling::CompileCommand Command,
                      PrecompiledPreamble const *Preamble, StringRef Contents,
                      Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
-                     std::shared_ptr<PCHContainerOperations> PCHs) {
+                     std::shared_ptr<PCHContainerOperations> PCHs,
+                     bool SnippetCompletions, clangd::Logger &Logger) {
   std::vector<const char *> ArgStrs;
   for (const auto &S : Command.CommandLine)
     ArgStrs.push_back(S.c_str());
@@ -371,8 +590,6 @@ clangd::codeComplete(PathRef FileName, tooling::CompileCommand Command,
   FrontendOpts.SkipFunctionBodies = true;
 
   FrontendOpts.CodeCompleteOpts.IncludeGlobals = true;
-  // we don't handle code patterns properly yet, disable them.
-  FrontendOpts.CodeCompleteOpts.IncludeCodePatterns = false;
   FrontendOpts.CodeCompleteOpts.IncludeMacros = true;
   FrontendOpts.CodeCompleteOpts.IncludeBriefComments = true;
 
@@ -381,17 +598,25 @@ clangd::codeComplete(PathRef FileName, tooling::CompileCommand Command,
   FrontendOpts.CodeCompletionAt.Column = Pos.character + 1;
 
   std::vector<CompletionItem> Items;
-  Clang->setCodeCompletionConsumer(
-      new CompletionItemsCollector(&Items, FrontendOpts.CodeCompleteOpts));
+  if (SnippetCompletions) {
+    FrontendOpts.CodeCompleteOpts.IncludeCodePatterns = true;
+    Clang->setCodeCompletionConsumer(new SnippetCompletionItemsCollector(
+        FrontendOpts.CodeCompleteOpts, Items));
+  } else {
+    FrontendOpts.CodeCompleteOpts.IncludeCodePatterns = false;
+    Clang->setCodeCompletionConsumer(new PlainTextCompletionItemsCollector(
+        FrontendOpts.CodeCompleteOpts, Items));
+  }
 
   SyntaxOnlyAction Action;
   if (!Action.BeginSourceFile(*Clang, Clang->getFrontendOpts().Inputs[0])) {
-    // FIXME(ibiryukov): log errors
+    Logger.log("BeginSourceFile() failed when running codeComplete for " +
+               FileName);
     return Items;
   }
-  if (!Action.Execute()) {
-    // FIXME(ibiryukov): log errors
-  }
+  if (!Action.Execute())
+    Logger.log("Execute() failed when running codeComplete for " + FileName);
+
   Action.EndSourceFile();
 
   return Items;
@@ -407,7 +632,8 @@ ParsedAST::Build(std::unique_ptr<clang::CompilerInvocation> CI,
                  ArrayRef<serialization::DeclID> PreambleDeclIDs,
                  std::unique_ptr<llvm::MemoryBuffer> Buffer,
                  std::shared_ptr<PCHContainerOperations> PCHs,
-                 IntrusiveRefCntPtr<vfs::FileSystem> VFS) {
+                 IntrusiveRefCntPtr<vfs::FileSystem> VFS,
+                 clangd::Logger &Logger) {
 
   std::vector<DiagWithFixIts> ASTDiags;
   StoreDiagsConsumer UnitDiagsConsumer(/*ref*/ ASTDiags);
@@ -421,13 +647,14 @@ ParsedAST::Build(std::unique_ptr<clang::CompilerInvocation> CI,
       Clang.get());
 
   auto Action = llvm::make_unique<ClangdFrontendAction>();
-  if (!Action->BeginSourceFile(*Clang, Clang->getFrontendOpts().Inputs[0])) {
-    // FIXME(ibiryukov): log error
+  const FrontendInputFile &MainInput = Clang->getFrontendOpts().Inputs[0];
+  if (!Action->BeginSourceFile(*Clang, MainInput)) {
+    Logger.log("BeginSourceFile() failed when building AST for " +
+               MainInput.getFile());
     return llvm::None;
   }
-  if (!Action->Execute()) {
-    // FIXME(ibiryukov): log error
-  }
+  if (!Action->Execute())
+    Logger.log("Execute() failed when building AST for " + MainInput.getFile());
 
   // UnitDiagsConsumer is local, we can not store it in CompilerInstance that
   // has a longer lifetime.
@@ -592,7 +819,8 @@ SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,
 }
 } // namespace
 
-std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos) {
+std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos,
+                                              clangd::Logger &Logger) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
   if (!FE)
@@ -692,15 +920,17 @@ PreambleData::PreambleData(PrecompiledPreamble Preamble,
 
 std::shared_ptr<CppFile>
 CppFile::Create(PathRef FileName, tooling::CompileCommand Command,
-                std::shared_ptr<PCHContainerOperations> PCHs) {
+                std::shared_ptr<PCHContainerOperations> PCHs,
+                clangd::Logger &Logger) {
   return std::shared_ptr<CppFile>(
-      new CppFile(FileName, std::move(Command), std::move(PCHs)));
+      new CppFile(FileName, std::move(Command), std::move(PCHs), Logger));
 }
 
 CppFile::CppFile(PathRef FileName, tooling::CompileCommand Command,
-                 std::shared_ptr<PCHContainerOperations> PCHs)
+                 std::shared_ptr<PCHContainerOperations> PCHs,
+                 clangd::Logger &Logger)
     : FileName(FileName), Command(std::move(Command)), RebuildCounter(0),
-      RebuildInProgress(false), PCHs(std::move(PCHs)) {
+      RebuildInProgress(false), PCHs(std::move(PCHs)), Logger(Logger) {
 
   std::lock_guard<std::mutex> Lock(Mutex);
   LatestAvailablePreamble = nullptr;
@@ -881,7 +1111,7 @@ CppFile::deferRebuild(StringRef NewContents,
     // Compute updated AST.
     llvm::Optional<ParsedAST> NewAST =
         ParsedAST::Build(std::move(CI), PreambleForAST, SerializedPreambleDecls,
-                         std::move(ContentsBuffer), PCHs, VFS);
+                         std::move(ContentsBuffer), PCHs, VFS, That->Logger);
 
     if (NewAST) {
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
