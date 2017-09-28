@@ -36,6 +36,8 @@ class PCHContainerOperations;
 
 namespace clangd {
 
+class Logger;
+
 /// Turn a [line, column] pair into an offset in Code.
 size_t positionToOffset(StringRef Code, Position P);
 
@@ -201,11 +203,16 @@ public:
   /// \p DiagConsumer. Note that a callback to \p DiagConsumer happens on a
   /// worker thread. Therefore, instances of \p DiagConsumer must properly
   /// synchronize access to shared state.
+  ///
+  /// Various messages are logged using \p Logger.
   ClangdServer(GlobalCompilationDatabase &CDB,
                DiagnosticsConsumer &DiagConsumer,
                FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
-               bool SnippetCompletions,
+               bool SnippetCompletions, clangd::Logger &Logger,
                llvm::Optional<StringRef> ResourceDir = llvm::None);
+
+  /// Set the root path of the workspace.
+  void setRootPath(PathRef RootPath);
 
   /// Add a \p File to the list of tracked C++ files or update the contents if
   /// \p File is already tracked. Also schedules parsing of the AST for it on a
@@ -241,6 +248,10 @@ public:
   /// Get definition of symbol at a specified \p Line and \p Column in \p File.
   Tagged<std::vector<Location>> findDefinitions(PathRef File, Position Pos);
 
+  /// Helper function that returns a path to the corresponding source file when
+  /// given a header file and vice versa.
+  llvm::Optional<Path> switchSourceHeader(PathRef Path);
+
   /// Run formatting for \p Rng inside \p File.
   std::vector<tooling::Replacement> formatRange(PathRef File, Range Rng);
   /// Run formatting for the whole \p File.
@@ -267,18 +278,27 @@ private:
 
   std::future<void> scheduleCancelRebuild(std::shared_ptr<CppFile> Resources);
 
+  clangd::Logger &Logger;
   GlobalCompilationDatabase &CDB;
   DiagnosticsConsumer &DiagConsumer;
   FileSystemProvider &FSProvider;
   DraftStore DraftMgr;
   CppFileCollection Units;
   std::string ResourceDir;
+  // If set, this represents the workspace path.
+  llvm::Optional<std::string> RootPath;
   std::shared_ptr<PCHContainerOperations> PCHs;
+  bool SnippetCompletions;
+  /// Used to serialize diagnostic callbacks.
+  /// FIXME(ibiryukov): get rid of an extra map and put all version counters
+  /// into CppFile.
+  std::mutex DiagnosticsMutex;
+  /// Maps from a filename to the latest version of reported diagnostics.
+  llvm::StringMap<DocVersion> ReportedDiagnosticVersions;
   // WorkScheduler has to be the last member, because its destructor has to be
   // called before all other members to stop the worker thread that references
   // ClangdServer
   ClangdScheduler WorkScheduler;
-  bool SnippetCompletions;
 };
 
 } // namespace clangd
