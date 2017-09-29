@@ -76,6 +76,7 @@ namespace readability {
     m(Member) \
     m(ClassConstant) \
     m(ClassMember) \
+    m(StaticMember) \
     m(GlobalConstant) \
     m(GlobalVariable) \
     m(LocalConstant) \
@@ -97,6 +98,7 @@ namespace readability {
     m(Function) \
     m(ConstexprMethod) \
     m(VirtualMethod) \
+    m(StaticMethod) \
     m(ClassMethod) \
     m(PrivateMethod) \
     m(ProtectedMethod) \
@@ -525,6 +527,9 @@ static StyleKind findStyleKind(
         NamingStyles[SK_Constant])
       return SK_Constant;
 
+	if (Decl->isStaticDataMember() && Decl->getStorageClass() == SC_Static && NamingStyles[SK_StaticMember])
+		return SK_StaticMember;
+
     if (Decl->isStaticDataMember() && NamingStyles[SK_ClassMember])
       return SK_ClassMember;
 
@@ -558,6 +563,9 @@ static StyleKind findStyleKind(
 
     if (Decl->isConstexpr() && NamingStyles[SK_ConstexprFunction])
       return SK_ConstexprFunction;
+
+	if (Decl->isStatic() && Decl->getStorageClass() == SC_Static && NamingStyles[SK_StaticMethod])
+		return SK_StaticMethod;
 
     if (Decl->isStatic() && NamingStyles[SK_ClassMethod])
       return SK_ClassMethod;
