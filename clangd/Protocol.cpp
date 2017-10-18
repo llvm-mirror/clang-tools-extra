@@ -182,7 +182,8 @@ std::string Location::unparse(const Location &P) {
 }
 
 llvm::Optional<TextDocumentItem>
-TextDocumentItem::parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+TextDocumentItem::parse(llvm::yaml::MappingNode *Params,
+                        clangd::Logger &Logger) {
   TextDocumentItem Result;
   for (auto &NextKeyValue : *Params) {
     auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
@@ -283,6 +284,68 @@ std::string TextEdit::unparse(const TextEdit &P) {
   llvm::raw_string_ostream(Result) << llvm::format(
       R"({"range": %s, "newText": "%s"})", Range::unparse(P.range).c_str(),
       llvm::yaml::escape(P.newText).c_str());
+  return Result;
+}
+
+namespace {
+TraceLevel getTraceLevel(llvm::StringRef TraceLevelStr,
+                         clangd::Logger &Logger) {
+  if (TraceLevelStr == "off")
+    return TraceLevel::Off;
+  else if (TraceLevelStr == "messages")
+    return TraceLevel::Messages;
+  else if (TraceLevelStr == "verbose")
+    return TraceLevel::Verbose;
+
+  Logger.log(llvm::formatv("Unknown trace level \"{0}\"\n", TraceLevelStr));
+  return TraceLevel::Off;
+}
+} // namespace
+
+llvm::Optional<InitializeParams>
+InitializeParams::parse(llvm::yaml::MappingNode *Params,
+                        clangd::Logger &Logger) {
+  // If we don't understand the params, proceed with default parameters.
+  auto ParseFailure = [&] {
+    Logger.log("Failed to decode InitializeParams\n");
+    return InitializeParams();
+  };
+  InitializeParams Result;
+  for (auto &NextKeyValue : *Params) {
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString)
+      return ParseFailure();
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+    auto *Value =
+        dyn_cast_or_null<llvm::yaml::ScalarNode>(NextKeyValue.getValue());
+    if (!Value)
+      continue;
+
+    if (KeyValue == "processId") {
+      auto *Value =
+          dyn_cast_or_null<llvm::yaml::ScalarNode>(NextKeyValue.getValue());
+      if (!Value)
+        return ParseFailure();
+      long long Val;
+      if (llvm::getAsSignedInteger(Value->getValue(KeyStorage), 0, Val))
+        return ParseFailure();
+      Result.processId = Val;
+    } else if (KeyValue == "rootPath") {
+      Result.rootPath = Value->getValue(KeyStorage);
+    } else if (KeyValue == "rootUri") {
+      Result.rootUri = URI::parse(Value);
+    } else if (KeyValue == "initializationOptions") {
+      // Not used
+    } else if (KeyValue == "capabilities") {
+      // Not used
+    } else if (KeyValue == "trace") {
+      Result.trace = getTraceLevel(Value->getValue(KeyStorage), Logger);
+    } else {
+      logIgnoredField(KeyValue, Logger);
+    }
+  }
   return Result;
 }
 
@@ -390,6 +453,84 @@ DidChangeTextDocumentParams::parse(llvm::yaml::MappingNode *Params,
   return Result;
 }
 
+llvm::Optional<FileEvent> FileEvent::parse(llvm::yaml::MappingNode *Params,
+                                           clangd::Logger &Logger) {
+  llvm::Optional<FileEvent> Result = FileEvent();
+  for (auto &NextKeyValue : *Params) {
+    // We have to consume the whole MappingNode because it doesn't support
+    // skipping and we want to be able to parse further valid events.
+    if (!Result)
+      continue;
+
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString) {
+      Result.reset();
+      continue;
+    }
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+    auto *Value =
+        dyn_cast_or_null<llvm::yaml::ScalarNode>(NextKeyValue.getValue());
+    if (!Value) {
+      Result.reset();
+      continue;
+    }
+    llvm::SmallString<10> Storage;
+    if (KeyValue == "uri") {
+      Result->uri = URI::parse(Value);
+    } else if (KeyValue == "type") {
+      long long Val;
+      if (llvm::getAsSignedInteger(Value->getValue(Storage), 0, Val)) {
+        Result.reset();
+        continue;
+      }
+      Result->type = static_cast<FileChangeType>(Val);
+      if (Result->type < FileChangeType::Created ||
+          Result->type > FileChangeType::Deleted)
+        Result.reset();
+    } else {
+      logIgnoredField(KeyValue, Logger);
+    }
+  }
+  return Result;
+}
+
+llvm::Optional<DidChangeWatchedFilesParams>
+DidChangeWatchedFilesParams::parse(llvm::yaml::MappingNode *Params,
+                                   clangd::Logger &Logger) {
+  DidChangeWatchedFilesParams Result;
+  for (auto &NextKeyValue : *Params) {
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString)
+      return llvm::None;
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+    auto *Value = NextKeyValue.getValue();
+
+    llvm::SmallString<10> Storage;
+    if (KeyValue == "changes") {
+      auto *Seq = dyn_cast<llvm::yaml::SequenceNode>(Value);
+      if (!Seq)
+        return llvm::None;
+      for (auto &Item : *Seq) {
+        auto *I = dyn_cast<llvm::yaml::MappingNode>(&Item);
+        if (!I)
+          return llvm::None;
+        auto Parsed = FileEvent::parse(I, Logger);
+        if (Parsed)
+          Result.changes.push_back(std::move(*Parsed));
+        else
+          Logger.log("Failed to decode a FileEvent.\n");
+      }
+    } else {
+      logIgnoredField(KeyValue, Logger);
+    }
+  }
+  return Result;
+}
+
 llvm::Optional<TextDocumentContentChangeEvent>
 TextDocumentContentChangeEvent::parse(llvm::yaml::MappingNode *Params,
                                       clangd::Logger &Logger) {
@@ -417,7 +558,8 @@ TextDocumentContentChangeEvent::parse(llvm::yaml::MappingNode *Params,
 }
 
 llvm::Optional<FormattingOptions>
-FormattingOptions::parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+FormattingOptions::parse(llvm::yaml::MappingNode *Params,
+                         clangd::Logger &Logger) {
   FormattingOptions Result;
   for (auto &NextKeyValue : *Params) {
     auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
@@ -632,7 +774,8 @@ llvm::Optional<Diagnostic> Diagnostic::parse(llvm::yaml::MappingNode *Params,
 }
 
 llvm::Optional<CodeActionContext>
-CodeActionContext::parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+CodeActionContext::parse(llvm::yaml::MappingNode *Params,
+                         clangd::Logger &Logger) {
   CodeActionContext Result;
   for (auto &NextKeyValue : *Params) {
     auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
@@ -665,7 +808,8 @@ CodeActionContext::parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger
 }
 
 llvm::Optional<CodeActionParams>
-CodeActionParams::parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+CodeActionParams::parse(llvm::yaml::MappingNode *Params,
+                        clangd::Logger &Logger) {
   CodeActionParams Result;
   for (auto &NextKeyValue : *Params) {
     auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
@@ -772,5 +916,60 @@ std::string CompletionItem::unparse(const CompletionItem &CI) {
   Os.flush();
   // Label is required, so Result is guaranteed to have a trailing comma.
   Result.back() = '}';
+  return Result;
+}
+
+std::string ParameterInformation::unparse(const ParameterInformation &PI) {
+  std::string Result = "{";
+  llvm::raw_string_ostream Os(Result);
+  assert(!PI.label.empty() && "parameter information label is required");
+  Os << R"("label":")" << llvm::yaml::escape(PI.label) << '\"';
+  if (!PI.documentation.empty())
+    Os << R"(,"documentation":")" << llvm::yaml::escape(PI.documentation)
+       << '\"';
+  Os << '}';
+  Os.flush();
+  return Result;
+}
+
+std::string SignatureInformation::unparse(const SignatureInformation &SI) {
+  std::string Result = "{";
+  llvm::raw_string_ostream Os(Result);
+  assert(!SI.label.empty() && "signature information label is required");
+  Os << R"("label":")" << llvm::yaml::escape(SI.label) << '\"';
+  if (!SI.documentation.empty())
+    Os << R"(,"documentation":")" << llvm::yaml::escape(SI.documentation)
+       << '\"';
+  Os << R"(,"parameters":[)";
+  for (const auto &Parameter : SI.parameters) {
+    Os << ParameterInformation::unparse(Parameter) << ',';
+  }
+  Os.flush();
+  if (SI.parameters.empty())
+    Result.push_back(']');
+  else
+    Result.back() = ']'; // Replace the last `,` with an `]`.
+  Result.push_back('}');
+  return Result;
+}
+
+std::string SignatureHelp::unparse(const SignatureHelp &SH) {
+  std::string Result = "{";
+  llvm::raw_string_ostream Os(Result);
+  assert(SH.activeSignature >= 0 &&
+         "Unexpected negative value for number of active signatures.");
+  assert(SH.activeParameter >= 0 &&
+         "Unexpected negative value for active parameter index");
+  Os << R"("activeSignature":)" << SH.activeSignature
+     << R"(,"activeParameter":)" << SH.activeParameter << R"(,"signatures":[)";
+  for (const auto &Signature : SH.signatures) {
+    Os << SignatureInformation::unparse(Signature) << ',';
+  }
+  Os.flush();
+  if (SH.signatures.empty())
+    Result.push_back(']');
+  else
+    Result.back() = ']'; // Replace the last `,` with an `]`.
+  Result.push_back('}');
   return Result;
 }

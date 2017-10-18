@@ -10,9 +10,10 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 
+#include "Function.h"
 #include "Path.h"
 #include "Protocol.h"
-#include "clang/Frontend/ASTUnit.h"
+#include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/PrecompiledPreamble.h"
 #include "clang/Serialization/ASTBitCodes.h"
 #include "clang/Tooling/CompilationDatabase.h"
@@ -27,7 +28,6 @@ class raw_ostream;
 }
 
 namespace clang {
-class ASTUnit;
 class PCHContainerOperations;
 
 namespace vfs {
@@ -158,12 +158,11 @@ public:
   void cancelRebuild();
 
   /// Similar to deferRebuild, but sets both Preamble and AST to nulls instead
-  /// of doing an actual parsing. Returned future is a deferred computation that
-  /// will wait for any ongoing rebuilds to finish and actually set the AST and
-  /// Preamble to nulls. It can be run on a different thread.
-  /// This function is useful to cancel ongoing rebuilds, if any, before
-  /// removing CppFile.
-  std::future<void> deferCancelRebuild();
+  /// of doing an actual parsing. Returned function is a deferred computation
+  /// that will wait for any ongoing rebuilds to finish and actually set the AST
+  /// and Preamble to nulls. It can be run on a different thread. This function
+  /// is useful to cancel ongoing rebuilds, if any, before removing CppFile.
+  UniqueFunction<void()> deferCancelRebuild();
 
   /// Rebuild AST and Preamble synchronously on the calling thread.
   /// Returns a list of diagnostics or a llvm::None, if another rebuild was
@@ -176,8 +175,8 @@ public:
   /// rebuild, that can be called on a different thread.
   /// After calling this method, resources, available via futures returned by
   /// getPreamble() and getAST(), will be waiting for rebuild to finish. A
-  /// future fininshing rebuild, returned by this function, must be
-  /// computed(i.e. get() should be called on it) in order to make those
+  /// continuation fininshing rebuild, returned by this function, must be
+  /// computed(i.e., operator() must be called on it) in order to make those
   /// resources ready. If deferRebuild is called again before the rebuild is
   /// finished (either because returned future had not been called or because it
   /// had not returned yet), the previous rebuild request is cancelled and the
@@ -186,7 +185,7 @@ public:
   /// The future to finish rebuild returns a list of diagnostics built during
   /// reparse, or None, if another deferRebuild was called before this
   /// rebuild was finished.
-  std::future<llvm::Optional<std::vector<DiagWithFixIts>>>
+  UniqueFunction<llvm::Optional<std::vector<DiagWithFixIts>>()>
   deferRebuild(StringRef NewContents, IntrusiveRefCntPtr<vfs::FileSystem> VFS);
 
   /// Returns a future to get the most fresh PreambleData for a file. The
@@ -259,6 +258,14 @@ codeComplete(PathRef FileName, tooling::CompileCommand Command,
              Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
              std::shared_ptr<PCHContainerOperations> PCHs,
              bool SnippetCompletions, clangd::Logger &Logger);
+
+/// Get signature help at a specified \p Pos in \p FileName.
+SignatureHelp signatureHelp(PathRef FileName, tooling::CompileCommand Command,
+                            PrecompiledPreamble const *Preamble,
+                            StringRef Contents, Position Pos,
+                            IntrusiveRefCntPtr<vfs::FileSystem> VFS,
+                            std::shared_ptr<PCHContainerOperations> PCHs,
+                            clangd::Logger &Logger);
 
 /// Get definition of symbol at a specified \p Pos.
 std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,

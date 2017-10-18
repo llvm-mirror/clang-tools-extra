@@ -37,38 +37,50 @@ void JSONOutput::log(const Twine &Message) {
   Logs.flush();
 }
 
-void Handler::handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) {
-  Output.log("Method ignored.\n");
-  // Return that this method is unsupported.
-  writeMessage(
-      R"({"jsonrpc":"2.0","id":)" + ID +
-      R"(,"error":{"code":-32601}})");
+void JSONOutput::mirrorInput(const Twine &Message) {
+  if (!InputMirror)
+    return;
+
+  *InputMirror << Message;
+  InputMirror->flush();
 }
 
-void Handler::handleNotification(llvm::yaml::MappingNode *Params) {
-  Output.log("Notification ignored.\n");
+void RequestContext::reply(const llvm::Twine &Result) {
+  if (ID.empty()) {
+    Out.log("Attempted to reply to a notification!\n");
+    return;
+  }
+  Out.writeMessage(llvm::Twine(R"({"jsonrpc":"2.0","id":)") + ID +
+                   R"(,"result":)" + Result + "}");
 }
 
-void JSONRPCDispatcher::registerHandler(StringRef Method,
-                                        std::unique_ptr<Handler> H) {
+void RequestContext::replyError(int code, const llvm::StringRef &Message) {
+  Out.log("Error " + llvm::Twine(code) + ": " + Message + "\n");
+  if (!ID.empty()) {
+    Out.writeMessage(llvm::Twine(R"({"jsonrpc":"2.0","id":)") + ID +
+                     R"(,"error":{"code":)" + llvm::Twine(code) +
+                     R"(,"message":")" + llvm::yaml::escape(Message) +
+                     R"("}})");
+  }
+}
+
+void JSONRPCDispatcher::registerHandler(StringRef Method, Handler H) {
   assert(!Handlers.count(Method) && "Handler already registered!");
   Handlers[Method] = std::move(H);
 }
 
 static void
-callHandler(const llvm::StringMap<std::unique_ptr<Handler>> &Handlers,
+callHandler(const llvm::StringMap<JSONRPCDispatcher::Handler> &Handlers,
             llvm::yaml::ScalarNode *Method, llvm::yaml::ScalarNode *Id,
-            llvm::yaml::MappingNode *Params, Handler *UnknownHandler) {
-  llvm::SmallString<10> MethodStorage;
+            llvm::yaml::MappingNode *Params,
+            const JSONRPCDispatcher::Handler &UnknownHandler, JSONOutput &Out) {
+  llvm::SmallString<64> MethodStorage;
   auto I = Handlers.find(Method->getValue(MethodStorage));
-  auto *Handler = I != Handlers.end() ? I->second.get() : UnknownHandler;
-  if (Id)
-    Handler->handleMethod(Params, Id->getRawValue());
-  else
-    Handler->handleNotification(Params);
+  auto &Handler = I != Handlers.end() ? I->second : UnknownHandler;
+  Handler(RequestContext(Out, Id ? Id->getRawValue() : ""), Params);
 }
 
-bool JSONRPCDispatcher::call(StringRef Content) const {
+bool JSONRPCDispatcher::call(StringRef Content, JSONOutput &Out) const {
   llvm::SourceMgr SM;
   llvm::yaml::Stream YAMLStream(Content, SM);
 
@@ -116,7 +128,7 @@ bool JSONRPCDispatcher::call(StringRef Content) const {
       // because it will break clients that put the id after params. A possible
       // fix would be to split the parsing and execution phases.
       Params = dyn_cast<llvm::yaml::MappingNode>(Value);
-      callHandler(Handlers, Method, Id, Params, UnknownHandler.get());
+      callHandler(Handlers, Method, Id, Params, UnknownHandler, Out);
       return true;
     } else {
       return false;
@@ -127,7 +139,7 @@ bool JSONRPCDispatcher::call(StringRef Content) const {
   // leftovers.
   if (!Method)
     return false;
-  callHandler(Handlers, Method, Id, nullptr, UnknownHandler.get());
+  callHandler(Handlers, Method, Id, nullptr, UnknownHandler, Out);
 
   return true;
 }
@@ -147,6 +159,14 @@ void clangd::runLanguageServerLoop(std::istream &In, JSONOutput &Out,
         continue;
       }
 
+      Out.mirrorInput(Line);
+      // Mirror '\n' that gets consumed by std::getline, but is not included in
+      // the resulting Line.
+      // Note that '\r' is part of Line, so we don't need to mirror it
+      // separately.
+      if (!In.eof())
+        Out.mirrorInput("\n");
+
       llvm::StringRef LineRef(Line);
 
       // We allow YAML-style comments in headers. Technically this isn't part
@@ -163,9 +183,8 @@ void clangd::runLanguageServerLoop(std::istream &In, JSONOutput &Out,
       if (LineRef.consume_front("Content-Length: ")) {
         if (ContentLength != 0) {
           Out.log("Warning: Duplicate Content-Length header received. "
-                  "The previous value for this message ("
-                  + std::to_string(ContentLength)
-                  + ") was ignored.\n");
+                  "The previous value for this message (" +
+                  std::to_string(ContentLength) + ") was ignored.\n");
         }
 
         llvm::getAsUnsignedInteger(LineRef.trim(), 0, ContentLength);
@@ -185,15 +204,13 @@ void clangd::runLanguageServerLoop(std::istream &In, JSONOutput &Out,
       // parser.
       std::vector<char> JSON(ContentLength + 1, '\0');
       In.read(JSON.data(), ContentLength);
+      Out.mirrorInput(StringRef(JSON.data(), In.gcount()));
 
       // If the stream is aborted before we read ContentLength bytes, In
       // will have eofbit and failbit set.
       if (!In) {
-        Out.log("Input was aborted. Read only "
-                + std::to_string(In.gcount())
-                + " bytes of expected "
-                + std::to_string(ContentLength)
-                + ".\n");
+        Out.log("Input was aborted. Read only " + std::to_string(In.gcount()) +
+                " bytes of expected " + std::to_string(ContentLength) + ".\n");
         break;
       }
 
@@ -202,15 +219,15 @@ void clangd::runLanguageServerLoop(std::istream &In, JSONOutput &Out,
       Out.log("<-- " + JSONRef + "\n");
 
       // Finally, execute the action for this JSON message.
-      if (!Dispatcher.call(JSONRef))
+      if (!Dispatcher.call(JSONRef, Out))
         Out.log("JSON dispatch failed!\n");
 
       // If we're done, exit the loop.
       if (IsDone)
         break;
     } else {
-      Out.log( "Warning: Missing Content-Length header, or message has zero "
-               "length.\n" );
+      Out.log("Warning: Missing Content-Length header, or message has zero "
+              "length.\n");
     }
   }
 }

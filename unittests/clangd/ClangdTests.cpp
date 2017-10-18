@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ClangdLSPServer.h"
 #include "ClangdServer.h"
 #include "Logger.h"
 #include "clang/Basic/VirtualFileSystem.h"
@@ -472,13 +473,13 @@ TEST_F(ClangdVFSTest, CheckVersions) {
   // thread.
   FS.Tag = "123";
   Server.addDocument(FooCpp, SourceContents);
-  EXPECT_EQ(Server.codeComplete(FooCpp, Position{0, 0}).Tag, FS.Tag);
+  EXPECT_EQ(Server.codeComplete(FooCpp, Position{0, 0}).get().Tag, FS.Tag);
   EXPECT_EQ(DiagConsumer.lastVFSTag(), FS.Tag);
 
   FS.Tag = "321";
   Server.addDocument(FooCpp, SourceContents);
   EXPECT_EQ(DiagConsumer.lastVFSTag(), FS.Tag);
-  EXPECT_EQ(Server.codeComplete(FooCpp, Position{0, 0}).Tag, FS.Tag);
+  EXPECT_EQ(Server.codeComplete(FooCpp, Position{0, 0}).get().Tag, FS.Tag);
 }
 
 // Only enable this test on Unix
@@ -630,7 +631,7 @@ int b =   ;
 
   {
     auto CodeCompletionResults1 =
-        Server.codeComplete(FooCpp, CompletePos, None).Value;
+        Server.codeComplete(FooCpp, CompletePos, None).get().Value;
     EXPECT_TRUE(ContainsItem(CodeCompletionResults1, "aba"));
     EXPECT_FALSE(ContainsItem(CodeCompletionResults1, "cbc"));
   }
@@ -640,6 +641,7 @@ int b =   ;
         Server
             .codeComplete(FooCpp, CompletePos,
                           StringRef(OverridenSourceContents))
+            .get()
             .Value;
     EXPECT_TRUE(ContainsItem(CodeCompletionResultsOverriden, "cbc"));
     EXPECT_FALSE(ContainsItem(CodeCompletionResultsOverriden, "aba"));
@@ -647,7 +649,7 @@ int b =   ;
 
   {
     auto CodeCompletionResults2 =
-        Server.codeComplete(FooCpp, CompletePos, None).Value;
+        Server.codeComplete(FooCpp, CompletePos, None).get().Value;
     EXPECT_TRUE(ContainsItem(CodeCompletionResults2, "aba"));
     EXPECT_FALSE(ContainsItem(CodeCompletionResults2, "cbc"));
   }
@@ -839,7 +841,13 @@ int d;
         AddDocument(FileIndex);
 
       Position Pos{LineDist(RandGen), ColumnDist(RandGen)};
-      Server.codeComplete(FilePaths[FileIndex], Pos);
+      // FIXME(ibiryukov): Also test async completion requests.
+      // Simply putting CodeCompletion into async requests now would make
+      // tests slow, since there's no way to cancel previous completion
+      // requests as opposed to AddDocument/RemoveDocument, which are implicitly
+      // cancelled by any subsequent AddDocument/RemoveDocument request to the
+      // same file.
+      Server.codeComplete(FilePaths[FileIndex], Pos).wait();
     };
 
     auto FindDefinitionsRequest = [&]() {
@@ -897,6 +905,84 @@ int d;
     ASSERT_LE(Stats[I].HitsWithErrors, ReqStats[I].RequestsWithErrors);
     ASSERT_LE(Stats[I].HitsWithoutErrors, ReqStats[I].RequestsWithoutErrors);
   }
+}
+
+TEST_F(ClangdVFSTest, CheckSourceHeaderSwitch) {
+  MockFSProvider FS;
+  ErrorCheckingDiagConsumer DiagConsumer;
+  MockCompilationDatabase CDB(/*AddFreestandingFlag=*/true);
+
+  ClangdServer Server(CDB, DiagConsumer, FS, getDefaultAsyncThreadsCount(),
+                      /*SnippetCompletions=*/false, EmptyLogger::getInstance());
+
+  auto SourceContents = R"cpp(
+  #include "foo.h"
+  int b = a;
+  )cpp";
+
+  auto FooCpp = getVirtualTestFilePath("foo.cpp");
+  auto FooH = getVirtualTestFilePath("foo.h");
+  auto Invalid = getVirtualTestFilePath("main.cpp");
+
+  FS.Files[FooCpp] = SourceContents;
+  FS.Files[FooH] = "int a;";
+  FS.Files[Invalid] = "int main() { \n return 0; \n }";
+
+  llvm::Optional<Path> PathResult = Server.switchSourceHeader(FooCpp);
+  EXPECT_TRUE(PathResult.hasValue());
+  ASSERT_EQ(PathResult.getValue(), FooH);
+
+  PathResult = Server.switchSourceHeader(FooH);
+  EXPECT_TRUE(PathResult.hasValue());
+  ASSERT_EQ(PathResult.getValue(), FooCpp);
+
+  SourceContents = R"c(
+  #include "foo.HH"
+  int b = a;
+  )c";
+
+  // Test with header file in capital letters and different extension, source
+  // file with different extension
+  auto FooC = getVirtualTestFilePath("bar.c");
+  auto FooHH = getVirtualTestFilePath("bar.HH");
+
+  FS.Files[FooC] = SourceContents;
+  FS.Files[FooHH] = "int a;";
+
+  PathResult = Server.switchSourceHeader(FooC);
+  EXPECT_TRUE(PathResult.hasValue());
+  ASSERT_EQ(PathResult.getValue(), FooHH);
+
+  // Test with both capital letters
+  auto Foo2C = getVirtualTestFilePath("foo2.C");
+  auto Foo2HH = getVirtualTestFilePath("foo2.HH");
+  FS.Files[Foo2C] = SourceContents;
+  FS.Files[Foo2HH] = "int a;";
+
+  PathResult = Server.switchSourceHeader(Foo2C);
+  EXPECT_TRUE(PathResult.hasValue());
+  ASSERT_EQ(PathResult.getValue(), Foo2HH);
+
+  // Test with source file as capital letter and .hxx header file
+  auto Foo3C = getVirtualTestFilePath("foo3.C");
+  auto Foo3HXX = getVirtualTestFilePath("foo3.hxx");
+
+  SourceContents = R"c(
+  #include "foo3.hxx"
+  int b = a;
+  )c";
+
+  FS.Files[Foo3C] = SourceContents;
+  FS.Files[Foo3HXX] = "int a;";
+
+  PathResult = Server.switchSourceHeader(Foo3C);
+  EXPECT_TRUE(PathResult.hasValue());
+  ASSERT_EQ(PathResult.getValue(), Foo3HXX);
+
+  // Test if asking for a corresponding file that doesn't exist returns an empty
+  // string.
+  PathResult = Server.switchSourceHeader(Invalid);
+  EXPECT_FALSE(PathResult.hasValue());
 }
 
 TEST_F(ClangdThreadingTest, NoConcurrentDiagnostics) {
