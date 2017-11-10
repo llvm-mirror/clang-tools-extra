@@ -173,6 +173,16 @@ struct PositiveString {
   // CHECK-FIXES: const char *s{"foo"};
 };
 
+struct PositiveStruct {
+  PositiveStruct() : s(7) {}
+  // CHECK-FIXES: PositiveStruct()  {}
+  struct {
+    int s;
+    // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: use default member initializer for 's'
+    // CHECK-FIXES: int s{7};
+  };
+};
+
 template <typename T>
 struct NegativeTemplate {
     NegativeTemplate() : t() {}
@@ -380,3 +390,12 @@ struct NegativeTemplateExisting {
 
 NegativeTemplateExisting<int> ntei(0);
 NegativeTemplateExisting<double> nted(0);
+
+// This resulted in a warning by default.
+#define MACRO() \
+  struct MacroS { \
+    void *P; \
+    MacroS() : P(nullptr) {} \
+  };
+
+MACRO();

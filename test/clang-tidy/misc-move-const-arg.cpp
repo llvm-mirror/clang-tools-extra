@@ -10,7 +10,9 @@ template <typename _Tp> struct remove_reference<_Tp &> { typedef _Tp type; };
 template <typename _Tp> struct remove_reference<_Tp &&> { typedef _Tp type; };
 
 template <typename _Tp>
-constexpr typename std::remove_reference<_Tp>::type &&move(_Tp &&__t);
+constexpr typename std::remove_reference<_Tp>::type &&move(_Tp &&__t) {
+  return static_cast<typename std::remove_reference<_Tp>::type &&>(__t);
+}
 
 } // namespace std
 
@@ -157,4 +159,20 @@ void moveToConstReferenceNegatives() {
   // No warning inside of macro expansion, even if the macro expansion is inside
   // a lambda that is, in turn, an argument to a macro.
   CALL([no_move_semantics] { M3(NoMoveSemantics, no_move_semantics); });
+
+  auto lambda = [] {};
+  auto lambda2 = std::move(lambda);
+}
+
+class MoveOnly {
+public:
+  MoveOnly(const MoveOnly &other) = delete;
+  MoveOnly &operator=(const MoveOnly &other) = delete;
+  MoveOnly(MoveOnly &&other) = default;
+  MoveOnly &operator=(MoveOnly &&other) = default;
+};
+template <class T>
+void Q(T);
+void moveOnlyNegatives(MoveOnly val) {
+  Q(std::move(val));
 }

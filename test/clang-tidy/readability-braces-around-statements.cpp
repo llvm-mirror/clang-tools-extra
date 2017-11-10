@@ -172,6 +172,18 @@ void test() {
   // CHECK-FIXES-NEXT: }
 }
 
+void f(const char *p) {
+  if (!p)
+    f("\
+");
+} // end of f
+// CHECK-MESSAGES: :[[@LINE-4]]:10: warning: statement should be inside braces
+// CHECK-FIXES:      {{^}}  if (!p) {{{$}}
+// CHECK-FIXES-NEXT: {{^}}    f("\{{$}}
+// CHECK-FIXES-NEXT: {{^}}");{{$}}
+// CHECK-FIXES-NEXT: {{^}}}{{$}}
+// CHECK-FIXES-NEXT: {{^}}} // end of f{{$}}
+
 #define M(x) x
 
 int test_macros(bool b) {

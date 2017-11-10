@@ -407,7 +407,7 @@ static std::string getMacroExpandedString(clang::Preprocessor &PP,
   // Walk over the macro Tokens.
   for (const auto &T : MI->tokens()) {
     clang::IdentifierInfo *II = T.getIdentifierInfo();
-    int ArgNo = (II && Args ? MI->getArgumentNum(II) : -1);
+    int ArgNo = (II && Args ? MI->getParameterNum(II) : -1);
     if (ArgNo == -1) {
       // This isn't an argument, just add it.
       if (II == nullptr)
@@ -429,7 +429,7 @@ static std::string getMacroExpandedString(clang::Preprocessor &PP,
     const clang::Token *ArgTok = Args->getUnexpArgument(ArgNo);
     if (Args->ArgNeedsPreexpansion(ArgTok, PP))
       ResultArgToks = &(const_cast<clang::MacroArgs *>(Args))
-          ->getPreExpArgument(ArgNo, MI, PP)[0];
+          ->getPreExpArgument(ArgNo, PP)[0];
     else
       ResultArgToks = ArgTok; // Use non-preexpanded Tokens.
     // If the arg token didn't expand into anything, ignore it.

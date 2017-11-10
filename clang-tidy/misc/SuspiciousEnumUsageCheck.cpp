@@ -42,7 +42,8 @@ struct ValueRange {
     const auto MinMaxVal = std::minmax_element(
         EnumDec->enumerator_begin(), EnumDec->enumerator_end(),
         [](const EnumConstantDecl *E1, const EnumConstantDecl *E2) {
-          return E1->getInitVal() < E2->getInitVal();
+          return llvm::APSInt::compareValues(E1->getInitVal(),
+                                             E2->getInitVal()) < 0;
         });
     MinVal = MinMaxVal.first->getInitVal();
     MaxVal = MinMaxVal.second->getInitVal();
@@ -57,7 +58,8 @@ static int enumLength(const EnumDecl *EnumDec) {
 static bool hasDisjointValueRange(const EnumDecl *Enum1,
                                   const EnumDecl *Enum2) {
   ValueRange Range1(Enum1), Range2(Enum2);
-  return (Range1.MaxVal < Range2.MinVal) || (Range2.MaxVal < Range1.MinVal);
+  return llvm::APSInt::compareValues(Range1.MaxVal, Range2.MinVal) < 0 ||
+         llvm::APSInt::compareValues(Range2.MaxVal, Range1.MinVal) < 0;
 }
 
 static bool isNonPowerOf2NorNullLiteral(const EnumConstantDecl *EnumConst) {
@@ -108,7 +110,8 @@ static bool isPossiblyBitMask(const EnumDecl *EnumDec) {
 
 SuspiciousEnumUsageCheck::SuspiciousEnumUsageCheck(StringRef Name,
                                                    ClangTidyContext *Context)
-    : ClangTidyCheck(Name, Context), StrictMode(Options.get("StrictMode", 0)) {}
+    : ClangTidyCheck(Name, Context),
+      StrictMode(Options.getLocalOrGlobal("StrictMode", 0)) {}
 
 void SuspiciousEnumUsageCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
   Options.store(Opts, "StrictMode", StrictMode);

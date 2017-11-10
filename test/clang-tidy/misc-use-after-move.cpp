@@ -723,6 +723,11 @@ void standardContainerClearIsReinit() {
     std::move(container);
     container.clear();
     container.empty();
+
+    auto container2 = container;
+    std::move(container2);
+    container2.clear();
+    container2.empty();
   }
   {
     std::deque<int> container;
@@ -1136,4 +1141,24 @@ void ifStmtSequencesDeclAndCondition() {
       std::move(a);
     }
   }
+}
+
+namespace PR33020 {
+class D {
+  ~D();
+};
+struct A {
+  D d;
+};
+class B {
+  A a;
+};
+template <typename T>
+class C : T, B {
+  void m_fn1() {
+    int a;
+    std::move(a);
+    C c;
+  }
+};
 }

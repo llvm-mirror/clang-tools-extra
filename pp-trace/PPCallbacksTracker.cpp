@@ -324,7 +324,8 @@ PPCallbacksTracker::MacroDefined(const clang::Token &MacroNameTok,
 // Hook called whenever a macro #undef is seen.
 void PPCallbacksTracker::MacroUndefined(
     const clang::Token &MacroNameTok,
-    const clang::MacroDefinition &MacroDefinition) {
+    const clang::MacroDefinition &MacroDefinition,
+    const clang::MacroDirective *Undef) {
   beginCallback("MacroUndefined");
   appendArgument("MacroNameTok", MacroNameTok);
   appendArgument("MacroDefinition", MacroDefinition);
@@ -341,9 +342,10 @@ void PPCallbacksTracker::Defined(const clang::Token &MacroNameTok,
 }
 
 // Hook called when a source range is skipped.
-void PPCallbacksTracker::SourceRangeSkipped(clang::SourceRange Range) {
+void PPCallbacksTracker::SourceRangeSkipped(clang::SourceRange Range,
+                                            clang::SourceLocation EndifLoc) {
   beginCallback("SourceRangeSkipped");
-  appendArgument("Range", Range);
+  appendArgument("Range", clang::SourceRange(Range.getBegin(), EndifLoc));
 }
 
 // Hook called whenever an #if is seen.
@@ -587,19 +589,16 @@ void PPCallbacksTracker::appendArgument(const char *Name,
   std::string Str;
   llvm::raw_string_ostream SS(Str);
   SS << "[";
-  // The argument tokens might include end tokens, so we reflect how
-  // how getUnexpArgument provides the arguments.
-  for (int I = 0, E = Value->getNumArguments(); I < E; ++I) {
+
+  // Each argument is is a series of contiguous Tokens, terminated by a eof.
+  // Go through each argument printing tokens until we reach eof.
+  for (unsigned I = 0; I < Value->getNumMacroArguments(); ++I) {
     const clang::Token *Current = Value->getUnexpArgument(I);
-    int TokenCount = Value->getArgLength(Current) + 1; // include EOF
-    E -= TokenCount;
     if (I)
       SS << ", ";
-    // We're assuming tokens are contiguous, as otherwise we have no
-    // other way to get at them.
-    --TokenCount;
-    for (int TokenIndex = 0; TokenIndex < TokenCount; ++TokenIndex, ++Current) {
-      if (TokenIndex)
+    bool First = true;
+    while (Current->isNot(clang::tok::eof)) {
+      if (!First)
         SS << " ";
       // We need to be careful here because the arguments might not be legal in
       // YAML, so we use the token name for anything but identifiers and
@@ -610,6 +609,8 @@ void PPCallbacksTracker::appendArgument(const char *Name,
       } else {
         SS << "<" << Current->getName() << ">";
       }
+      ++Current;
+      First = false;
     }
   }
   SS << "]";

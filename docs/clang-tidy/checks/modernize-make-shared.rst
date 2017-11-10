@@ -25,3 +25,26 @@ expression, and replaces it with a call to ``std::make_shared``.
   // becomes
 
   my_ptr = std::make_shared<MyPair>(1, 2);
+
+Options
+-------
+
+.. option:: MakeSmartPtrFunction
+
+   A string specifying the name of make-shared-ptr function. Default is
+   `std::make_shared`.
+
+.. option:: MakeSmartPtrFunctionHeader
+
+   A string specifying the corresponding header of make-shared-ptr function.
+   Default is `memory`.
+
+.. option:: IncludeStyle
+
+   A string specifying which include-style is used, `llvm` or `google`. Default
+   is `llvm`.
+
+.. option:: IgnoreMacros
+
+   If set to non-zero, the check will not give warnings inside macros. Default
+   is `1`.

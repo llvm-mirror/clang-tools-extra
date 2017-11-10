@@ -21,7 +21,7 @@ namespace misc {
 MisplacedWideningCastCheck::MisplacedWideningCastCheck(
     StringRef Name, ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context),
-      CheckImplicitCasts(Options.get("CheckImplicitCasts", true)) {}
+      CheckImplicitCasts(Options.get("CheckImplicitCasts", false)) {}
 
 void MisplacedWideningCastCheck::storeOptions(
     ClangTidyOptions::OptionMap &Opts) {
@@ -190,6 +190,10 @@ void MisplacedWideningCastCheck::check(const MatchFinder::MatchResult &Result) {
 
   const auto *Calc = Result.Nodes.getNodeAs<Expr>("Calc");
   if (Calc->getLocStart().isMacroID())
+    return;
+
+  if (Cast->isTypeDependent() || Cast->isValueDependent() ||
+      Calc->isTypeDependent() || Calc->isValueDependent())
     return;
 
   ASTContext &Context = *Result.Context;

@@ -7,8 +7,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains the actions performed when the server gets a specific
-// request.
+// ProtocolHandlers translates incoming JSON requests from JSONRPCDispatcher
+// into method calls on ClangLSPServer.
+//
+// Currently it parses requests into objects, but the ClangLSPServer is
+// responsible for producing JSON responses. We should move that here, too.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,97 +25,37 @@
 
 namespace clang {
 namespace clangd {
-class ASTManager;
-class DocumentStore;
 
-struct InitializeHandler : Handler {
-  InitializeHandler(JSONOutput &Output) : Handler(Output) {}
+// The interface implemented by ClangLSPServer to handle incoming requests.
+class ProtocolCallbacks {
+public:
+  using Ctx = RequestContext;
+  virtual ~ProtocolCallbacks() = default;
 
-  void handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) override {
-    writeMessage(
-        R"({"jsonrpc":"2.0","id":)" + ID +
-        R"(,"result":{"capabilities":{
-          "textDocumentSync": 1,
-          "documentFormattingProvider": true,
-          "documentRangeFormattingProvider": true,
-          "documentOnTypeFormattingProvider": {"firstTriggerCharacter":"}","moreTriggerCharacter":[]},
-          "codeActionProvider": true
-        }}})");
-  }
+  virtual void onInitialize(Ctx C, InitializeParams &Params) = 0;
+  virtual void onShutdown(Ctx C, ShutdownParams &Params) = 0;
+  virtual void onExit(Ctx C, ExitParams &Params) = 0;
+  virtual void onDocumentDidOpen(Ctx C, DidOpenTextDocumentParams &Params) = 0;
+  virtual void onDocumentDidChange(Ctx C,
+                                   DidChangeTextDocumentParams &Params) = 0;
+  virtual void onDocumentDidClose(Ctx C,
+                                  DidCloseTextDocumentParams &Params) = 0;
+  virtual void onDocumentFormatting(Ctx C,
+                                    DocumentFormattingParams &Params) = 0;
+  virtual void
+  onDocumentOnTypeFormatting(Ctx C, DocumentOnTypeFormattingParams &Params) = 0;
+  virtual void
+  onDocumentRangeFormatting(Ctx C, DocumentRangeFormattingParams &Params) = 0;
+  virtual void onCodeAction(Ctx C, CodeActionParams &Params) = 0;
+  virtual void onCompletion(Ctx C, TextDocumentPositionParams &Params) = 0;
+  virtual void onSignatureHelp(Ctx C, TextDocumentPositionParams &Params) = 0;
+  virtual void onGoToDefinition(Ctx C, TextDocumentPositionParams &Params) = 0;
+  virtual void onSwitchSourceHeader(Ctx C, TextDocumentIdentifier &Params) = 0;
+  virtual void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) = 0;
 };
 
-struct ShutdownHandler : Handler {
-  ShutdownHandler(JSONOutput &Output) : Handler(Output) {}
-
-  void handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) override {
-    IsDone = true;
-  }
-
-  bool isDone() const { return IsDone; }
-
-private:
-  bool IsDone = false;
-};
-
-struct TextDocumentDidOpenHandler : Handler {
-  TextDocumentDidOpenHandler(JSONOutput &Output, DocumentStore &Store)
-      : Handler(Output), Store(Store) {}
-
-  void handleNotification(llvm::yaml::MappingNode *Params) override;
-
-private:
-  DocumentStore &Store;
-};
-
-struct TextDocumentDidChangeHandler : Handler {
-  TextDocumentDidChangeHandler(JSONOutput &Output, DocumentStore &Store)
-      : Handler(Output), Store(Store) {}
-
-  void handleNotification(llvm::yaml::MappingNode *Params) override;
-
-private:
-  DocumentStore &Store;
-};
-
-struct TextDocumentOnTypeFormattingHandler : Handler {
-  TextDocumentOnTypeFormattingHandler(JSONOutput &Output, DocumentStore &Store)
-      : Handler(Output), Store(Store) {}
-
-  void handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) override;
-
-private:
-  DocumentStore &Store;
-};
-
-struct TextDocumentRangeFormattingHandler : Handler {
-  TextDocumentRangeFormattingHandler(JSONOutput &Output, DocumentStore &Store)
-      : Handler(Output), Store(Store) {}
-
-  void handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) override;
-
-private:
-  DocumentStore &Store;
-};
-
-struct TextDocumentFormattingHandler : Handler {
-  TextDocumentFormattingHandler(JSONOutput &Output, DocumentStore &Store)
-      : Handler(Output), Store(Store) {}
-
-  void handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) override;
-
-private:
-  DocumentStore &Store;
-};
-
-struct CodeActionHandler : Handler {
-  CodeActionHandler(JSONOutput &Output, ASTManager &AST)
-      : Handler(Output), AST(AST) {}
-
-  void handleMethod(llvm::yaml::MappingNode *Params, StringRef ID) override;
-
-private:
-  ASTManager &AST;
-};
+void registerCallbackHandlers(JSONRPCDispatcher &Dispatcher, JSONOutput &Out,
+                              ProtocolCallbacks &Callbacks);
 
 } // namespace clangd
 } // namespace clang

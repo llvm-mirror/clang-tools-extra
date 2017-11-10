@@ -140,11 +140,13 @@ public:
   void MacroDefined(const clang::Token &MacroNameTok,
                     const clang::MacroDirective *MD) override;
   void MacroUndefined(const clang::Token &MacroNameTok,
-                      const clang::MacroDefinition &MD) override;
+                      const clang::MacroDefinition &MD,
+                      const clang::MacroDirective *Undef) override;
   void Defined(const clang::Token &MacroNameTok,
                const clang::MacroDefinition &MD,
                clang::SourceRange Range) override;
-  void SourceRangeSkipped(clang::SourceRange Range) override;
+  void SourceRangeSkipped(clang::SourceRange Range,
+                          clang::SourceLocation EndifLoc) override;
   void If(clang::SourceLocation Loc, clang::SourceRange ConditionRange,
           ConditionValueKind ConditionValue) override;
   void Elif(clang::SourceLocation Loc, clang::SourceRange ConditionRange,

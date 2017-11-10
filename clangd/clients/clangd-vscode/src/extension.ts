@@ -2,18 +2,41 @@ import * as vscode from 'vscode';
 import * as vscodelc from 'vscode-languageclient';
 
 /**
+ * Method to get workspace configuration option
+ * @param option name of the option (e.g. for clangd.path should be path)
+ * @param defaultValue default value to return if option is not set
+ */
+function getConfig<T>(option: string, defaultValue?: any) : T {
+    const config = vscode.workspace.getConfiguration('clangd');
+    return config.get<T>(option, defaultValue);
+}
+
+/**
  *  this method is called when your extension is activate
  *  your extension is activated the very first time the command is executed
  */
 export function activate(context: vscode.ExtensionContext) {
-    // TODO: make this configurable
-    const clangdPath = '/usr/bin/clangd';
+    const clangdPath = getConfig<string>('path');
+    const clangdArgs = getConfig<string[]>('arguments');
+    const syncFileEvents = getConfig<boolean>('syncFileEvents', true);
 
-    const serverOptions: vscodelc.ServerOptions = { command: clangdPath };
+    const serverOptions: vscodelc.ServerOptions = { command: clangdPath, args: clangdArgs };
 
+    const cppFileExtensions: string[] = ['cpp', 'c', 'cc', 'cxx', 'c++', 'm', 'mm', 'h', 'hh', 'hpp', 'hxx', 'inc'];
+    const cppFileExtensionsPattern = cppFileExtensions.join();
     const clientOptions: vscodelc.LanguageClientOptions = {
         // Register the server for C/C++ files
-        documentSelector: ['c', 'cc', 'cpp', 'h', 'hh', 'hpp']
+        documentSelector: cppFileExtensions,
+        uriConverters: {
+            // FIXME: by default the URI sent over the protocol will be percent encoded (see rfc3986#section-2.1)
+            //        the "workaround" below disables temporarily the encoding until decoding
+            //        is implemented properly in clangd
+            code2Protocol: (uri: vscode.Uri) : string => uri.toString(true),
+            protocol2Code: (uri: string) : vscode.Uri => vscode.Uri.parse(uri)
+        },
+        synchronize: !syncFileEvents ? undefined : {
+            fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{' + cppFileExtensionsPattern + '}')
+        }
     };
 
     const clangdClient = new vscodelc.LanguageClient('Clang Language Server', serverOptions, clientOptions);
@@ -21,10 +44,11 @@ export function activate(context: vscode.ExtensionContext) {
     function applyTextEdits(uri: string, edits: vscodelc.TextEdit[]) {
         let textEditor = vscode.window.activeTextEditor;
 
-        if (textEditor && textEditor.document.uri.toString() === uri) {
+        // FIXME: vscode expects that uri will be percent encoded
+        if (textEditor && textEditor.document.uri.toString(true) === uri) {
             textEditor.edit(mutator => {
                 for (const edit of edits) {
-                    mutator.replace(vscodelc.Protocol2Code.asRange(edit.range), edit.newText);
+                    mutator.replace(clangdClient.protocol2CodeConverter.asRange(edit.range), edit.newText);
                 }
             }).then((success) => {
                 if (!success) {

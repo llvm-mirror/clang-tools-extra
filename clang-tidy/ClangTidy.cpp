@@ -89,13 +89,13 @@ private:
 
 class ErrorReporter {
 public:
-  ErrorReporter(bool ApplyFixes, StringRef FormatStyle)
+  ErrorReporter(ClangTidyContext &Context, bool ApplyFixes)
       : Files(FileSystemOptions()), DiagOpts(new DiagnosticOptions()),
         DiagPrinter(new TextDiagnosticPrinter(llvm::outs(), &*DiagOpts)),
         Diags(IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs), &*DiagOpts,
               DiagPrinter),
-        SourceMgr(Diags, Files), ApplyFixes(ApplyFixes), TotalFixes(0),
-        AppliedFixes(0), WarningsAsErrors(0), FormatStyle(FormatStyle) {
+        SourceMgr(Diags, Files), Context(Context), ApplyFixes(ApplyFixes),
+        TotalFixes(0), AppliedFixes(0), WarningsAsErrors(0) {
     DiagOpts->ShowColors = llvm::sys::Process::StandardOutHasColors();
     DiagPrinter->BeginSourceFile(LangOpts);
   }
@@ -196,7 +196,8 @@ public:
           continue;
         }
         StringRef Code = Buffer.get()->getBuffer();
-        auto Style = format::getStyle(FormatStyle, File, "none");
+        auto Style = format::getStyle(
+            *Context.getOptionsForFile(File).FormatStyle, File, "none");
         if (!Style) {
           llvm::errs() << llvm::toString(Style.takeError()) << "\n";
           continue;
@@ -238,7 +239,7 @@ private:
       return SourceLocation();
 
     const FileEntry *File = SourceMgr.getFileManager().getFile(FilePath);
-    FileID ID = SourceMgr.createFileID(File, SourceLocation(), SrcMgr::C_User);
+    FileID ID = SourceMgr.getOrCreateFileID(File, SrcMgr::C_User);
     return SourceMgr.getLocForStartOfFile(ID).getLocWithOffset(Offset);
   }
 
@@ -255,11 +256,11 @@ private:
   DiagnosticsEngine Diags;
   SourceManager SourceMgr;
   llvm::StringMap<Replacements> FileReplacements;
+  ClangTidyContext &Context;
   bool ApplyFixes;
   unsigned TotalFixes;
   unsigned AppliedFixes;
   unsigned WarningsAsErrors;
-  StringRef FormatStyle;
 };
 
 class ClangTidyASTConsumer : public MultiplexConsumer {
@@ -301,7 +302,7 @@ static void setStaticAnalyzerCheckerOpts(const ClangTidyOptions &Opts,
 
 typedef std::vector<std::pair<std::string, bool>> CheckersList;
 
-static CheckersList getCheckersControlList(GlobList &Filter) {
+static CheckersList getCheckersControlList(ClangTidyContext &Context) {
   CheckersList List;
 
   const auto &RegisteredCheckers =
@@ -309,7 +310,7 @@ static CheckersList getCheckersControlList(GlobList &Filter) {
   bool AnalyzerChecksEnabled = false;
   for (StringRef CheckName : RegisteredCheckers) {
     std::string ClangTidyCheckName((AnalyzerCheckNamePrefix + CheckName).str());
-    AnalyzerChecksEnabled |= Filter.contains(ClangTidyCheckName);
+    AnalyzerChecksEnabled |= Context.isCheckEnabled(ClangTidyCheckName);
   }
 
   if (!AnalyzerChecksEnabled)
@@ -323,8 +324,10 @@ static CheckersList getCheckersControlList(GlobList &Filter) {
   for (StringRef CheckName : RegisteredCheckers) {
     std::string ClangTidyCheckName((AnalyzerCheckNamePrefix + CheckName).str());
 
-    if (CheckName.startswith("core") || Filter.contains(ClangTidyCheckName))
+    if (CheckName.startswith("core") ||
+        Context.isCheckEnabled(ClangTidyCheckName)) {
       List.emplace_back(CheckName, true);
+    }
   }
   return List;
 }
@@ -370,8 +373,7 @@ ClangTidyASTConsumerFactory::CreateASTConsumer(
   AnalyzerOptions->Config["cfg-temporary-dtors"] =
       Context.getOptions().AnalyzeTemporaryDtors ? "true" : "false";
 
-  GlobList &Filter = Context.getChecksFilter();
-  AnalyzerOptions->CheckersControlList = getCheckersControlList(Filter);
+  AnalyzerOptions->CheckersControlList = getCheckersControlList(Context);
   if (!AnalyzerOptions->CheckersControlList.empty()) {
     setStaticAnalyzerCheckerOpts(Context.getOptions(), AnalyzerOptions);
     AnalyzerOptions->AnalysisStoreOpt = RegionStoreModel;
@@ -390,13 +392,12 @@ ClangTidyASTConsumerFactory::CreateASTConsumer(
 
 std::vector<std::string> ClangTidyASTConsumerFactory::getCheckNames() {
   std::vector<std::string> CheckNames;
-  GlobList &Filter = Context.getChecksFilter();
   for (const auto &CheckFactory : *CheckFactories) {
-    if (Filter.contains(CheckFactory.first))
+    if (Context.isCheckEnabled(CheckFactory.first))
       CheckNames.push_back(CheckFactory.first);
   }
 
-  for (const auto &AnalyzerCheck : getCheckersControlList(Filter))
+  for (const auto &AnalyzerCheck : getCheckersControlList(Context))
     CheckNames.push_back(AnalyzerCheckNamePrefix + AnalyzerCheck.first);
 
   std::sort(CheckNames.begin(), CheckNames.end());
@@ -471,13 +472,10 @@ ClangTidyOptions::OptionMap getCheckOptions(const ClangTidyOptions &Options) {
   return Factory.getCheckOptions();
 }
 
-ClangTidyStats
-runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
-             const CompilationDatabase &Compilations,
-             ArrayRef<std::string> InputFiles,
-             std::vector<ClangTidyError> *Errors, ProfileData *Profile) {
+void runClangTidy(clang::tidy::ClangTidyContext &Context,
+                  const CompilationDatabase &Compilations,
+                  ArrayRef<std::string> InputFiles, ProfileData *Profile) {
   ClangTool Tool(Compilations, InputFiles);
-  clang::tidy::ClangTidyContext Context(std::move(OptionsProvider));
 
   // Add extra arguments passed by the clang-tidy command-line.
   ArgumentsAdjuster PerFileExtraArgumentsInserter =
@@ -545,20 +543,18 @@ runClangTidy(std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
 
   ActionFactory Factory(Context);
   Tool.run(&Factory);
-  *Errors = Context.getErrors();
-  return Context.getStats();
 }
 
-void handleErrors(const std::vector<ClangTidyError> &Errors, bool Fix,
-                  StringRef FormatStyle, unsigned &WarningsAsErrorsCount) {
-  ErrorReporter Reporter(Fix, FormatStyle);
+void handleErrors(ClangTidyContext &Context, bool Fix,
+                  unsigned &WarningsAsErrorsCount) {
+  ErrorReporter Reporter(Context, Fix);
   vfs::FileSystem &FileSystem =
       *Reporter.getSourceManager().getFileManager().getVirtualFileSystem();
   auto InitialWorkingDir = FileSystem.getCurrentWorkingDirectory();
   if (!InitialWorkingDir)
     llvm::report_fatal_error("Cannot get current working path.");
 
-  for (const ClangTidyError &Error : Errors) {
+  for (const ClangTidyError &Error : Context.getErrors()) {
     if (!Error.BuildDirectory.empty()) {
       // By default, the working directory of file system is the current
       // clang-tidy running directory.
