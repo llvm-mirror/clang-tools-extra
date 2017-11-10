@@ -9,6 +9,7 @@
 
 #include "JSONRPCDispatcher.h"
 #include "ProtocolHandlers.h"
+#include "Trace.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/YAMLParser.h"
@@ -32,6 +33,7 @@ void JSONOutput::writeMessage(const Twine &Message) {
 }
 
 void JSONOutput::log(const Twine &Message) {
+  trace::log(Message);
   std::lock_guard<std::mutex> Guard(StreamMutex);
   Logs << Message;
   Logs.flush();
@@ -75,8 +77,10 @@ callHandler(const llvm::StringMap<JSONRPCDispatcher::Handler> &Handlers,
             llvm::yaml::MappingNode *Params,
             const JSONRPCDispatcher::Handler &UnknownHandler, JSONOutput &Out) {
   llvm::SmallString<64> MethodStorage;
-  auto I = Handlers.find(Method->getValue(MethodStorage));
+  llvm::StringRef MethodStr = Method->getValue(MethodStorage);
+  auto I = Handlers.find(MethodStr);
   auto &Handler = I != Handlers.end() ? I->second : UnknownHandler;
+  trace::Span Tracer(MethodStr);
   Handler(RequestContext(Out, Id ? Id->getRawValue() : ""), Params);
 }
 
@@ -88,11 +92,7 @@ bool JSONRPCDispatcher::call(StringRef Content, JSONOutput &Out) const {
   if (Doc == YAMLStream.end())
     return false;
 
-  auto *Root = Doc->getRoot();
-  if (!Root)
-    return false;
-
-  auto *Object = dyn_cast<llvm::yaml::MappingNode>(Root);
+  auto *Object = dyn_cast_or_null<llvm::yaml::MappingNode>(Doc->getRoot());
   if (!Object)
     return false;
 
@@ -101,7 +101,8 @@ bool JSONRPCDispatcher::call(StringRef Content, JSONOutput &Out) const {
   llvm::yaml::MappingNode *Params = nullptr;
   llvm::yaml::ScalarNode *Id = nullptr;
   for (auto &NextKeyValue : *Object) {
-    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    auto *KeyString =
+        dyn_cast_or_null<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
     if (!KeyString)
       return false;
 
@@ -199,22 +200,37 @@ void clangd::runLanguageServerLoop(std::istream &In, JSONOutput &Out,
       }
     }
 
-    if (ContentLength > 0) {
-      // Now read the JSON. Insert a trailing null byte as required by the YAML
-      // parser.
-      std::vector<char> JSON(ContentLength + 1, '\0');
-      In.read(JSON.data(), ContentLength);
-      Out.mirrorInput(StringRef(JSON.data(), In.gcount()));
+    // Guard against large messages. This is usually a bug in the client code
+    // and we don't want to crash downstream because of it.
+    if (ContentLength > 1 << 30) { // 1024M
+      In.ignore(ContentLength);
+      Out.log("Skipped overly large message of " + Twine(ContentLength) +
+              " bytes.\n");
+      continue;
+    }
 
-      // If the stream is aborted before we read ContentLength bytes, In
-      // will have eofbit and failbit set.
-      if (!In) {
-        Out.log("Input was aborted. Read only " + std::to_string(In.gcount()) +
-                " bytes of expected " + std::to_string(ContentLength) + ".\n");
-        break;
+    if (ContentLength > 0) {
+      std::vector<char> JSON(ContentLength + 1, '\0');
+      llvm::StringRef JSONRef;
+      {
+        trace::Span Tracer("Reading request");
+        // Now read the JSON. Insert a trailing null byte as required by the
+        // YAML parser.
+        In.read(JSON.data(), ContentLength);
+        Out.mirrorInput(StringRef(JSON.data(), In.gcount()));
+
+        // If the stream is aborted before we read ContentLength bytes, In
+        // will have eofbit and failbit set.
+        if (!In) {
+          Out.log("Input was aborted. Read only " +
+                  std::to_string(In.gcount()) + " bytes of expected " +
+                  std::to_string(ContentLength) + ".\n");
+          break;
+        }
+
+        JSONRef = StringRef(JSON.data(), ContentLength);
       }
 
-      llvm::StringRef JSONRef(JSON.data(), ContentLength);
       // Log the message.
       Out.log("<-- " + JSONRef + "\n");
 

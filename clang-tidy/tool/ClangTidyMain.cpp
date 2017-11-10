@@ -18,6 +18,7 @@
 #include "../ClangTidy.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Support/TargetSelect.h"
 
 using namespace clang::ast_matchers;
 using namespace clang::driver;
@@ -403,6 +404,10 @@ static int clangTidyMain(int argc, const char **argv) {
 
   ProfileData Profile;
 
+  llvm::InitializeAllTargetInfos();
+  llvm::InitializeAllTargetMCs();
+  llvm::InitializeAllAsmParsers();
+
   ClangTidyContext Context(std::move(OwningOptionsProvider));
   runClangTidy(Context, OptionsParser.getCompilations(), PathList,
                EnableCheckProfile ? &Profile : nullptr);
@@ -511,6 +516,11 @@ static int LLVM_ATTRIBUTE_UNUSED PerformanceModuleAnchorDestination =
 extern volatile int ReadabilityModuleAnchorSource;
 static int LLVM_ATTRIBUTE_UNUSED ReadabilityModuleAnchorDestination =
     ReadabilityModuleAnchorSource;
+
+// This anchor is used to force the linker to link the ObjCModule.
+extern volatile int ObjCModuleAnchorSource;
+static int LLVM_ATTRIBUTE_UNUSED ObjCModuleAnchorDestination =
+    ObjCModuleAnchorSource;
 
 // This anchor is used to force the linker to link the HICPPModule.
 extern volatile int HICPPModuleAnchorSource;

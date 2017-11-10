@@ -13,6 +13,7 @@ add_clang_library(clangDaemon
   Logger.cpp
   Protocol.cpp
   ProtocolHandlers.cpp
+  Trace.cpp
 
   LINK_LIBS
   clangAST
@@ -28,4 +29,7 @@ add_clang_library(clangDaemon
   ${LLVM_PTHREAD_LIB}
   )
 
+if( LLVM_LIB_FUZZING_ENGINE OR LLVM_USE_SANITIZE_COVERAGE )
+  add_subdirectory(fuzzer)
+endif()
 add_subdirectory(tool)

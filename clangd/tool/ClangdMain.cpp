@@ -10,6 +10,7 @@
 #include "ClangdLSPServer.h"
 #include "JSONRPCDispatcher.h"
 #include "Path.h"
+#include "Trace.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -56,6 +57,12 @@ static llvm::cl::opt<Path> InputMirrorFile(
         "Mirror all LSP input to the specified file. Useful for debugging."),
     llvm::cl::init(""), llvm::cl::Hidden);
 
+static llvm::cl::opt<Path> TraceFile(
+    "trace",
+    llvm::cl::desc(
+        "Trace internal events and timestamps in chrome://tracing JSON format"),
+    llvm::cl::init(""), llvm::cl::Hidden);
+
 int main(int argc, char *argv[]) {
   llvm::cl::ParseCommandLineOptions(argc, argv, "clangd");
 
@@ -70,7 +77,7 @@ int main(int argc, char *argv[]) {
   if (RunSynchronously)
     WorkerThreadsCount = 0;
 
-  /// Validate command line arguments.
+  // Validate command line arguments.
   llvm::Optional<llvm::raw_fd_ostream> InputMirrorStream;
   if (!InputMirrorFile.empty()) {
     std::error_code EC;
@@ -81,6 +88,18 @@ int main(int argc, char *argv[]) {
                    << EC.message();
     }
   }
+  llvm::Optional<llvm::raw_fd_ostream> TraceStream;
+  std::unique_ptr<trace::Session> TraceSession;
+  if (!TraceFile.empty()) {
+    std::error_code EC;
+    TraceStream.emplace(TraceFile, /*ref*/ EC, llvm::sys::fs::F_RW);
+    if (EC) {
+      TraceFile.reset();
+      llvm::errs() << "Error while opening trace file: " << EC.message();
+    } else {
+      TraceSession = trace::Session::create(*TraceStream);
+    }
+  }
 
   llvm::raw_ostream &Outs = llvm::outs();
   llvm::raw_ostream &Logs = llvm::errs();
@@ -89,7 +108,6 @@ int main(int argc, char *argv[]) {
 
   // If --compile-commands-dir arg was invoked, check value and override default
   // path.
-  namespace path = llvm::sys::path;
   llvm::Optional<Path> CompileCommandsDirPath;
 
   if (CompileCommandsDir.empty()) {
@@ -108,11 +126,13 @@ int main(int argc, char *argv[]) {
   if (!ResourceDir.empty())
     ResourceDirRef = ResourceDir;
 
-  /// Change stdin to binary to not lose \r\n on windows.
+  // Change stdin to binary to not lose \r\n on windows.
   llvm::sys::ChangeStdinToBinary();
 
-  /// Initialize and run ClangdLSPServer.
+  // Initialize and run ClangdLSPServer.
   ClangdLSPServer LSPServer(Out, WorkerThreadsCount, EnableSnippets,
                             ResourceDirRef, CompileCommandsDirPath);
-  LSPServer.run(std::cin);
+  constexpr int NoShutdownRequestErrorCode = 1;
+  llvm::set_thread_name("clangd.main");
+  return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;
 }
