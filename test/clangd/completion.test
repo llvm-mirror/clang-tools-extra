@@ -1,4 +1,4 @@
-# RUN: clangd -run-synchronously < %s | FileCheck %s
+# RUN: clangd -pretty -run-synchronously < %s | FileCheck -strict-whitespace %s
 # It is absolutely vital that this file has CRLF line endings.
 #
 Content-Length: 125
@@ -12,30 +12,142 @@ Content-Length: 246
 Content-Length: 148
 
 {"jsonrpc":"2.0","id":1,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///main.cpp"},"position":{"line":3,"character":5}}}
-# The order of results returned by codeComplete seems to be
-# nondeterministic, so we check regardless of order.
-#
-# CHECK: {"jsonrpc":"2.0","id":1,"result":[
-# CHECK-DAG: {"label":"a","kind":5,"detail":"int","sortText":"000035a","filterText":"a","insertText":"a","insertTextFormat":1}
-# CHECK-DAG: {"label":"bb","kind":5,"detail":"int","sortText":"000035bb","filterText":"bb","insertText":"bb","insertTextFormat":1}
-# CHECK-DAG: {"label":"ccc","kind":5,"detail":"int","sortText":"000035ccc","filterText":"ccc","insertText":"ccc","insertTextFormat":1}
-# CHECK-DAG: {"label":"operator=(const fake &)","kind":2,"detail":"fake &","sortText":"000079operator=","filterText":"operator=","insertText":"operator=","insertTextFormat":1}
-# CHECK-DAG: {"label":"~fake()","kind":4,"detail":"void","sortText":"000079~fake","filterText":"~fake","insertText":"~fake","insertTextFormat":1}
-# CHECK-DAG: {"label":"f(int i, const float f) const","kind":2,"detail":"int","sortText":"000035f","filterText":"f","insertText":"f","insertTextFormat":1}
-# CHECK: ]}
+#      CHECK:  "id": 1
+# CHECK-NEXT:  "jsonrpc": "2.0",
+# CHECK-NEXT:  "result": [
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "a",
+# CHECK-NEXT:      "insertText": "a",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 5,
+# CHECK-NEXT:      "label": "a",
+# CHECK-NEXT:      "sortText": "000035a"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "bb",
+# CHECK-NEXT:      "insertText": "bb",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 5,
+# CHECK-NEXT:      "label": "bb",
+# CHECK-NEXT:      "sortText": "000035bb"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "ccc",
+# CHECK-NEXT:      "insertText": "ccc",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 5,
+# CHECK-NEXT:      "label": "ccc",
+# CHECK-NEXT:      "sortText": "000035ccc"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "f",
+# CHECK-NEXT:      "insertText": "f",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 2,
+# CHECK-NEXT:      "label": "f(int i, const float f) const",
+# CHECK-NEXT:      "sortText": "000035f"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "filterText": "fake",
+# CHECK-NEXT:      "insertText": "fake",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 7,
+# CHECK-NEXT:      "label": "fake::",
+# CHECK-NEXT:      "sortText": "000075fake"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "fake &",
+# CHECK-NEXT:      "filterText": "operator=",
+# CHECK-NEXT:      "insertText": "operator=",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 2,
+# CHECK-NEXT:      "label": "operator=(const fake &)",
+# CHECK-NEXT:      "sortText": "000079operator="
+# CHECK-NEXT:    },
+# FIXME: Why do some buildbots show an extra operator==(fake&&) here?
+#      CHECK:    {
+#      CHECK:      "detail": "void",
+# CHECK-NEXT:      "filterText": "~fake",
+# CHECK-NEXT:      "insertText": "~fake",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 4,
+# CHECK-NEXT:      "label": "~fake()",
+# CHECK-NEXT:      "sortText": "000079~fake"
+# CHECK-NEXT:    }
+# CHECK-NEXT:  ]
 Content-Length: 148
 
 {"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///main.cpp"},"position":{"line":3,"character":5}}}
-# Repeat the completion request, expect the same results.
-#
-# CHECK: {"jsonrpc":"2.0","id":2,"result":[
-# CHECK-DAG: {"label":"a","kind":5,"detail":"int","sortText":"000035a","filterText":"a","insertText":"a","insertTextFormat":1}
-# CHECK-DAG: {"label":"bb","kind":5,"detail":"int","sortText":"000035bb","filterText":"bb","insertText":"bb","insertTextFormat":1}
-# CHECK-DAG: {"label":"ccc","kind":5,"detail":"int","sortText":"000035ccc","filterText":"ccc","insertText":"ccc","insertTextFormat":1}
-# CHECK-DAG: {"label":"operator=(const fake &)","kind":2,"detail":"fake &","sortText":"000079operator=","filterText":"operator=","insertText":"operator=","insertTextFormat":1}
-# CHECK-DAG: {"label":"~fake()","kind":4,"detail":"void","sortText":"000079~fake","filterText":"~fake","insertText":"~fake","insertTextFormat":1}
-# CHECK-DAG: {"label":"f(int i, const float f) const","kind":2,"detail":"int","sortText":"000035f","filterText":"f","insertText":"f","insertTextFormat":1}
-# CHECK: ]}
+#      CHECK:  "id": 2
+# CHECK-NEXT:  "jsonrpc": "2.0",
+# CHECK-NEXT:  "result": [
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "a",
+# CHECK-NEXT:      "insertText": "a",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 5,
+# CHECK-NEXT:      "label": "a",
+# CHECK-NEXT:      "sortText": "000035a"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "bb",
+# CHECK-NEXT:      "insertText": "bb",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 5,
+# CHECK-NEXT:      "label": "bb",
+# CHECK-NEXT:      "sortText": "000035bb"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "ccc",
+# CHECK-NEXT:      "insertText": "ccc",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 5,
+# CHECK-NEXT:      "label": "ccc",
+# CHECK-NEXT:      "sortText": "000035ccc"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int",
+# CHECK-NEXT:      "filterText": "f",
+# CHECK-NEXT:      "insertText": "f",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 2,
+# CHECK-NEXT:      "label": "f(int i, const float f) const",
+# CHECK-NEXT:      "sortText": "000035f"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "filterText": "fake",
+# CHECK-NEXT:      "insertText": "fake",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 7,
+# CHECK-NEXT:      "label": "fake::",
+# CHECK-NEXT:      "sortText": "000075fake"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "fake &",
+# CHECK-NEXT:      "filterText": "operator=",
+# CHECK-NEXT:      "insertText": "operator=",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 2,
+# CHECK-NEXT:      "label": "operator=(const fake &)",
+# CHECK-NEXT:      "sortText": "000079operator="
+# CHECK-NEXT:    },
+#      CHECK:    {
+#      CHECK:      "detail": "void",
+# CHECK-NEXT:      "filterText": "~fake",
+# CHECK-NEXT:      "insertText": "~fake",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 4,
+# CHECK-NEXT:      "label": "~fake()",
+# CHECK-NEXT:      "sortText": "000079~fake"
+# CHECK-NEXT:    }
+# CHECK-NEXT:  ]
 # Update the source file and check for completions again.
 Content-Length: 226
 
@@ -44,15 +156,48 @@ Content-Length: 226
 Content-Length: 148
 
 {"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///main.cpp"},"position":{"line":3,"character":5}}}
-# Repeat the completion request, expect the same results.
-#
-# CHECK: {"jsonrpc":"2.0","id":3,"result":[
-# CHECK-DAG: {"label":"func()","kind":2,"detail":"int (*)(int, int)","sortText":"000034func","filterText":"func","insertText":"func","insertTextFormat":1}
-# CHECK: ]}
+#      CHECK:    "id": 3,
+# CHECK-NEXT:  "jsonrpc": "2.0",
+# CHECK-NEXT:  "result": [
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "int (*)(int, int)",
+# CHECK-NEXT:      "filterText": "func",
+# CHECK-NEXT:      "insertText": "func",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 2,
+# CHECK-NEXT:      "label": "func()",
+# CHECK-NEXT:      "sortText": "000034func"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "filterText": "fancy",
+# CHECK-NEXT:      "insertText": "fancy",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 7,
+# CHECK-NEXT:      "label": "fancy::",
+# CHECK-NEXT:      "sortText": "000075fancy"
+# CHECK-NEXT:    },
+# CHECK-NEXT:    {
+# CHECK-NEXT:      "detail": "fancy &",
+# CHECK-NEXT:      "filterText": "operator=",
+# CHECK-NEXT:      "insertText": "operator=",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 2,
+# CHECK-NEXT:      "label": "operator=(const fancy &)",
+# CHECK-NEXT:      "sortText": "000079operator="
+# CHECK-NEXT:    },
+#      CHECK:    {
+#      CHECK:      "detail": "void",
+# CHECK-NEXT:      "filterText": "~fancy",
+# CHECK-NEXT:      "insertText": "~fancy",
+# CHECK-NEXT:      "insertTextFormat": 1,
+# CHECK-NEXT:      "kind": 4,
+# CHECK-NEXT:      "label": "~fancy()",
+# CHECK-NEXT:      "sortText": "000079~fancy"
+# CHECK-NEXT:    }
+# CHECK-NEXT:  ]
 Content-Length: 44
 
 {"jsonrpc":"2.0","id":4,"method":"shutdown"}
-# CHECK: {"jsonrpc":"2.0","id":4,"result":null}
 Content-Length: 33
 
 {"jsonrpc":"2.0":"method":"exit"}
