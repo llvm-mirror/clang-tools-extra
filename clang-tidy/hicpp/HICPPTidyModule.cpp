@@ -10,6 +10,7 @@
 #include "../ClangTidy.h"
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
+#include "../bugprone/UseAfterMoveCheck.h"
 #include "../cppcoreguidelines/NoMallocCheck.h"
 #include "../cppcoreguidelines/ProBoundsArrayToPointerDecayCheck.h"
 #include "../cppcoreguidelines/ProTypeMemberInitCheck.h"
@@ -17,12 +18,9 @@
 #include "../cppcoreguidelines/SpecialMemberFunctionsCheck.h"
 #include "../google/DefaultArgumentsCheck.h"
 #include "../google/ExplicitConstructorCheck.h"
-#include "../misc/MoveConstantArgumentCheck.h"
 #include "../misc/NewDeleteOverloadsCheck.h"
-#include "../misc/NoexceptMoveConstructorCheck.h"
 #include "../misc/StaticAssertCheck.h"
 #include "../misc/UndelegatedConstructor.h"
-#include "../misc/UseAfterMoveCheck.h"
 #include "../modernize/DeprecatedHeadersCheck.h"
 #include "../modernize/UseAutoCheck.h"
 #include "../modernize/UseEmplaceCheck.h"
@@ -31,6 +29,8 @@
 #include "../modernize/UseNoexceptCheck.h"
 #include "../modernize/UseNullptrCheck.h"
 #include "../modernize/UseOverrideCheck.h"
+#include "../performance/MoveConstArgCheck.h"
+#include "../performance/NoexceptMoveConstructorCheck.h"
 #include "../readability/BracesAroundStatementsCheck.h"
 #include "../readability/FunctionSizeCheck.h"
 #include "../readability/IdentifierNamingCheck.h"
@@ -59,15 +59,15 @@ public:
         "hicpp-function-size");
     CheckFactories.registerCheck<readability::IdentifierNamingCheck>(
         "hicpp-named-parameter");
-    CheckFactories.registerCheck<misc::UseAfterMoveCheck>(
+    CheckFactories.registerCheck<bugprone::UseAfterMoveCheck>(
         "hicpp-invalid-access-moved");
     CheckFactories.registerCheck<cppcoreguidelines::ProTypeMemberInitCheck>(
         "hicpp-member-init");
-    CheckFactories.registerCheck<misc::MoveConstantArgumentCheck>(
+    CheckFactories.registerCheck<performance::MoveConstArgCheck>(
         "hicpp-move-const-arg");
     CheckFactories.registerCheck<misc::NewDeleteOverloadsCheck>(
         "hicpp-new-delete-operators");
-    CheckFactories.registerCheck<misc::NoexceptMoveConstructorCheck>(
+    CheckFactories.registerCheck<performance::NoexceptMoveConstructorCheck>(
         "hicpp-noexcept-move");
     CheckFactories
         .registerCheck<cppcoreguidelines::ProBoundsArrayToPointerDecayCheck>(

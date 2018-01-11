@@ -24,6 +24,10 @@
 using namespace clang;
 using namespace clang::clangd;
 
+namespace {
+enum class PCHStorageFlag { Disk, Memory };
+}
+
 static llvm::cl::opt<Path> CompileCommandsDir(
     "compile-commands-dir",
     llvm::cl::desc("Specify a path to look for compile_commands.json. If path "
@@ -38,12 +42,31 @@ static llvm::cl::opt<unsigned>
 static llvm::cl::opt<bool> EnableSnippets(
     "enable-snippets",
     llvm::cl::desc(
-        "Present snippet completions instead of plaintext completions"),
-    llvm::cl::init(false));
+        "Present snippet completions instead of plaintext completions. "
+        "This also enables code pattern results." /* FIXME: should it? */),
+    llvm::cl::init(clangd::CodeCompleteOptions().EnableSnippets));
+
+// FIXME: Flags are the wrong mechanism for user preferences.
+// We should probably read a dotfile or similar.
+static llvm::cl::opt<bool> IncludeIneligibleResults(
+    "include-ineligible-results",
+    llvm::cl::desc(
+        "Include ineligible completion results (e.g. private members)"),
+    llvm::cl::init(clangd::CodeCompleteOptions().IncludeIneligibleResults),
+    llvm::cl::Hidden);
 
 static llvm::cl::opt<bool>
     PrettyPrint("pretty", llvm::cl::desc("Pretty-print JSON output"),
                 llvm::cl::init(false));
+
+static llvm::cl::opt<PCHStorageFlag> PCHStorage(
+    "pch-storage",
+    llvm::cl::desc("Storing PCHs in memory increases memory usages, but may "
+                   "improve performance"),
+    llvm::cl::values(
+        clEnumValN(PCHStorageFlag::Disk, "disk", "store PCHs on disk"),
+        clEnumValN(PCHStorageFlag::Memory, "memory", "store PCHs in memory")),
+    llvm::cl::init(PCHStorageFlag::Disk));
 
 static llvm::cl::opt<bool> RunSynchronously(
     "run-synchronously",
@@ -66,6 +89,13 @@ static llvm::cl::opt<Path> TraceFile(
     llvm::cl::desc(
         "Trace internal events and timestamps in chrome://tracing JSON format"),
     llvm::cl::init(""), llvm::cl::Hidden);
+
+static llvm::cl::opt<bool> EnableIndexBasedCompletion(
+    "enable-index-based-completion",
+    llvm::cl::desc(
+        "Enable index-based global code completion (experimental). Clangd will "
+        "use index built from symbols in opened files"),
+    llvm::cl::init(false), llvm::cl::Hidden);
 
 int main(int argc, char *argv[]) {
   llvm::cl::ParseCommandLineOptions(argc, argv, "clangd");
@@ -92,8 +122,10 @@ int main(int argc, char *argv[]) {
                    << EC.message();
     }
   }
+
+  // Setup tracing facilities.
   llvm::Optional<llvm::raw_fd_ostream> TraceStream;
-  std::unique_ptr<trace::Session> TraceSession;
+  std::unique_ptr<trace::EventTracer> Tracer;
   if (!TraceFile.empty()) {
     std::error_code EC;
     TraceStream.emplace(TraceFile, /*ref*/ EC, llvm::sys::fs::F_RW);
@@ -101,15 +133,21 @@ int main(int argc, char *argv[]) {
       TraceFile.reset();
       llvm::errs() << "Error while opening trace file: " << EC.message();
     } else {
-      TraceSession = trace::Session::create(*TraceStream);
+      Tracer = trace::createJSONTracer(*TraceStream, PrettyPrint);
     }
   }
+
+  llvm::Optional<trace::Session> TracingSession;
+  if (Tracer)
+    TracingSession.emplace(*Tracer);
 
   llvm::raw_ostream &Outs = llvm::outs();
   llvm::raw_ostream &Logs = llvm::errs();
   JSONOutput Out(Outs, Logs,
                  InputMirrorStream ? InputMirrorStream.getPointer() : nullptr,
                  PrettyPrint);
+
+  clangd::LoggingSession LoggingSession(Out);
 
   // If --compile-commands-dir arg was invoked, check value and override default
   // path.
@@ -127,6 +165,16 @@ int main(int argc, char *argv[]) {
     CompileCommandsDirPath = CompileCommandsDir;
   }
 
+  bool StorePreamblesInMemory;
+  switch (PCHStorage) {
+  case PCHStorageFlag::Memory:
+    StorePreamblesInMemory = true;
+    break;
+  case PCHStorageFlag::Disk:
+    StorePreamblesInMemory = false;
+    break;
+  }
+
   llvm::Optional<StringRef> ResourceDirRef = None;
   if (!ResourceDir.empty())
     ResourceDirRef = ResourceDir;
@@ -134,9 +182,13 @@ int main(int argc, char *argv[]) {
   // Change stdin to binary to not lose \r\n on windows.
   llvm::sys::ChangeStdinToBinary();
 
+  clangd::CodeCompleteOptions CCOpts;
+  CCOpts.EnableSnippets = EnableSnippets;
+  CCOpts.IncludeIneligibleResults = IncludeIneligibleResults;
   // Initialize and run ClangdLSPServer.
-  ClangdLSPServer LSPServer(Out, WorkerThreadsCount, EnableSnippets,
-                            ResourceDirRef, CompileCommandsDirPath);
+  ClangdLSPServer LSPServer(Out, WorkerThreadsCount, StorePreamblesInMemory,
+                            CCOpts, ResourceDirRef, CompileCommandsDirPath,
+                            EnableIndexBasedCompletion);
   constexpr int NoShutdownRequestErrorCode = 1;
   llvm::set_thread_name("clangd.main");
   return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;

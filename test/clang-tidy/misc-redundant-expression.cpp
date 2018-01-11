@@ -124,16 +124,38 @@ int TestConditional(int x, int y) {
 #undef COND_OP_MACRO
 #undef COND_OP_OTHER_MACRO
 
+// Overloaded operators that compare two instances of a struct.
 struct MyStruct {
-  int x;
+  int x;  
+  bool operator==(const MyStruct& rhs) const {return this->x == rhs.x; } // not modifing
+  bool operator>=(const MyStruct& rhs) const { return this->x >= rhs.x; } // not modifing
+  bool operator<=(MyStruct& rhs) const { return this->x <= rhs.x; }
+  bool operator&&(const MyStruct& rhs){ this->x++; return this->x && rhs.x; }
 } Q;
 
-bool operator==(const MyStruct& lhs, const MyStruct& rhs) { return lhs.x == rhs.x; }
+bool operator!=(const MyStruct& lhs, const MyStruct& rhs) { return lhs.x == rhs.x; } // not modifing
+bool operator<(const MyStruct& lhs, const MyStruct& rhs) { return lhs.x < rhs.x; } // not modifing
+bool operator>(const MyStruct& lhs, MyStruct& rhs) { rhs.x--; return lhs.x > rhs.x; }
+bool operator||(MyStruct& lhs, const MyStruct& rhs) { lhs.x++; return lhs.x || rhs.x; }
 
-bool TestOperator(MyStruct& S) {
+bool TestOverloadedOperator(MyStruct& S) {
   if (S == Q) return false;
+
+  if (S <= S) return false;
+  if (S && S) return false;
+  if (S > S) return false;
+  if (S || S) return false;
+
   if (S == S) return true;
   // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: both sides of overloaded operator are equivalent
+  if (S < S) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: both sides of overloaded operator are equivalent
+  if (S != S) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: both sides of overloaded operator are equivalent
+  if (S >= S) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:9: warning: both sides of overloaded operator are equivalent
+
+  return true;
 }
 
 #define LT(x, y) (void)((x) < (y))
@@ -176,7 +198,7 @@ template <typename T, typename U>
 void TemplateCheck() {
   static_assert(T::Value == U::Value, "should be identical");
   static_assert(T::Value == T::Value, "should be identical");
-  // CHECK-MESSAGES: :[[@LINE-1]]:26: warning: both sides of overloaded operator are equivalent
+  // CHECK-MESSAGES: :[[@LINE-1]]:26: warning: both sides of operator are equivalent
 }
 void TestTemplate() { TemplateCheck<MyClass, MyClass>(); }
 
@@ -281,9 +303,46 @@ int TestBitwise(int X, int Y) {
   return 0;
 }
 
+// Overloaded operators that compare an instance of a struct and an integer
+// constant.
+struct S {
+  S() { x = 1; }
+  int x;
+  // Overloaded comparison operators without any possible side effect.
+  bool operator==(const int &i) const { return x == i; } // not modifying
+  bool operator!=(int i) const { return x != i; } // not modifying
+  bool operator>(const int &i) const { return x > i; } // not modifying
+  bool operator<(int i) const { return x < i; } // not modifying
+};
+
+bool operator<=(const S &s, int i) { return s.x <= i; } // not modifying
+bool operator>=(const S &s, const int &i) { return s.x >= i; } // not modifying
+
+struct S2 {
+  S2() { x = 1; }
+  int x;
+  // Overloaded comparison operators that are able to modify their params.
+  bool operator==(const int &i) {
+    this->x++;
+    return x == i;
+  }
+  bool operator!=(int i) { return x != i; }
+  bool operator>(const int &i) { return x > i; }
+  bool operator<(int i) {
+    this->x--;
+    return x < i;
+  }
+};
+
+bool operator>=(S2 &s, const int &i) { return s.x >= i; }
+bool operator<=(S2 &s, int i) {
+  s.x++;
+  return s.x <= i;
+}
+
 int TestLogical(int X, int Y){
 #define CONFIG 0
-  if (CONFIG && X) return 1; // OK, consts from macros are considered intentional
+  if (CONFIG && X) return 1;
 #undef CONFIG
 #define CONFIG 1
   if (CONFIG || X) return 1;
@@ -331,6 +390,24 @@ int TestLogical(int X, int Y){
   if (!X && Y) return 1;
   if (!X && Y == 0) return 1;
   if (X == 10 && Y != 10) return 1;
+
+  // Test for overloaded operators with constant params.
+  S s1;
+  if (s1 == 1 && s1 == 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: equivalent expression on both sides of logical operator
+  if (s1 == 1 || s1 != 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: logical expression is always true
+  if (s1 > 1 && s1 < 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: logical expression is always false
+  if (s1 >= 1 || s1 <= 1) return true;
+  // CHECK-MESSAGES: :[[@LINE-1]]:15: warning: logical expression is always true
+
+  // Test for overloaded operators that may modify their params.
+  S2 s2;
+  if (s2 == 1 || s2 != 1) return true;
+  if (s2 == 1 || s2 == 1) return true;
+  if (s2 > 1 && s2 < 1) return true;
+  if (s2 >= 1 || s2 <= 1) return true;
 }
 
 int TestRelational(int X, int Y) {
@@ -587,3 +664,59 @@ int TestWithMinMaxInt(int X) {
 
   return 0;
 }
+
+#define FLAG1 1
+#define FLAG2 2
+#define FLAG3 4
+#define FLAGS (FLAG1 | FLAG2 | FLAG3)
+#define NOTFLAGS !(FLAG1 | FLAG2 | FLAG3)
+int operatorConfusion(int X, int Y, long Z)
+{
+  // Ineffective & expressions.
+  Y = (Y << 8) & 0xff;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: ineffective bitwise and operation.
+  Y = (Y << 12) & 0xfff;
+  // CHECK-MESSAGES: :[[@LINE-1]]:17: warning: ineffective bitwise and
+  Y = (Y << 12) & 0xff;
+  // CHECK-MESSAGES: :[[@LINE-1]]:17: warning: ineffective bitwise and
+  Y = (Y << 8) & 0x77;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: ineffective bitwise and
+  Y = (Y << 5) & 0x11;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: ineffective bitwise and
+
+  // Tests for unmatched types
+  Z = (Z << 8) & 0xff;
+  // CHECK-MESSAGES: :[[@LINE-1]]:16: warning: ineffective bitwise and operation.
+  Y = (Y << 12) & 0xfffL;
+  // CHECK-MESSAGES: :[[@LINE-1]]:17: warning: ineffective bitwise and
+  Z = (Y << 12) & 0xffLL;
+  // CHECK-MESSAGES: :[[@LINE-1]]:17: warning: ineffective bitwise and
+  Y = (Z << 8L) & 0x77L;
+  // CHECK-MESSAGES: :[[@LINE-1]]:17: warning: ineffective bitwise and
+
+  // Effective expressions. Do not check.
+  Y = (Y << 4) & 0x15;
+  Y = (Y << 3) & 0x250;
+  Y = (Y << 9) & 0xF33;
+
+  int K = !(1 | 2 | 4);
+  // CHECK-MESSAGES: :[[@LINE-1]]:11: warning: ineffective logical negation operator used; did you mean '~'?
+  // CHECK-FIXES: {{^}}  int K = ~(1 | 2 | 4);{{$}}
+  K = !(FLAG1 & FLAG2 & FLAG3);
+  // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: ineffective logical negation operator
+  // CHECK-FIXES: {{^}}  K = ~(FLAG1 & FLAG2 & FLAG3);{{$}}
+  K = !(3 | 4);
+  // CHECK-MESSAGES: :[[@LINE-1]]:7: warning: ineffective logical negation operator
+  // CHECK-FIXES: {{^}}  K = ~(3 | 4);{{$}}
+  int NotFlags = !FLAGS;
+  // CHECK-MESSAGES: :[[@LINE-1]]:18: warning: ineffective logical negation operator
+  // CHECK-FIXES: {{^}}  int NotFlags = ~FLAGS;{{$}}
+  NotFlags = NOTFLAGS;
+  // CHECK-MESSAGES: :[[@LINE-1]]:14: warning: ineffective logical negation operator
+  return !(1 | 2 | 4);
+  // CHECK-MESSAGES: :[[@LINE-1]]:10: warning: ineffective logical negation operator
+  // CHECK-FIXES: {{^}}  return ~(1 | 2 | 4);{{$}}
+}
+#undef FLAG1
+#undef FLAG2
+#undef FLAG3

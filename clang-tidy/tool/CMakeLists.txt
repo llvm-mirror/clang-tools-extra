@@ -12,6 +12,7 @@ add_dependencies(clang-tidy
   clang-headers
   )
 target_link_libraries(clang-tidy
+  PRIVATE
   clangAST
   clangASTMatchers
   clangBasic
@@ -21,6 +22,7 @@ target_link_libraries(clang-tidy
   clangTidyBugproneModule
   clangTidyCERTModule
   clangTidyCppCoreGuidelinesModule
+  clangTidyFuchsiaModule
   clangTidyGoogleModule
   clangTidyHICPPModule
   clangTidyLLVMModule

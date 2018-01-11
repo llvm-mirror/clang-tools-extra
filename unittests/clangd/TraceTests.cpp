@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Context.h"
 #include "Trace.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -74,10 +75,11 @@ TEST(TraceTest, SmokeTest) {
   std::string JSON;
   {
     raw_string_ostream OS(JSON);
-    auto Session = trace::Session::create(OS);
+    auto JSONTracer = trace::createJSONTracer(OS);
+    trace::Session Session(*JSONTracer);
     {
-      trace::Span S("A");
-      trace::log("B");
+      trace::Span S(Context::empty(), "A");
+      trace::log(Context::empty(), "B");
     }
   }
 
@@ -116,7 +118,7 @@ TEST(TraceTest, SmokeTest) {
   ASSERT_NE(++Event, Events->end()) << "Expected span start";
   EXPECT_TRUE(VerifyObject(*Event, {{"ph", "B"}, {"name", "A"}}));
   ASSERT_NE(++Event, Events->end()) << "Expected log message";
-  EXPECT_TRUE(VerifyObject(*Event, {{"ph", "i"}, {"name", "B"}}));
+  EXPECT_TRUE(VerifyObject(*Event, {{"ph", "i"}, {"name", "Log"}}));
   ASSERT_NE(++Event, Events->end()) << "Expected span end";
   EXPECT_TRUE(VerifyObject(*Event, {{"ph", "E"}}));
   ASSERT_EQ(++Event, Events->end());

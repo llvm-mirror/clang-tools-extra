@@ -15,11 +15,11 @@ Content-Length: 152
 # CHECK-NEXT:        "message": "return type of 'main' is not 'int'",
 # CHECK-NEXT:        "range": {
 # CHECK-NEXT:          "end": {
-# CHECK-NEXT:            "character": 1,
+# CHECK-NEXT:            "character": 4,
 # CHECK-NEXT:            "line": 0
 # CHECK-NEXT:          },
 # CHECK-NEXT:          "start": {
-# CHECK-NEXT:            "character": 1,
+# CHECK-NEXT:            "character": 0,
 # CHECK-NEXT:            "line": 0
 # CHECK-NEXT:          }
 # CHECK-NEXT:        },
@@ -29,11 +29,11 @@ Content-Length: 152
 # CHECK-NEXT:        "message": "change return type to 'int'",
 # CHECK-NEXT:        "range": {
 # CHECK-NEXT:          "end": {
-# CHECK-NEXT:            "character": 1,
+# CHECK-NEXT:            "character": 4,
 # CHECK-NEXT:            "line": 0
 # CHECK-NEXT:          },
 # CHECK-NEXT:          "start": {
-# CHECK-NEXT:            "character": 1,
+# CHECK-NEXT:            "character": 0,
 # CHECK-NEXT:            "line": 0
 # CHECK-NEXT:          }
 # CHECK-NEXT:        },
@@ -47,4 +47,4 @@ Content-Length: 44
 {"jsonrpc":"2.0","id":5,"method":"shutdown"}
 Content-Length: 33
 
-{"jsonrpc":"2.0":"method":"exit"}
+{"jsonrpc":"2.0","method":"exit"}
