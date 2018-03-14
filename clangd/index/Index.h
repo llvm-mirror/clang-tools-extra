@@ -10,11 +10,12 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_H
 
-#include "../Context.h"
 #include "clang/Index/IndexSymbol.h"
+#include "clang/Lex/Lexer.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringExtras.h"
 #include <array>
 #include <string>
@@ -23,15 +24,16 @@ namespace clang {
 namespace clangd {
 
 struct SymbolLocation {
-  // The absolute path of the source file where a symbol occurs.
-  llvm::StringRef FilePath;
-  // The 0-based offset to the first character of the symbol from the beginning
-  // of the source file.
-  unsigned StartOffset;
-  // The 0-based offset to the last character of the symbol from the beginning
-  // of the source file.
-  unsigned EndOffset;
+  // The URI of the source file where a symbol occurs.
+  llvm::StringRef FileURI;
+  // The 0-based offsets of the symbol from the beginning of the source file,
+  // using half-open range, [StartOffset, EndOffset).
+  unsigned StartOffset = 0;
+  unsigned EndOffset = 0;
+
+  operator bool() const { return !FileURI.empty(); }
 };
+llvm::raw_ostream &operator<<(llvm::raw_ostream &, const SymbolLocation &);
 
 // The class identifies a particular C++ symbol (class, function, method, etc).
 //
@@ -44,7 +46,7 @@ struct SymbolLocation {
 class SymbolID {
 public:
   SymbolID() = default;
-  SymbolID(llvm::StringRef USR);
+  explicit SymbolID(llvm::StringRef USR);
 
   bool operator==(const SymbolID &Sym) const {
     return HashValue == Sym.HashValue;
@@ -105,38 +107,80 @@ namespace clangd {
 // WARNING: Symbols do not own much of their underlying data - typically strings
 // are owned by a SymbolSlab. They should be treated as non-owning references.
 // Copies are shallow.
-// When adding new unowned data fields to Symbol, remember to update
-// SymbolSlab::Builder in Index.cpp to copy them to the slab's storage.
+// When adding new unowned data fields to Symbol, remember to update:
+//   - SymbolSlab::Builder in Index.cpp, to copy them to the slab's storage.
+//   - mergeSymbol in Merge.cpp, to properly combine two Symbols.
 struct Symbol {
   // The ID of the symbol.
   SymbolID ID;
   // The symbol information, like symbol kind.
   index::SymbolInfo SymInfo;
-  // The unqualified name of the symbol, e.g. "bar" (for "n1::n2::bar").
+  // The unqualified name of the symbol, e.g. "bar" (for ns::bar).
   llvm::StringRef Name;
-  // The scope (e.g. namespace) of the symbol, e.g. "n1::n2" (for
-  // "n1::n2::bar").
+  // The containing namespace. e.g. "" (global), "ns::" (top-level namespace).
   llvm::StringRef Scope;
-  // The location of the canonical declaration of the symbol.
+  // The location of the symbol's definition, if one was found.
+  // This just covers the symbol name (e.g. without class/function body).
+  SymbolLocation Definition;
+  // The location of the preferred declaration of the symbol.
+  // This just covers the symbol name.
+  // This may be the same as Definition.
   //
-  // A C++ symbol could have multiple declarations and one definition (e.g.
-  // a function is declared in ".h" file, and is defined in ".cc" file).
-  //   * For classes, the canonical declaration is usually definition.
-  //   * For non-inline functions, the canonical declaration is a declaration
-  //     (not a definition), which is usually declared in ".h" file.
+  // A C++ symbol may have multiple declarations, and we pick one to prefer.
+  //   * For classes, the canonical declaration should be the definition.
+  //   * For non-inline functions, the canonical declaration typically appears
+  //     in the ".h" file corresponding to the definition.
   SymbolLocation CanonicalDeclaration;
 
-  // FIXME: add definition location of the symbol.
+  /// A brief description of the symbol that can be displayed in the completion
+  /// candidate list. For example, "Foo(X x, Y y) const" is a labal for a
+  /// function.
+  llvm::StringRef CompletionLabel;
+  /// The piece of text that the user is expected to type to match the
+  /// code-completion string, typically a keyword or the name of a declarator or
+  /// macro.
+  llvm::StringRef CompletionFilterText;
+  /// What to insert when completing this symbol (plain text version).
+  llvm::StringRef CompletionPlainInsertText;
+  /// What to insert when completing this symbol (snippet version). This is
+  /// empty if it is the same as the plain insert text above.
+  llvm::StringRef CompletionSnippetInsertText;
+
+  /// Optional symbol details that are not required to be set. For example, an
+  /// index fuzzy match can return a large number of symbol candidates, and it
+  /// is preferable to send only core symbol information in the batched results
+  /// and have clients resolve full symbol information for a specific candidate
+  /// if needed.
+  struct Details {
+    /// Documentation including comment for the symbol declaration.
+    llvm::StringRef Documentation;
+    /// This is what goes into the LSP detail field in a completion item. For
+    /// example, the result type of a function.
+    llvm::StringRef CompletionDetail;
+    /// This can be either a URI of the header to be #include'd for this symbol,
+    /// or a literal header quoted with <> or "" that is suitable to be included
+    /// directly. When this is a URI, the exact #include path needs to be
+    /// calculated according to the URI scheme.
+    ///
+    /// This is a canonical include for the symbol and can be different from
+    /// FileURI in the CanonicalDeclaration.
+    llvm::StringRef IncludeHeader;
+  };
+
+  // Optional details of the symbol.
+  const Details *Detail = nullptr;
+
   // FIXME: add all occurrences support.
   // FIXME: add extra fields for index scoring signals.
-  // FIXME: add code completion information.
 };
+llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Symbol &S);
 
 // An immutable symbol container that stores a set of symbols.
 // The container will maintain the lifetime of the symbols.
 class SymbolSlab {
 public:
   using const_iterator = std::vector<Symbol>::const_iterator;
+  using iterator = const_iterator;
 
   SymbolSlab() = default;
 
@@ -190,14 +234,14 @@ struct FuzzyFindRequest {
   /// un-qualified identifiers and should not contain qualifiers like "::".
   std::string Query;
   /// \brief If this is non-empty, symbols must be in at least one of the scopes
-  /// (e.g. namespaces) excluding nested scopes. For example, if a scope "xyz"
-  /// is provided, the matched symbols must be defined in scope "xyz" but not
-  /// "xyz::abc".
+  /// (e.g. namespaces) excluding nested scopes. For example, if a scope "xyz::"
+  /// is provided, the matched symbols must be defined in namespace xyz but not
+  /// namespace xyz::abc.
   ///
-  /// A scope must be fully qualified without leading or trailing "::" e.g.
-  /// "n1::n2". "" is interpreted as the global namespace, and "::" is invalid.
+  /// The global scope is "", a top level scope is "foo::", etc.
   std::vector<std::string> Scopes;
-  /// \brief The maxinum number of candidates to return.
+  /// \brief The number of top candidates to return. The index may choose to
+  /// return more than this, e.g. if it doesn't know which candidates are best.
   size_t MaxCandidateCount = UINT_MAX;
 };
 
@@ -209,11 +253,11 @@ public:
 
   /// \brief Matches symbols in the index fuzzily and applies \p Callback on
   /// each matched symbol before returning.
+  /// If returned Symbols are used outside Callback, they must be deep-copied!
   ///
-  /// Returns true if the result list is complete, false if it was truncated due
-  /// to MaxCandidateCount
+  /// Returns true if there may be more results (limited by MaxCandidateCount).
   virtual bool
-  fuzzyFind(const Context &Ctx, const FuzzyFindRequest &Req,
+  fuzzyFind(const FuzzyFindRequest &Req,
             llvm::function_ref<void(const Symbol &)> Callback) const = 0;
 
   // FIXME: add interfaces for more index use cases:

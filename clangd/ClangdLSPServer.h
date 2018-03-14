@@ -22,6 +22,7 @@ namespace clang {
 namespace clangd {
 
 class JSONOutput;
+class SymbolIndex;
 
 /// This class provides implementation of an LSP server, glueing the JSON
 /// dispatch and ClangdServer together.
@@ -30,12 +31,9 @@ public:
   /// If \p CompileCommandsDir has a value, compile_commands.json will be
   /// loaded only from \p CompileCommandsDir. Otherwise, clangd will look
   /// for compile_commands.json in all parent directories of each file.
-  ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,
-                  bool StorePreamblesInMemory,
-                  const clangd::CodeCompleteOptions &CCOpts,
-                  llvm::Optional<StringRef> ResourceDir,
+  ClangdLSPServer(JSONOutput &Out, const clangd::CodeCompleteOptions &CCOpts,
                   llvm::Optional<Path> CompileCommandsDir,
-                  bool BuildDynamicSymbolIndex);
+                  const ClangdServer::Options &Opts);
 
   /// Run LSP server loop, receiving input for it from \p In. \p In must be
   /// opened in binary mode. Output will be written using Out variable passed to
@@ -43,7 +41,8 @@ public:
   /// each instance of ClangdLSPServer.
   ///
   /// \return Wether we received a 'shutdown' request before an 'exit' request
-  bool run(std::istream &In);
+  bool run(std::istream &In,
+           JSONStreamStyle InputStyle = JSONStreamStyle::Standard);
 
 private:
   // Implement DiagnosticsConsumer.
@@ -52,28 +51,28 @@ private:
                      Tagged<std::vector<DiagWithFixIts>> Diagnostics) override;
 
   // Implement ProtocolCallbacks.
-  void onInitialize(Ctx C, InitializeParams &Params) override;
-  void onShutdown(Ctx C, ShutdownParams &Params) override;
-  void onExit(Ctx C, ExitParams &Params) override;
-  void onDocumentDidOpen(Ctx C, DidOpenTextDocumentParams &Params) override;
-  void onDocumentDidChange(Ctx C, DidChangeTextDocumentParams &Params) override;
-  void onDocumentDidClose(Ctx C, DidCloseTextDocumentParams &Params) override;
+  void onInitialize(InitializeParams &Params) override;
+  void onShutdown(ShutdownParams &Params) override;
+  void onExit(ExitParams &Params) override;
+  void onDocumentDidOpen(DidOpenTextDocumentParams &Params) override;
+  void onDocumentDidChange(DidChangeTextDocumentParams &Params) override;
+  void onDocumentDidClose(DidCloseTextDocumentParams &Params) override;
   void
-  onDocumentOnTypeFormatting(Ctx C,
-                             DocumentOnTypeFormattingParams &Params) override;
+  onDocumentOnTypeFormatting(DocumentOnTypeFormattingParams &Params) override;
   void
-  onDocumentRangeFormatting(Ctx C,
-                            DocumentRangeFormattingParams &Params) override;
-  void onDocumentFormatting(Ctx C, DocumentFormattingParams &Params) override;
-  void onCodeAction(Ctx C, CodeActionParams &Params) override;
-  void onCompletion(Ctx C, TextDocumentPositionParams &Params) override;
-  void onSignatureHelp(Ctx C, TextDocumentPositionParams &Params) override;
-  void onGoToDefinition(Ctx C, TextDocumentPositionParams &Params) override;
-  void onSwitchSourceHeader(Ctx C, TextDocumentIdentifier &Params) override;
-  void onDocumentHighlight(Ctx C, TextDocumentPositionParams &Params) override;
-  void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) override;
-  void onCommand(Ctx C, ExecuteCommandParams &Params) override;
-  void onRename(Ctx C, RenameParams &Parames) override;
+  onDocumentRangeFormatting(DocumentRangeFormattingParams &Params) override;
+  void onDocumentFormatting(DocumentFormattingParams &Params) override;
+  void onCodeAction(CodeActionParams &Params) override;
+  void onCompletion(TextDocumentPositionParams &Params) override;
+  void onSignatureHelp(TextDocumentPositionParams &Params) override;
+  void onGoToDefinition(TextDocumentPositionParams &Params) override;
+  void onSwitchSourceHeader(TextDocumentIdentifier &Params) override;
+  void onDocumentHighlight(TextDocumentPositionParams &Params) override;
+  void onFileEvent(DidChangeWatchedFilesParams &Params) override;
+  void onCommand(ExecuteCommandParams &Params) override;
+  void onRename(RenameParams &Parames) override;
+  void onHover(TextDocumentPositionParams &Params) override;
+  void onChangeConfiguration(DidChangeConfigurationParams &Params) override;
 
   std::vector<TextEdit> getFixIts(StringRef File, const clangd::Diagnostic &D);
 

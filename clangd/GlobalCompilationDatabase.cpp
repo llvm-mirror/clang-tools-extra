@@ -38,8 +38,7 @@ DirectoryBasedGlobalCompilationDatabase::getCompileCommand(PathRef File) const {
       return std::move(Candidates.front());
     }
   } else {
-    log(Context::empty(), // FIXME(ibiryukov): pass a proper Context here.
-        "Failed to find compilation database for " + Twine(File));
+    log("Failed to find compilation database for " + Twine(File));
   }
   return llvm::None;
 }
@@ -50,6 +49,12 @@ DirectoryBasedGlobalCompilationDatabase::getFallbackCommand(
   auto C = GlobalCompilationDatabase::getFallbackCommand(File);
   addExtraFlags(File, C);
   return C;
+}
+
+void DirectoryBasedGlobalCompilationDatabase::setCompileCommandsDir(Path P) {
+  std::lock_guard<std::mutex> Lock(Mutex);
+  CompileCommandsDir = P;
+  CompilationDatabases.clear();
 }
 
 void DirectoryBasedGlobalCompilationDatabase::setExtraFlagsForFile(

@@ -27,8 +27,8 @@
 // to define general overlapping ranges.
 //
 //===---------------------------------------------------------------------===//
-#ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_ANNOTATIONS_H
-#define LLVM_CLANG_TOOLS_EXTRA_CLANGD_ANNOTATIONS_H
+#ifndef LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANGD_ANNOTATIONS_H
+#define LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANGD_ANNOTATIONS_H
 #include "Protocol.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -57,6 +57,10 @@ public:
   Range range(llvm::StringRef Name = "") const;
   // Returns the location of all ranges marked by [[ ]] (or $name[[ ]]).
   std::vector<Range> ranges(llvm::StringRef Name = "") const;
+
+  // The same to `range` method, but returns range in offsets [start, end).
+  std::pair<std::size_t, std::size_t>
+  offsetRange(llvm::StringRef Name = "") const;
 
 private:
   std::string Code;

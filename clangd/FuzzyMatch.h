@@ -35,6 +35,9 @@ public:
   // Characters beyond MaxWord are ignored.
   llvm::Optional<float> match(llvm::StringRef Word);
 
+  llvm::StringRef pattern() const { return llvm::StringRef(Pat, PatN); }
+  bool empty() const { return PatN == 0; }
+
   // Dump internal state from the last match() to the stream, for debugging.
   // Returns the pattern with [] around matched characters, e.g.
   //   [u_p] + "unique_ptr" --> "[u]nique[_p]tr"
@@ -53,16 +56,17 @@ private:
 
   bool init(llvm::StringRef Word);
   void buildGraph();
-  void calculateRoles(const char *Text, CharRole *Out, int N);
-  int skipPenalty(int W, Action Last);
-  int matchBonus(int P, int W, Action Last);
+  void calculateRoles(const char *Text, CharRole *Out, int &Types, int N);
+  bool allowMatch(int P, int W) const;
+  int skipPenalty(int W, Action Last) const;
+  int matchBonus(int P, int W, Action Last) const;
 
   // Pattern data is initialized by the constructor, then constant.
   char Pat[MaxPat];         // Pattern data
   int PatN;                 // Length
   char LowPat[MaxPat];      // Pattern in lowercase
   CharRole PatRole[MaxPat]; // Pattern segmentation info
-  bool CaseSensitive;       // Case-sensitive match if pattern has uppercase
+  int PatTypeSet;           // Bitmask of 1<<CharType
   float ScoreScale;         // Normalizes scores for the pattern length.
 
   // Word data is initialized on each call to match(), mostly by init().
@@ -70,6 +74,7 @@ private:
   int WordN;                  // Length
   char LowWord[MaxWord];      // Word in lowercase
   CharRole WordRole[MaxWord]; // Word segmentation info
+  int WordTypeSet;            // Bitmask of 1<<CharType
   bool WordContainsPattern;   // Simple substring check
 
   // Cumulative best-match score table.

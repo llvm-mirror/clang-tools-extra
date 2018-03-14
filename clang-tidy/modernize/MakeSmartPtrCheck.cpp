@@ -241,6 +241,10 @@ bool MakeSmartPtrCheck::replaceNew(DiagnosticBuilder &Diag,
   SourceLocation NewStart = New->getSourceRange().getBegin();
   SourceLocation NewEnd = New->getSourceRange().getEnd();
 
+  // Skip when the source location of the new expression is invalid.
+  if (NewStart.isInvalid() || NewEnd.isInvalid())
+    return false;
+
   std::string ArraySizeExpr;
   if (const auto* ArraySize = New->getArraySize()) {
     ArraySizeExpr = Lexer::getSourceText(CharSourceRange::getTokenRange(
@@ -281,13 +285,18 @@ bool MakeSmartPtrCheck::replaceNew(DiagnosticBuilder &Diag,
         if (isa<CXXStdInitializerListExpr>(Arg)) {
           return false;
         }
-        // Check the implicit conversion from the std::initializer_list type to
-        // a class type.
-        if (const auto *ImplicitCE = dyn_cast<CXXConstructExpr>(Arg)) {
-          if (ImplicitCE->isStdInitListInitialization()) {
-            return false;
+        // Check whether we construct a class from a std::initializer_list.
+        // If so, we won't generate the fixes.
+        auto IsStdInitListInitConstructExpr = [](const Expr* E) {
+          assert(E);
+          if (const auto *ImplicitCE = dyn_cast<CXXConstructExpr>(E)) {
+            if (ImplicitCE->isStdInitListInitialization())
+              return true;
           }
-        }
+          return false;
+        };
+        if (IsStdInitListInitConstructExpr(Arg->IgnoreImplicit()))
+          return false;
       }
     }
     if (ArraySizeExpr.empty()) {

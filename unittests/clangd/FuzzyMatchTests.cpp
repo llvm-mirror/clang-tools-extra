@@ -20,16 +20,29 @@ using namespace llvm;
 using testing::Not;
 
 struct ExpectedMatch {
-  ExpectedMatch(StringRef Annotated) : Word(Annotated), Annotated(Annotated) {
+  // Annotations are optional, and will not be asserted if absent.
+  ExpectedMatch(StringRef Match) : Word(Match), Annotated(Match) {
     for (char C : "[]")
       Word.erase(std::remove(Word.begin(), Word.end(), C), Word.end());
+    if (Word.size() == Annotated->size())
+      Annotated = None;
   }
+  bool accepts(StringRef ActualAnnotated) const {
+    return !Annotated || ActualAnnotated == *Annotated;
+  }
+
+  friend raw_ostream &operator<<(raw_ostream &OS, const ExpectedMatch &M) {
+    OS << "'" << M.Word;
+    if (M.Annotated)
+      OS << "' as " << *M.Annotated;
+    return OS;
+  }
+
   std::string Word;
-  StringRef Annotated;
+
+private:
+  Optional<StringRef> Annotated;
 };
-raw_ostream &operator<<(raw_ostream &OS, const ExpectedMatch &M) {
-  return OS << "'" << M.Word << "' as " << M.Annotated;
-}
 
 struct MatchesMatcher : public testing::MatcherInterface<StringRef> {
   ExpectedMatch Candidate;
@@ -47,7 +60,7 @@ struct MatchesMatcher : public testing::MatcherInterface<StringRef> {
     FuzzyMatcher Matcher(Pattern);
     auto Result = Matcher.match(Candidate.Word);
     auto AnnotatedMatch = Matcher.dumpLast(*OS << "\n");
-    return Result && AnnotatedMatch == Candidate.Annotated;
+    return Result && Candidate.accepts(AnnotatedMatch);
   }
 };
 
@@ -58,6 +71,7 @@ testing::Matcher<StringRef> matches(StringRef M) {
 }
 
 TEST(FuzzyMatch, Matches) {
+  EXPECT_THAT("", matches("unique_ptr"));
   EXPECT_THAT("u_p", matches("[u]nique[_p]tr"));
   EXPECT_THAT("up", matches("[u]nique_[p]tr"));
   EXPECT_THAT("uq", matches("[u]ni[q]ue_ptr"));
@@ -121,6 +135,7 @@ TEST(FuzzyMatch, Matches) {
   EXPECT_THAT("sl", matches("[S]Visual[L]oggerLogsList"));
   EXPECT_THAT("sllll", matches("[S]Visua[lL]ogger[L]ogs[L]ist"));
   EXPECT_THAT("Three", matches("H[T]ML[HRE]l[e]ment"));
+  EXPECT_THAT("b", Not(matches("NDEBUG")));
   EXPECT_THAT("Three", matches("[Three]"));
   EXPECT_THAT("fo", Not(matches("barfoo")));
   EXPECT_THAT("fo", matches("bar_[fo]o"));
@@ -150,8 +165,9 @@ TEST(FuzzyMatch, Matches) {
   EXPECT_THAT("g", matches("zz[G]roup"));
 
   EXPECT_THAT("aaaa", matches("_a_[aaaa]")); // Prefer consecutive.
-  EXPECT_THAT("printf", matches("s[printf]"));
-  EXPECT_THAT("str", matches("o[str]eam"));
+  // These would ideally match, but would need special segmentation rules.
+  EXPECT_THAT("printf", Not(matches("s[printf]")));
+  EXPECT_THAT("str", Not(matches("o[str]eam")));
 }
 
 struct RankMatcher : public testing::MatcherInterface<StringRef> {
@@ -187,9 +203,8 @@ struct RankMatcher : public testing::MatcherInterface<StringRef> {
         llvm::raw_string_ostream Info(Buf);
         auto AnnotatedMatch = Matcher.dumpLast(Info);
 
-        if (AnnotatedMatch != Str.Annotated) {
-          *OS << "\nMatched " << Str.Word << " as " << AnnotatedMatch
-              << " instead of " << Str.Annotated << "\n"
+        if (!Str.accepts(AnnotatedMatch)) {
+          *OS << "\nDoesn't match " << Str << ", but " << AnnotatedMatch << "\n"
               << Info.str();
           Ok = false;
         } else if (LastScore && *LastScore < *Score) {

@@ -117,7 +117,7 @@ public:
                                  std::forward<RestArgs>(Rest)...)) {
 
 #ifndef NDEBUG
-    assert(!WasCalled && "Can only call result of BindWithForward once.");
+    assert(!WasCalled && "Can only call result of Bind once.");
     WasCalled = true;
 #endif
     return CallImpl(llvm::index_sequence_for<Args...>(),
@@ -132,43 +132,9 @@ public:
 /// The returned object must be called no more than once, as \p As are
 /// std::forwarded'ed (therefore can be moved) into \p F during the call.
 template <class Func, class... Args>
-ForwardBinder<Func, Args...> BindWithForward(Func F, Args &&... As) {
+ForwardBinder<Func, Args...> Bind(Func F, Args &&... As) {
   return ForwardBinder<Func, Args...>(
       std::make_tuple(std::forward<Func>(F), std::forward<Args>(As)...));
-}
-
-namespace detail {
-/// Runs provided callback in destructor. Use onScopeExit helper function to
-/// create this object.
-template <class Func> struct ScopeExitGuard {
-  static_assert(std::is_same<typename std::decay<Func>::type, Func>::value,
-                "Func must be decayed");
-
-  ScopeExitGuard(Func F) : F(std::move(F)) {}
-  ~ScopeExitGuard() {
-    if (!F)
-      return;
-    (*F)();
-  }
-
-  // Move-only.
-  ScopeExitGuard(const ScopeExitGuard &) = delete;
-  ScopeExitGuard &operator=(const ScopeExitGuard &) = delete;
-
-  ScopeExitGuard(ScopeExitGuard &&Other) = default;
-  ScopeExitGuard &operator=(ScopeExitGuard &&Other) = default;
-
-private:
-  llvm::Optional<Func> F;
-};
-} // namespace detail
-
-/// Creates a RAII object that will run \p F in its destructor.
-template <class Func>
-auto onScopeExit(Func &&F)
-    -> detail::ScopeExitGuard<typename std::decay<Func>::type> {
-  return detail::ScopeExitGuard<typename std::decay<Func>::type>(
-      std::forward<Func>(F));
 }
 
 } // namespace clangd

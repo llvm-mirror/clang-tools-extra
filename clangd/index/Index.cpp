@@ -10,10 +10,17 @@
 #include "Index.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA1.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace clang {
 namespace clangd {
 using namespace llvm;
+
+raw_ostream &operator<<(raw_ostream &OS, const SymbolLocation &L) {
+  if (!L)
+    return OS << "(none)";
+  return OS << L.FileURI << "[" << L.StartOffset << "-" << L.EndOffset << ")";
+}
 
 SymbolID::SymbolID(StringRef USR)
     : HashValue(SHA1::hash(arrayRefFromStringRef(USR))) {}
@@ -27,6 +34,10 @@ void operator>>(StringRef Str, SymbolID &ID) {
   std::string HexString = fromHex(Str);
   assert(HexString.size() == ID.HashValue.size());
   std::copy(HexString.begin(), HexString.end(), ID.HashValue.begin());
+}
+
+raw_ostream &operator<<(raw_ostream &OS, const Symbol &S) {
+  return OS << S.Scope << S.Name;
 }
 
 SymbolSlab::const_iterator SymbolSlab::find(const SymbolID &ID) const {
@@ -54,7 +65,25 @@ static void own(Symbol &S, DenseSet<StringRef> &Strings,
   // We need to copy every StringRef field onto the arena.
   Intern(S.Name);
   Intern(S.Scope);
-  Intern(S.CanonicalDeclaration.FilePath);
+  Intern(S.CanonicalDeclaration.FileURI);
+  Intern(S.Definition.FileURI);
+
+  Intern(S.CompletionLabel);
+  Intern(S.CompletionFilterText);
+  Intern(S.CompletionPlainInsertText);
+  Intern(S.CompletionSnippetInsertText);
+
+  if (S.Detail) {
+    // Copy values of StringRefs into arena.
+    auto *Detail = Arena.Allocate<Symbol::Details>();
+    *Detail = *S.Detail;
+    // Intern the actual strings.
+    Intern(Detail->Documentation);
+    Intern(Detail->CompletionDetail);
+    Intern(Detail->IncludeHeader);
+    // Replace the detail pointer with our copy.
+    S.Detail = Detail;
+  }
 }
 
 void SymbolSlab::Builder::insert(const Symbol &S) {

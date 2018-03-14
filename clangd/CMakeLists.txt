@@ -6,30 +6,37 @@ add_clang_library(clangDaemon
   ClangdLSPServer.cpp
   ClangdServer.cpp
   ClangdUnit.cpp
-  ClangdUnitStore.cpp
   CodeComplete.cpp
   CodeCompletionStrings.cpp
-  Context.cpp
+  CompileArgsCache.cpp
   Compiler.cpp
+  Context.cpp
   DraftStore.cpp
   FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
+  Headers.cpp
   JSONExpr.cpp
   JSONRPCDispatcher.cpp
   Logger.cpp
   Protocol.cpp
   ProtocolHandlers.cpp
   SourceCode.cpp
+  Threading.cpp
   Trace.cpp
+  TUScheduler.cpp
+  URI.cpp
   XRefs.cpp
+  index/CanonicalIncludes.cpp
   index/FileIndex.cpp
   index/Index.cpp
   index/MemIndex.cpp
+  index/Merge.cpp
   index/SymbolCollector.cpp
   index/SymbolYAML.cpp
 
   LINK_LIBS
   clangAST
+  clangASTMatchers
   clangBasic
   clangFormat
   clangFrontend

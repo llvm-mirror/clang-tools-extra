@@ -31,9 +31,11 @@
 #include "RedundantSmartptrGetCheck.h"
 #include "RedundantStringCStrCheck.h"
 #include "RedundantStringInitCheck.h"
+#include "SIMDIntrinsicsCheck.h"
 #include "SimplifyBooleanExprCheck.h"
 #include "StaticAccessedThroughInstanceCheck.h"
 #include "StaticDefinitionInAnonymousNamespaceCheck.h"
+#include "StringCompareCheck.h"
 #include "UniqueptrDeleteReleaseCheck.h"
 
 namespace clang {
@@ -75,6 +77,8 @@ public:
         "readability-static-accessed-through-instance");
     CheckFactories.registerCheck<StaticDefinitionInAnonymousNamespaceCheck>(
         "readability-static-definition-in-anonymous-namespace");
+    CheckFactories.registerCheck<StringCompareCheck>(
+        "readability-string-compare");
     CheckFactories.registerCheck<readability::NamedParameterCheck>(
         "readability-named-parameter");
     CheckFactories.registerCheck<NonConstParameterCheck>(
@@ -89,6 +93,8 @@ public:
         "readability-redundant-string-cstr");
     CheckFactories.registerCheck<RedundantStringInitCheck>(
         "readability-redundant-string-init");
+    CheckFactories.registerCheck<SIMDIntrinsicsCheck>(
+        "readability-simd-intrinsics");
     CheckFactories.registerCheck<SimplifyBooleanExprCheck>(
         "readability-simplify-boolean-expr");
     CheckFactories.registerCheck<UniqueptrDeleteReleaseCheck>(

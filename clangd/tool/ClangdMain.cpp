@@ -11,11 +11,14 @@
 #include "JSONRPCDispatcher.h"
 #include "Path.h"
 #include "Trace.h"
+#include "index/SymbolYAML.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -26,7 +29,24 @@ using namespace clang::clangd;
 
 namespace {
 enum class PCHStorageFlag { Disk, Memory };
+
+// Build an in-memory static index for global symbols from a YAML-format file.
+// The size of global symbols should be relatively small, so that all symbols
+// can be managed in memory.
+std::unique_ptr<SymbolIndex> BuildStaticIndex(llvm::StringRef YamlSymbolFile) {
+  auto Buffer = llvm::MemoryBuffer::getFile(YamlSymbolFile);
+  if (!Buffer) {
+    llvm::errs() << "Can't open " << YamlSymbolFile << "\n";
+    return nullptr;
+  }
+  auto Slab = SymbolsFromYAML(Buffer.get()->getBuffer());
+  SymbolSlab::Builder SymsBuilder;
+  for (auto Sym : Slab)
+    SymsBuilder.insert(Sym);
+
+  return MemIndex::build(std::move(SymsBuilder).build());
 }
+} // namespace
 
 static llvm::cl::opt<Path> CompileCommandsDir(
     "compile-commands-dir",
@@ -39,13 +59,6 @@ static llvm::cl::opt<unsigned>
                        llvm::cl::desc("Number of async workers used by clangd"),
                        llvm::cl::init(getDefaultAsyncThreadsCount()));
 
-static llvm::cl::opt<bool> EnableSnippets(
-    "enable-snippets",
-    llvm::cl::desc(
-        "Present snippet completions instead of plaintext completions. "
-        "This also enables code pattern results." /* FIXME: should it? */),
-    llvm::cl::init(clangd::CodeCompleteOptions().EnableSnippets));
-
 // FIXME: Flags are the wrong mechanism for user preferences.
 // We should probably read a dotfile or similar.
 static llvm::cl::opt<bool> IncludeIneligibleResults(
@@ -55,9 +68,24 @@ static llvm::cl::opt<bool> IncludeIneligibleResults(
     llvm::cl::init(clangd::CodeCompleteOptions().IncludeIneligibleResults),
     llvm::cl::Hidden);
 
+static llvm::cl::opt<JSONStreamStyle> InputStyle(
+    "input-style", llvm::cl::desc("Input JSON stream encoding"),
+    llvm::cl::values(
+        clEnumValN(JSONStreamStyle::Standard, "standard", "usual LSP protocol"),
+        clEnumValN(JSONStreamStyle::Delimited, "delimited",
+                   "messages delimited by --- lines, with # comment support")),
+    llvm::cl::init(JSONStreamStyle::Standard));
+
 static llvm::cl::opt<bool>
     PrettyPrint("pretty", llvm::cl::desc("Pretty-print JSON output"),
                 llvm::cl::init(false));
+
+static llvm::cl::opt<bool> Test(
+    "lit-test",
+    llvm::cl::desc(
+        "Abbreviation for -input-style=delimited -pretty -run-synchronously. "
+        "Intended to simplify lit tests."),
+    llvm::cl::init(false), llvm::cl::Hidden);
 
 static llvm::cl::opt<PCHStorageFlag> PCHStorage(
     "pch-storage",
@@ -67,6 +95,12 @@ static llvm::cl::opt<PCHStorageFlag> PCHStorage(
         clEnumValN(PCHStorageFlag::Disk, "disk", "store PCHs on disk"),
         clEnumValN(PCHStorageFlag::Memory, "memory", "store PCHs in memory")),
     llvm::cl::init(PCHStorageFlag::Disk));
+
+static llvm::cl::opt<int> LimitCompletionResult(
+    "completion-limit",
+    llvm::cl::desc("Limit the number of completion results returned by clangd. "
+                   "0 means no limit."),
+    llvm::cl::init(100));
 
 static llvm::cl::opt<bool> RunSynchronously(
     "run-synchronously",
@@ -84,21 +118,30 @@ static llvm::cl::opt<Path> InputMirrorFile(
         "Mirror all LSP input to the specified file. Useful for debugging."),
     llvm::cl::init(""), llvm::cl::Hidden);
 
-static llvm::cl::opt<Path> TraceFile(
-    "trace",
-    llvm::cl::desc(
-        "Trace internal events and timestamps in chrome://tracing JSON format"),
-    llvm::cl::init(""), llvm::cl::Hidden);
-
 static llvm::cl::opt<bool> EnableIndexBasedCompletion(
     "enable-index-based-completion",
     llvm::cl::desc(
-        "Enable index-based global code completion (experimental). Clangd will "
-        "use index built from symbols in opened files"),
-    llvm::cl::init(false), llvm::cl::Hidden);
+        "Enable index-based global code completion. "
+        "Clang uses an index built from symbols in opened files"),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<Path> YamlSymbolFile(
+    "yaml-symbol-file",
+    llvm::cl::desc(
+        "YAML-format global symbol file to build the static index. Clangd will "
+        "use the static index for global code completion.\n"
+        "WARNING: This option is experimental only, and will be removed "
+        "eventually. Don't rely on it."),
+    llvm::cl::init(""), llvm::cl::Hidden);
 
 int main(int argc, char *argv[]) {
+  llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
   llvm::cl::ParseCommandLineOptions(argc, argv, "clangd");
+  if (Test) {
+    RunSynchronously = true;
+    InputStyle = JSONStreamStyle::Delimited;
+    PrettyPrint = true;
+  }
 
   if (!RunSynchronously && WorkerThreadsCount == 0) {
     llvm::errs() << "A number of worker threads cannot be 0. Did you mean to "
@@ -106,10 +149,11 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Ignore -j option if -run-synchonously is used.
-  // FIXME: a warning should be shown here.
-  if (RunSynchronously)
+  if (RunSynchronously) {
+    if (WorkerThreadsCount.getNumOccurrences())
+      llvm::errs() << "Ignoring -j because -run-synchronously is set.\n";
     WorkerThreadsCount = 0;
+  }
 
   // Validate command line arguments.
   llvm::Optional<llvm::raw_fd_ostream> InputMirrorStream;
@@ -123,15 +167,18 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // Setup tracing facilities.
+  // Setup tracing facilities if CLANGD_TRACE is set. In practice enabling a
+  // trace flag in your editor's config is annoying, launching with
+  // `CLANGD_TRACE=trace.json vim` is easier.
   llvm::Optional<llvm::raw_fd_ostream> TraceStream;
   std::unique_ptr<trace::EventTracer> Tracer;
-  if (!TraceFile.empty()) {
+  if (auto *TraceFile = getenv("CLANGD_TRACE")) {
     std::error_code EC;
     TraceStream.emplace(TraceFile, /*ref*/ EC, llvm::sys::fs::F_RW);
     if (EC) {
-      TraceFile.reset();
-      llvm::errs() << "Error while opening trace file: " << EC.message();
+      TraceStream.reset();
+      llvm::errs() << "Error while opening trace file " << TraceFile << ": "
+                   << EC.message();
     } else {
       Tracer = trace::createJSONTracer(*TraceStream, PrettyPrint);
     }
@@ -141,9 +188,7 @@ int main(int argc, char *argv[]) {
   if (Tracer)
     TracingSession.emplace(*Tracer);
 
-  llvm::raw_ostream &Outs = llvm::outs();
-  llvm::raw_ostream &Logs = llvm::errs();
-  JSONOutput Out(Outs, Logs,
+  JSONOutput Out(llvm::outs(), llvm::errs(),
                  InputMirrorStream ? InputMirrorStream.getPointer() : nullptr,
                  PrettyPrint);
 
@@ -152,7 +197,6 @@ int main(int argc, char *argv[]) {
   // If --compile-commands-dir arg was invoked, check value and override default
   // path.
   llvm::Optional<Path> CompileCommandsDirPath;
-
   if (CompileCommandsDir.empty()) {
     CompileCommandsDirPath = llvm::None;
   } else if (!llvm::sys::path::is_absolute(CompileCommandsDir) ||
@@ -165,31 +209,34 @@ int main(int argc, char *argv[]) {
     CompileCommandsDirPath = CompileCommandsDir;
   }
 
-  bool StorePreamblesInMemory;
+  ClangdServer::Options Opts;
   switch (PCHStorage) {
   case PCHStorageFlag::Memory:
-    StorePreamblesInMemory = true;
+    Opts.StorePreamblesInMemory = true;
     break;
   case PCHStorageFlag::Disk:
-    StorePreamblesInMemory = false;
+    Opts.StorePreamblesInMemory = false;
     break;
   }
-
-  llvm::Optional<StringRef> ResourceDirRef = None;
   if (!ResourceDir.empty())
-    ResourceDirRef = ResourceDir;
-
-  // Change stdin to binary to not lose \r\n on windows.
-  llvm::sys::ChangeStdinToBinary();
+    Opts.ResourceDir = ResourceDir;
+  Opts.BuildDynamicSymbolIndex = EnableIndexBasedCompletion;
+  std::unique_ptr<SymbolIndex> StaticIdx;
+  if (EnableIndexBasedCompletion && !YamlSymbolFile.empty()) {
+    StaticIdx = BuildStaticIndex(YamlSymbolFile);
+    Opts.StaticIndex = StaticIdx.get();
+  }
+  Opts.AsyncThreadsCount = WorkerThreadsCount;
 
   clangd::CodeCompleteOptions CCOpts;
-  CCOpts.EnableSnippets = EnableSnippets;
   CCOpts.IncludeIneligibleResults = IncludeIneligibleResults;
+  CCOpts.Limit = LimitCompletionResult;
+
   // Initialize and run ClangdLSPServer.
-  ClangdLSPServer LSPServer(Out, WorkerThreadsCount, StorePreamblesInMemory,
-                            CCOpts, ResourceDirRef, CompileCommandsDirPath,
-                            EnableIndexBasedCompletion);
+  ClangdLSPServer LSPServer(Out, CCOpts, CompileCommandsDirPath, Opts);
   constexpr int NoShutdownRequestErrorCode = 1;
   llvm::set_thread_name("clangd.main");
-  return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;
+  // Change stdin to binary to not lose \r\n on windows.
+  llvm::sys::ChangeStdinToBinary();
+  return LSPServer.run(std::cin, InputStyle) ? 0 : NoShutdownRequestErrorCode;
 }

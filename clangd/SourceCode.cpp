@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 #include "SourceCode.h"
 
+#include "clang/Basic/SourceManager.h"
+
 namespace clang {
 namespace clangd {
 using namespace llvm;
@@ -33,9 +35,18 @@ Position offsetToPosition(StringRef Code, size_t Offset) {
   size_t PrevNL = Before.rfind('\n');
   size_t StartOfLine = (PrevNL == StringRef::npos) ? 0 : (PrevNL + 1);
   // FIXME: officially character counts UTF-16 code units, not UTF-8 bytes!
-  return {Lines, static_cast<int>(Offset - StartOfLine)};
+  Position Pos;
+  Pos.line = Lines;
+  Pos.character = static_cast<int>(Offset - StartOfLine);
+  return Pos;
+}
+
+Position sourceLocToPosition(const SourceManager &SM, SourceLocation Loc) {
+  Position P;
+  P.line = static_cast<int>(SM.getSpellingLineNumber(Loc)) - 1;
+  P.character = static_cast<int>(SM.getSpellingColumnNumber(Loc)) - 1;
+  return P;
 }
 
 } // namespace clangd
 } // namespace clang
-
