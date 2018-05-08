@@ -78,10 +78,7 @@ public:
 
         auto Symbols = Collector->takeSymbols();
         for (const auto &Sym : Symbols) {
-          std::string IDStr;
-          llvm::raw_string_ostream OS(IDStr);
-          OS << Sym.ID;
-          Ctx->reportResult(OS.str(), SymbolToYAML(Sym));
+          Ctx->reportResult(Sym.ID.str(), SymbolToYAML(Sym));
         }
       }
 
@@ -99,6 +96,7 @@ public:
     auto CollectorOpts = SymbolCollector::Options();
     CollectorOpts.FallbackDir = AssumedHeaderDir;
     CollectorOpts.CollectIncludePath = true;
+    CollectorOpts.CountReferences = true;
     auto Includes = llvm::make_unique<CanonicalIncludes>();
     addSystemHeadersMapping(Includes.get());
     CollectorOpts.Includes = Includes.get();

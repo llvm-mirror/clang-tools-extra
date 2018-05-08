@@ -94,8 +94,8 @@ llvm::Optional<ParsedAST> build(llvm::StringRef BasePath,
          "BasePath must be a base file path without extension.");
   llvm::IntrusiveRefCntPtr<vfs::InMemoryFileSystem> VFS(
       new vfs::InMemoryFileSystem);
-  std::string Path = (BasePath + ".cpp").str();
-  std::string Header = (BasePath + ".h").str();
+  std::string Path = testPath((BasePath + ".cpp").str());
+  std::string Header = testPath((BasePath + ".h").str());
   VFS->addFile(Path, 0, llvm::MemoryBuffer::getMemBuffer(""));
   VFS->addFile(Header, 0, llvm::MemoryBuffer::getMemBuffer(Code));
   const char *Args[] = {"clang", "-xc++", "-include", Header.c_str(),
@@ -193,6 +193,44 @@ TEST(FileIndexTest, NoIncludeCollected) {
     SeenSymbol = true;
   });
   EXPECT_TRUE(SeenSymbol);
+}
+
+TEST(FileIndexTest, TemplateParamsInLabel) {
+  auto Source = R"cpp(
+template <class Ty>
+class vector {
+};
+
+template <class Ty, class Arg>
+vector<Ty> make_vector(Arg A) {}
+)cpp";
+
+  FileIndex M;
+  M.update("f", build("f", Source).getPointer());
+
+  FuzzyFindRequest Req;
+  Req.Query = "";
+  bool SeenVector = false;
+  bool SeenMakeVector = false;
+  M.fuzzyFind(Req, [&](const Symbol &Sym) {
+    if (Sym.Name == "vector") {
+      EXPECT_EQ(Sym.CompletionLabel, "vector<class Ty>");
+      EXPECT_EQ(Sym.CompletionSnippetInsertText, "vector<${1:class Ty}>");
+      EXPECT_EQ(Sym.CompletionPlainInsertText, "vector");
+      SeenVector = true;
+      return;
+    }
+
+    if (Sym.Name == "make_vector") {
+      EXPECT_EQ(Sym.CompletionLabel, "make_vector<class Ty>(Arg A)");
+      EXPECT_EQ(Sym.CompletionSnippetInsertText,
+                "make_vector<${1:class Ty}>(${2:Arg A})");
+      EXPECT_EQ(Sym.CompletionPlainInsertText, "make_vector");
+      SeenMakeVector = true;
+    }
+  });
+  EXPECT_TRUE(SeenVector);
+  EXPECT_TRUE(SeenMakeVector);
 }
 
 } // namespace

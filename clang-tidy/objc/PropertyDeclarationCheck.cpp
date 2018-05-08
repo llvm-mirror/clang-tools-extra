@@ -39,6 +39,7 @@ enum NamingStyle {
 ///
 /// Keep this list sorted.
 constexpr llvm::StringLiteral DefaultSpecialAcronyms[] = {
+    "[2-9]G",
     "ACL",
     "API",
     "ARGB",
@@ -93,8 +94,12 @@ constexpr llvm::StringLiteral DefaultSpecialAcronyms[] = {
     "VOIP",
     "VPN",
     "VR",
+    "W",
     "WAN",
+    "X",
     "XML",
+    "Y",
+    "Z",
 };
 
 /// For now we will only fix 'CamelCase' or 'abc_CamelCase' property to
@@ -170,6 +175,10 @@ PropertyDeclarationCheck::PropertyDeclarationCheck(StringRef Name,
       EscapedAcronyms() {}
 
 void PropertyDeclarationCheck::registerMatchers(MatchFinder *Finder) {
+  // this check should only be applied to ObjC sources.
+  if (!getLangOpts().ObjC1 && !getLangOpts().ObjC2) {
+    return;
+  }
   if (IncludeDefaultAcronyms) {
     EscapedAcronyms.reserve(llvm::array_lengthof(DefaultSpecialAcronyms) +
                             SpecialAcronyms.size());

@@ -11,8 +11,9 @@
 namespace clang {
 namespace clangd {
 
-void runAddDocument(ClangdServer &Server, PathRef File, StringRef Contents) {
-  Server.addDocument(File, Contents);
+void runAddDocument(ClangdServer &Server, PathRef File, StringRef Contents,
+                    WantDiagnostics WantDiags, bool SkipCache) {
+  Server.addDocument(File, Contents, WantDiags, SkipCache);
   if (!Server.blockUntilIdleForTest())
     llvm_unreachable("not idle after addDocument");
 }
@@ -67,31 +68,31 @@ template <typename T> CaptureProxy<T> capture(llvm::Optional<T> &Target) {
 }
 } // namespace
 
-Tagged<CompletionList> runCodeComplete(ClangdServer &Server, PathRef File,
-                                       Position Pos,
-                                       clangd::CodeCompleteOptions Opts) {
-  llvm::Optional<Tagged<CompletionList>> Result;
+llvm::Expected<CompletionList>
+runCodeComplete(ClangdServer &Server, PathRef File, Position Pos,
+                clangd::CodeCompleteOptions Opts) {
+  llvm::Optional<llvm::Expected<CompletionList>> Result;
   Server.codeComplete(File, Pos, Opts, capture(Result));
   return std::move(*Result);
 }
 
-llvm::Expected<Tagged<SignatureHelp>>
-runSignatureHelp(ClangdServer &Server, PathRef File, Position Pos) {
-  llvm::Optional<llvm::Expected<Tagged<SignatureHelp>>> Result;
+llvm::Expected<SignatureHelp> runSignatureHelp(ClangdServer &Server,
+                                               PathRef File, Position Pos) {
+  llvm::Optional<llvm::Expected<SignatureHelp>> Result;
   Server.signatureHelp(File, Pos, capture(Result));
   return std::move(*Result);
 }
 
-llvm::Expected<Tagged<std::vector<Location>>>
+llvm::Expected<std::vector<Location>>
 runFindDefinitions(ClangdServer &Server, PathRef File, Position Pos) {
-  llvm::Optional<llvm::Expected<Tagged<std::vector<Location>>>> Result;
+  llvm::Optional<llvm::Expected<std::vector<Location>>> Result;
   Server.findDefinitions(File, Pos, capture(Result));
   return std::move(*Result);
 }
 
-llvm::Expected<Tagged<std::vector<DocumentHighlight>>>
+llvm::Expected<std::vector<DocumentHighlight>>
 runFindDocumentHighlights(ClangdServer &Server, PathRef File, Position Pos) {
-  llvm::Optional<llvm::Expected<Tagged<std::vector<DocumentHighlight>>>> Result;
+  llvm::Optional<llvm::Expected<std::vector<DocumentHighlight>>> Result;
   Server.findDocumentHighlights(File, Pos, capture(Result));
   return std::move(*Result);
 }
@@ -106,6 +107,13 @@ runRename(ClangdServer &Server, PathRef File, Position Pos, StringRef NewName) {
 std::string runDumpAST(ClangdServer &Server, PathRef File) {
   llvm::Optional<std::string> Result;
   Server.dumpAST(File, capture(Result));
+  return std::move(*Result);
+}
+
+llvm::Expected<std::vector<SymbolInformation>>
+runWorkspaceSymbols(ClangdServer &Server, StringRef Query, int Limit) {
+  llvm::Optional<llvm::Expected<std::vector<SymbolInformation>>> Result;
+  Server.workspaceSymbols(Query, Limit, capture(Result));
   return std::move(*Result);
 }
 

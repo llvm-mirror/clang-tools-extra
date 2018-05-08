@@ -27,6 +27,7 @@
 #include "JSONExpr.h"
 #include "URI.h"
 #include "llvm/ADT/Optional.h"
+#include <bitset>
 #include <string>
 #include <vector>
 
@@ -119,6 +120,9 @@ struct Range {
   friend bool operator==(const Range &LHS, const Range &RHS) {
     return std::tie(LHS.start, LHS.end) == std::tie(RHS.start, RHS.end);
   }
+  friend bool operator!=(const Range &LHS, const Range &RHS) {
+    return !(LHS == RHS);
+  }
   friend bool operator<(const Range &LHS, const Range &RHS) {
     return std::tie(LHS.start, LHS.end) < std::tie(RHS.start, RHS.end);
   }
@@ -194,6 +198,20 @@ inline bool fromJSON(const json::Expr &, NoParams &) { return true; }
 using ShutdownParams = NoParams;
 using ExitParams = NoParams;
 
+/// Defines how the host (editor) should sync document changes to the language
+/// server.
+enum class TextDocumentSyncKind {
+  /// Documents should not be synced at all.
+  None = 0,
+
+  /// Documents are synced by always sending the full content of the document.
+  Full = 1,
+
+  /// Documents are synced by sending the full content on open.  After that
+  /// only incremental updates to the document are send.
+  Incremental = 2,
+};
+
 struct CompletionItemClientCapabilities {
   /// Client supports snippets as insert text.
   bool snippetSupport = false;
@@ -220,6 +238,67 @@ struct CompletionClientCapabilities {
 };
 bool fromJSON(const json::Expr &, CompletionClientCapabilities &);
 
+/// A symbol kind.
+enum class SymbolKind {
+  File = 1,
+  Module = 2,
+  Namespace = 3,
+  Package = 4,
+  Class = 5,
+  Method = 6,
+  Property = 7,
+  Field = 8,
+  Constructor = 9,
+  Enum = 10,
+  Interface = 11,
+  Function = 12,
+  Variable = 13,
+  Constant = 14,
+  String = 15,
+  Number = 16,
+  Boolean = 17,
+  Array = 18,
+  Object = 19,
+  Key = 20,
+  Null = 21,
+  EnumMember = 22,
+  Struct = 23,
+  Event = 24,
+  Operator = 25,
+  TypeParameter = 26
+};
+
+constexpr auto SymbolKindMin = static_cast<size_t>(SymbolKind::File);
+constexpr auto SymbolKindMax = static_cast<size_t>(SymbolKind::TypeParameter);
+using SymbolKindBitset = std::bitset<SymbolKindMax + 1>;
+
+bool fromJSON(const json::Expr &, SymbolKind &);
+
+struct SymbolKindCapabilities {
+  /// The SymbolKinds that the client supports. If not set, the client only
+  /// supports <= SymbolKind::Array and will not fall back to a valid default
+  /// value.
+  llvm::Optional<std::vector<SymbolKind>> valueSet;
+};
+bool fromJSON(const json::Expr &, std::vector<SymbolKind> &);
+bool fromJSON(const json::Expr &, SymbolKindCapabilities &);
+SymbolKind adjustKindToCapability(SymbolKind Kind,
+                                  SymbolKindBitset &supportedSymbolKinds);
+
+struct WorkspaceSymbolCapabilities {
+  /// Capabilities SymbolKind.
+  llvm::Optional<SymbolKindCapabilities> symbolKind;
+};
+bool fromJSON(const json::Expr &, WorkspaceSymbolCapabilities &);
+
+// FIXME: most of the capabilities are missing from this struct. Only the ones
+// used by clangd are currently there.
+struct WorkspaceClientCapabilities {
+  /// Capabilities specific to `workspace/symbol`.
+  llvm::Optional<WorkspaceSymbolCapabilities> symbol;
+};
+bool fromJSON(const json::Expr &, WorkspaceClientCapabilities &);
+
 // FIXME: most of the capabilities are missing from this struct. Only the ones
 // used by clangd are currently there.
 struct TextDocumentClientCapabilities {
@@ -230,8 +309,7 @@ bool fromJSON(const json::Expr &, TextDocumentClientCapabilities &);
 
 struct ClientCapabilities {
   // Workspace specific client capabilities.
-  // NOTE: not used by clangd at the moment.
-  // WorkspaceClientCapabilities workspace;
+  llvm::Optional<WorkspaceClientCapabilities> workspace;
 
   // Text document specific client capabilities.
   TextDocumentClientCapabilities textDocument;
@@ -284,7 +362,13 @@ struct DidCloseTextDocumentParams {
 bool fromJSON(const json::Expr &, DidCloseTextDocumentParams &);
 
 struct TextDocumentContentChangeEvent {
-  /// The new text of the document.
+  /// The range of the document that changed.
+  llvm::Optional<Range> range;
+
+  /// The length of the range that got replaced.
+  llvm::Optional<int> rangeLength;
+
+  /// The new text of the range/document.
   std::string text;
 };
 bool fromJSON(const json::Expr &, TextDocumentContentChangeEvent &);
@@ -410,13 +494,14 @@ struct Diagnostic {
   /// The diagnostic's message.
   std::string message;
 };
+
 /// A LSP-specific comparator used to find diagnostic in a container like
 /// std:map.
 /// We only use the required fields of Diagnostic to do the comparsion to avoid
 /// any regression issues from LSP clients (e.g. VScode), see
 /// https://git.io/vbr29
 struct LSPDiagnosticCompare {
-  bool operator()(const Diagnostic& LHS, const Diagnostic& RHS) const {
+  bool operator()(const Diagnostic &LHS, const Diagnostic &RHS) const {
     return std::tie(LHS.range, LHS.message) < std::tie(RHS.range, RHS.message);
   }
 };
@@ -500,6 +585,31 @@ struct Command : public ExecuteCommandParams {
 };
 
 json::Expr toJSON(const Command &C);
+
+/// Represents information about programming constructs like variables, classes,
+/// interfaces etc.
+struct SymbolInformation {
+  /// The name of this symbol.
+  std::string name;
+
+  /// The kind of this symbol.
+  SymbolKind kind;
+
+  /// The location of this symbol.
+  Location location;
+
+  /// The name of the symbol containing this symbol.
+  std::string containerName;
+};
+json::Expr toJSON(const SymbolInformation &);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &, const SymbolInformation &);
+
+/// The parameters of a Workspace Symbol Request.
+struct WorkspaceSymbolParams {
+  /// A non-empty query string
+  std::string query;
+};
+bool fromJSON(const json::Expr &, WorkspaceSymbolParams &);
 
 struct ApplyWorkspaceEditParams {
   WorkspaceEdit edit;
@@ -646,6 +756,7 @@ struct CompletionItem {
   //              between a completion and a completion resolve request.
 };
 json::Expr toJSON(const CompletionItem &);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &, const CompletionItem &);
 
 bool operator<(const CompletionItem &, const CompletionItem &);
 
@@ -684,6 +795,8 @@ struct SignatureInformation {
   std::vector<ParameterInformation> parameters;
 };
 json::Expr toJSON(const SignatureInformation &);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &,
+                              const SignatureInformation &);
 
 /// Represents the signature of a callable.
 struct SignatureHelp {
@@ -737,8 +850,19 @@ struct DocumentHighlight {
   }
 };
 json::Expr toJSON(const DocumentHighlight &DH);
+llvm::raw_ostream &operator<<(llvm::raw_ostream &, const DocumentHighlight &);
 
 } // namespace clangd
 } // namespace clang
+
+namespace llvm {
+template <> struct format_provider<clang::clangd::Position> {
+  static void format(const clang::clangd::Position &Pos, raw_ostream &OS,
+                     StringRef Style) {
+    assert(Style.empty() && "style modifiers for this type are not supported");
+    OS << Pos;
+  }
+};
+} // namespace llvm
 
 #endif

@@ -71,8 +71,11 @@ Name prefix            Description
 ``mpi-``               Checks related to MPI (Message Passing Interface).
 ``objc-``              Checks related to Objective-C coding conventions.
 ``performance-``       Checks that target performance-related issues.
+``portability-``       Checks that target portability-related issues that don't
+                       relate to any particular coding style.
 ``readability-``       Checks that target readability-related issues that don't
                        relate to any particular coding style.
+``zircon-``            Checks related to Zircon kernel coding conventions.
 ====================== =========================================================
 
 Clang diagnostics are treated in a similar way as check diagnostics. Clang
@@ -669,6 +672,27 @@ source code is at `test/clang-tidy/google-readability-casting.cpp`_):
     // CHECK-MESSAGES: :[[@LINE-1]]:11: warning: redundant cast to the same type [google-readability-casting]
     // CHECK-FIXES: int b = a;
   }
+
+To check more than one scenario in the same test file use 
+``-check-suffix=SUFFIX-NAME`` on ``check_clang_tidy.py`` command line.
+With ``-check-suffix=SUFFIX-NAME`` you need to replace your ``CHECK-*`` 
+directives with ``CHECK-MESSAGES-SUFFIX-NAME`` and ``CHECK-FIXES-SUFFIX-NAME``.
+
+Here's an example:
+
+.. code-block:: c++
+
+   // RUN: %check_clang_tidy -check-suffix=USING-A %s misc-unused-using-decls %t -- -- -DUSING_A
+   // RUN: %check_clang_tidy -check-suffix=USING-B %s misc-unused-using-decls %t -- -- -DUSING_B
+   // RUN: %check_clang_tidy %s misc-unused-using-decls %t
+   ...
+   // CHECK-MESSAGES-USING-A: :[[@LINE-8]]:10: warning: using decl 'A' {{.*}}
+   // CHECK-MESSAGES-USING-B: :[[@LINE-7]]:10: warning: using decl 'B' {{.*}}
+   // CHECK-MESSAGES: :[[@LINE-6]]:10: warning: using decl 'C' {{.*}}
+   // CHECK-FIXES-USING-A-NOT: using a::A;$
+   // CHECK-FIXES-USING-B-NOT: using a::B;$
+   // CHECK-FIXES-NOT: using a::C;$
+
 
 There are many dark corners in the C++ language, and it may be difficult to make
 your check work perfectly in all cases, especially if it issues fix-it hints. The

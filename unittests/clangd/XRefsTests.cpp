@@ -24,15 +24,6 @@ namespace clang {
 namespace clangd {
 using namespace llvm;
 
-void PrintTo(const DocumentHighlight &V, std::ostream *O) {
-  llvm::raw_os_ostream OS(*O);
-  OS << V.range;
-  if (V.kind == DocumentHighlightKind::Read)
-    OS << "(r)";
-  if (V.kind == DocumentHighlightKind::Write)
-    OS << "(w)";
-}
-
 namespace {
 using testing::ElementsAre;
 using testing::Field;
@@ -41,8 +32,8 @@ using testing::Matcher;
 using testing::UnorderedElementsAreArray;
 
 class IgnoreDiagnostics : public DiagnosticsConsumer {
-  void onDiagnosticsReady(
-      PathRef File, Tagged<std::vector<DiagWithFixIts>> Diagnostics) override {}
+  void onDiagnosticsReady(PathRef File,
+                          std::vector<Diag> Diagnostics) override {}
 };
 
 // FIXME: this is duplicated with FileIndexTests. Share it.
@@ -119,7 +110,7 @@ TEST(GoToDefinition, All) {
   const char *Tests[] = {
       R"cpp(// Local variable
         int main() {
-          [[int bonjour]];
+          int [[bonjour]];
           ^bonjour = 2;
           int test1 = bonjour;
         }
@@ -127,7 +118,7 @@ TEST(GoToDefinition, All) {
 
       R"cpp(// Struct
         namespace ns1 {
-        [[struct MyClass {}]];
+        struct [[MyClass]] {};
         } // namespace ns1
         int main() {
           ns1::My^Class* Params;
@@ -135,21 +126,21 @@ TEST(GoToDefinition, All) {
       )cpp",
 
       R"cpp(// Function definition via pointer
-        [[int foo(int) {}]]
+        int [[foo]](int) {}
         int main() {
           auto *X = &^foo;
         }
       )cpp",
 
       R"cpp(// Function declaration via call
-        [[int foo(int)]];
+        int [[foo]](int);
         int main() {
           return ^foo(42);
         }
       )cpp",
 
       R"cpp(// Field
-        struct Foo { [[int x]]; };
+        struct Foo { int [[x]]; };
         int main() {
           Foo bar;
           bar.^x;
@@ -158,27 +149,27 @@ TEST(GoToDefinition, All) {
 
       R"cpp(// Field, member initializer
         struct Foo {
-          [[int x]];
+          int [[x]];
           Foo() : ^x(0) {}
         };
       )cpp",
 
       R"cpp(// Field, GNU old-style field designator
-        struct Foo { [[int x]]; };
+        struct Foo { int [[x]]; };
         int main() {
           Foo bar = { ^x : 1 };
         }
       )cpp",
 
       R"cpp(// Field, field designator
-        struct Foo { [[int x]]; };
+        struct Foo { int [[x]]; };
         int main() {
           Foo bar = { .^x = 2 };
         }
       )cpp",
 
       R"cpp(// Method call
-        struct Foo { [[int x()]]; };
+        struct Foo { int [[x]](); };
         int main() {
           Foo bar;
           bar.^x();
@@ -186,7 +177,7 @@ TEST(GoToDefinition, All) {
       )cpp",
 
       R"cpp(// Typedef
-        [[typedef int Foo]];
+        typedef int [[Foo]];
         int main() {
           ^Foo bar;
         }
@@ -199,44 +190,80 @@ TEST(GoToDefinition, All) {
       )cpp", */
 
       R"cpp(// Namespace
-        [[namespace ns {
+        namespace [[ns]] {
         struct Foo { static void bar(); }
-        }]] // namespace ns
+        } // namespace ns
         int main() { ^ns::Foo::bar(); }
       )cpp",
 
       R"cpp(// Macro
         #define MACRO 0
-        #define [[MACRO 1]]
+        #define [[MACRO]] 1
         int main() { return ^MACRO; }
         #define MACRO 2
         #undef macro
       )cpp",
 
+      R"cpp(// Macro
+       class TTT { public: int a; };
+       #define [[FF]](S) if (int b = S.a) {}
+       void f() {
+         TTT t;
+         F^F(t);
+       }
+      )cpp",
+
+      R"cpp(// Macro argument
+       int [[i]];
+       #define ADDRESSOF(X) &X;
+       int *j = ADDRESSOF(^i);
+      )cpp",
+
+      R"cpp(// Symbol concatenated inside macro (not supported)
+       int *pi;
+       #define POINTER(X) p # X;
+       int i = *POINTER(^i);
+      )cpp",
+
       R"cpp(// Forward class declaration
         class Foo;
-        [[class Foo {}]];
+        class [[Foo]] {};
         F^oo* foo();
       )cpp",
 
       R"cpp(// Function declaration
         void foo();
         void g() { f^oo(); }
-        [[void foo() {}]]
+        void [[foo]]() {}
+      )cpp",
+
+      R"cpp(
+        #define FF(name) class name##_Test {};
+        [[FF]](my);
+        void f() { my^_Test a; }
+      )cpp",
+
+      R"cpp(
+         #define FF() class [[Test]] {};
+         FF();
+         void f() { T^est a; }
       )cpp",
   };
   for (const char *Test : Tests) {
     Annotations T(Test);
     auto AST = build(T.code());
+    std::vector<Matcher<Location>> ExpectedLocations;
+    for (const auto &R : T.ranges())
+      ExpectedLocations.push_back(RangeIs(R));
     EXPECT_THAT(findDefinitions(AST, T.point()),
-                ElementsAre(RangeIs(T.range())))
+                ElementsAreArray(ExpectedLocations))
         << Test;
   }
 }
 
 TEST(GoToDefinition, RelPathsInCompileCommand) {
   Annotations SourceAnnotations(R"cpp(
-[[int foo]];
+int [[foo]];
 int baz = f^oo;
 )cpp");
 
@@ -254,9 +281,8 @@ int baz = f^oo;
       runFindDefinitions(Server, FooCpp, SourceAnnotations.point());
   EXPECT_TRUE(bool(Locations)) << "findDefinitions returned an error";
 
-  EXPECT_THAT(
-      Locations->Value,
-      ElementsAre(Location{URIForFile{FooCpp}, SourceAnnotations.range()}));
+  EXPECT_THAT(*Locations, ElementsAre(Location{URIForFile{FooCpp},
+                                               SourceAnnotations.range()}));
 }
 
 TEST(Hover, All) {
@@ -584,7 +610,9 @@ TEST(GoToInclude, All) {
   auto FooH = testPath("foo.h");
   auto FooHUri = URIForFile{FooH};
 
-  const char *HeaderContents = R"cpp([[]]int a;)cpp";
+  const char *HeaderContents = R"cpp([[]]#pragma once
+                                     int a;
+                                     )cpp";
   Annotations HeaderAnnotations(HeaderContents);
   FS.Files[FooH] = HeaderAnnotations.code();
 
@@ -595,38 +623,38 @@ TEST(GoToInclude, All) {
   auto Locations =
       runFindDefinitions(Server, FooCpp, SourceAnnotations.point());
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value,
+  EXPECT_THAT(*Locations,
               ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
 
   // Test include in preamble, last char.
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("2"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value,
+  EXPECT_THAT(*Locations,
               ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
 
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("3"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value,
+  EXPECT_THAT(*Locations,
               ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
 
   // Test include outside of preamble.
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("6"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value,
+  EXPECT_THAT(*Locations,
               ElementsAre(Location{FooHUri, HeaderAnnotations.range()}));
 
   // Test a few positions that do not result in Locations.
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("4"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value, IsEmpty());
+  EXPECT_THAT(*Locations, IsEmpty());
 
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("5"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value, IsEmpty());
+  EXPECT_THAT(*Locations, IsEmpty());
 
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("7"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
-  EXPECT_THAT(Locations->Value, IsEmpty());
+  EXPECT_THAT(*Locations, IsEmpty());
 }
 
 } // namespace

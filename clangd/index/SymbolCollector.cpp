@@ -8,11 +8,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "SymbolCollector.h"
+#include "../AST.h"
 #include "../CodeCompletionStrings.h"
 #include "../Logger.h"
+#include "../SourceCode.h"
 #include "../URI.h"
 #include "CanonicalIncludes.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Index/IndexSymbol.h"
@@ -25,6 +28,14 @@ namespace clang {
 namespace clangd {
 
 namespace {
+/// If \p ND is a template specialization, returns the described template.
+/// Otherwise, returns \p ND.
+const NamedDecl &getTemplateOrThis(const NamedDecl &ND) {
+  if (auto T = ND.getDescribedTemplate())
+    return *T;
+  return ND;
+}
+
 // Returns a URI of \p Path. Firstly, this makes the \p Path absolute using the
 // current working directory of the given SourceManager if the Path is not an
 // absolute path. If failed, this resolves relative paths against \p FallbackDir
@@ -79,16 +90,6 @@ llvm::Optional<std::string> toURI(const SourceManager &SM, StringRef Path,
   return llvm::None;
 }
 
-// "a::b::c", return {"a::b::", "c"}. Scope is empty if there's no qualifier.
-std::pair<llvm::StringRef, llvm::StringRef>
-splitQualifiedName(llvm::StringRef QName) {
-  assert(!QName.startswith("::") && "Qualified names should not start with ::");
-  size_t Pos = QName.rfind("::");
-  if (Pos == llvm::StringRef::npos)
-    return {StringRef(), QName};
-  return {QName.substr(0, Pos + 2), QName.substr(Pos + 2)};
-}
-
 bool shouldFilterDecl(const NamedDecl *ND, ASTContext *ASTCtx,
                       const SymbolCollector::Options &Opts) {
   using namespace clang::ast_matchers;
@@ -115,10 +116,16 @@ bool shouldFilterDecl(const NamedDecl *ND, ASTContext *ASTCtx,
   //   * enum constants in unscoped enum decl (e.g. "red" in "enum {red};")
   auto InTopLevelScope = hasDeclContext(
       anyOf(namespaceDecl(), translationUnitDecl(), linkageSpecDecl()));
+  // Don't index template specializations.
+  auto IsSpecialization =
+      anyOf(functionDecl(isExplicitTemplateSpecialization()),
+            cxxRecordDecl(isExplicitTemplateSpecialization()),
+            varDecl(isExplicitTemplateSpecialization()));
   if (match(decl(allOf(unless(isExpansionInMainFile()),
                        anyOf(InTopLevelScope,
                              hasDeclContext(enumDecl(InTopLevelScope,
-                                                     unless(isScoped())))))),
+                                                     unless(isScoped())))),
+                       unless(IsSpecialization))),
             *ND, *ASTCtx)
           .empty())
     return true;
@@ -178,30 +185,31 @@ getIncludeHeader(llvm::StringRef QName, const SourceManager &SM,
 llvm::Optional<SymbolLocation> getSymbolLocation(
     const NamedDecl &D, SourceManager &SM, const SymbolCollector::Options &Opts,
     const clang::LangOptions &LangOpts, std::string &FileURIStorage) {
-  SourceLocation SpellingLoc = SM.getSpellingLoc(D.getLocation());
-  if (D.getLocation().isMacroID()) {
-    std::string PrintLoc = SpellingLoc.printToString(SM);
-    if (llvm::StringRef(PrintLoc).startswith("<scratch") ||
-        llvm::StringRef(PrintLoc).startswith("<command line>")) {
-      // We use the expansion location for the following symbols, as spelling
-      // locations of these symbols are not interesting to us:
-      //   * symbols formed via macro concatenation, the spelling location will
-      //     be "<scratch space>"
-      //   * symbols controlled and defined by a compile command-line option
-      //     `-DName=foo`, the spelling location will be "<command line>".
-      SpellingLoc = SM.getExpansionRange(D.getLocation()).first;
-    }
-  }
-
-  auto U = toURI(SM, SM.getFilename(SpellingLoc), Opts);
+  SourceLocation NameLoc = findNameLoc(&D);
+  auto U = toURI(SM, SM.getFilename(NameLoc), Opts);
   if (!U)
     return llvm::None;
   FileURIStorage = std::move(*U);
   SymbolLocation Result;
   Result.FileURI = FileURIStorage;
-  Result.StartOffset = SM.getFileOffset(SpellingLoc);
-  Result.EndOffset = Result.StartOffset + clang::Lexer::MeasureTokenLength(
-                                              SpellingLoc, SM, LangOpts);
+  auto TokenLength = clang::Lexer::MeasureTokenLength(NameLoc, SM, LangOpts);
+
+  auto CreatePosition = [&SM](SourceLocation Loc) {
+    auto FileIdAndOffset = SM.getDecomposedLoc(Loc);
+    auto FileId = FileIdAndOffset.first;
+    auto Offset = FileIdAndOffset.second;
+    SymbolLocation::Position Pos;
+    // Position is 0-based while SourceManager is 1-based.
+    Pos.Line = SM.getLineNumber(FileId, Offset) - 1;
+    // FIXME: Use UTF-16 code units, not UTF-8 bytes.
+    Pos.Column = SM.getColumnNumber(FileId, Offset) - 1;
+    return Pos;
+  };
+
+  Result.Start = CreatePosition(NameLoc);
+  auto EndLoc = NameLoc.getLocWithOffset(TokenLength);
+  Result.End = CreatePosition(EndLoc);
+
   return std::move(Result);
 }
 
@@ -209,7 +217,7 @@ llvm::Optional<SymbolLocation> getSymbolLocation(
 // in a header file, in which case clangd would prefer to use ND as a canonical
 // declaration.
 // FIXME: handle symbol types that are not TagDecl (e.g. functions), if using
-// the the first seen declaration as canonical declaration is not a good enough
+// the first seen declaration as canonical declaration is not a good enough
 // heuristic.
 bool isPreferredDeclaration(const NamedDecl &ND, index::SymbolRoleSet Roles) {
   using namespace clang::ast_matchers;
@@ -232,40 +240,62 @@ void SymbolCollector::initialize(ASTContext &Ctx) {
 // Always return true to continue indexing.
 bool SymbolCollector::handleDeclOccurence(
     const Decl *D, index::SymbolRoleSet Roles,
-    ArrayRef<index::SymbolRelation> Relations, FileID FID, unsigned Offset,
+    ArrayRef<index::SymbolRelation> Relations, SourceLocation Loc,
     index::IndexDataConsumer::ASTNodeInfo ASTNode) {
   assert(ASTCtx && PP.get() && "ASTContext and Preprocessor must be set.");
+  assert(CompletionAllocator && CompletionTUInfo);
+  const NamedDecl *ND = llvm::dyn_cast<NamedDecl>(D);
+  if (!ND)
+    return true;
 
-  // FIXME: collect all symbol references.
+  // Mark D as referenced if this is a reference coming from the main file.
+  // D may not be an interesting symbol, but it's cheaper to check at the end.
+  auto &SM = ASTCtx->getSourceManager();
+  if (Opts.CountReferences &&
+      (Roles & static_cast<unsigned>(index::SymbolRole::Reference)) &&
+      SM.getFileID(SM.getSpellingLoc(Loc)) == SM.getMainFileID())
+    ReferencedDecls.insert(ND);
+
+  // Don't continue indexing if this is a mere reference.
   if (!(Roles & static_cast<unsigned>(index::SymbolRole::Declaration) ||
         Roles & static_cast<unsigned>(index::SymbolRole::Definition)))
     return true;
+  if (shouldFilterDecl(ND, ASTCtx, Opts))
+    return true;
 
-  assert(CompletionAllocator && CompletionTUInfo);
+  llvm::SmallString<128> USR;
+  if (index::generateUSRForDecl(ND, USR))
+    return true;
+  SymbolID ID(USR);
 
-  if (const NamedDecl *ND = llvm::dyn_cast<NamedDecl>(D)) {
-    if (shouldFilterDecl(ND, ASTCtx, Opts))
-      return true;
-    llvm::SmallString<128> USR;
-    if (index::generateUSRForDecl(ND, USR))
-      return true;
+  const NamedDecl &OriginalDecl = *cast<NamedDecl>(ASTNode.OrigD);
+  const Symbol *BasicSymbol = Symbols.find(ID);
+  if (!BasicSymbol) // Regardless of role, ND is the canonical declaration.
+    BasicSymbol = addDeclaration(*ND, std::move(ID));
+  else if (isPreferredDeclaration(OriginalDecl, Roles))
+    // If OriginalDecl is preferred, replace the existing canonical
+    // declaration (e.g. a class forward declaration). There should be at most
+    // one duplicate as we expect to see only one preferred declaration per
+    // TU, because in practice they are definitions.
+    BasicSymbol = addDeclaration(OriginalDecl, std::move(ID));
 
-    const NamedDecl &OriginalDecl = *cast<NamedDecl>(ASTNode.OrigD);
-    auto ID = SymbolID(USR);
-    const Symbol *BasicSymbol = Symbols.find(ID);
-    if (!BasicSymbol) // Regardless of role, ND is the canonical declaration.
-      BasicSymbol = addDeclaration(*ND, std::move(ID));
-    else if (isPreferredDeclaration(OriginalDecl, Roles))
-      // If OriginalDecl is preferred, replace the existing canonical
-      // declaration (e.g. a class forward declaration). There should be at most
-      // one duplicate as we expect to see only one preferred declaration per
-      // TU, because in practice they are definitions.
-      BasicSymbol = addDeclaration(OriginalDecl, std::move(ID));
-
-    if (Roles & static_cast<unsigned>(index::SymbolRole::Definition))
-      addDefinition(OriginalDecl, *BasicSymbol);
-  }
+  if (Roles & static_cast<unsigned>(index::SymbolRole::Definition))
+    addDefinition(OriginalDecl, *BasicSymbol);
   return true;
+}
+
+void SymbolCollector::finish() {
+  // At the end of the TU, add 1 to the refcount of the ReferencedDecls.
+  for (const auto *ND : ReferencedDecls) {
+    llvm::SmallString<128> USR;
+    if (!index::generateUSRForDecl(ND, USR))
+      if (const auto *S = Symbols.find(SymbolID(USR))) {
+        Symbol Inc = *S;
+        ++Inc.References;
+        Symbols.insert(Inc);
+      }
+  }
+  ReferencedDecls.clear();
 }
 
 const Symbol *SymbolCollector::addDeclaration(const NamedDecl &ND,
@@ -282,6 +312,7 @@ const Symbol *SymbolCollector::addDeclaration(const NamedDecl &ND,
   Policy.SuppressUnwrittenScope = true;
   ND.printQualifiedName(OS, Policy);
   OS.flush();
+  assert(!StringRef(QName).startswith("::"));
 
   Symbol S;
   S.ID = std::move(ID);
@@ -295,7 +326,8 @@ const Symbol *SymbolCollector::addDeclaration(const NamedDecl &ND,
   // Add completion info.
   // FIXME: we may want to choose a different redecl, or combine from several.
   assert(ASTCtx && PP.get() && "ASTContext and Preprocessor must be set.");
-  CodeCompletionResult SymbolCompletion(&ND, 0);
+  // We use the primary template, as clang does during code completion.
+  CodeCompletionResult SymbolCompletion(&getTemplateOrThis(ND), 0);
   const auto *CCS = SymbolCompletion.CreateCodeCompletionString(
       *ASTCtx, *PP, CodeCompletionContext::CCC_Name, *CompletionAllocator,
       *CompletionTUInfo,

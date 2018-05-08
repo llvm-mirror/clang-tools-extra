@@ -2,7 +2,13 @@ set(LLVM_LINK_COMPONENTS
   Support
   )
 
+set(CLANGD_ATOMIC_LIB "")
+if(NOT HAVE_CXX_ATOMICS64_WITHOUT_LIB)
+  list(APPEND CLANGD_ATOMIC_LIB "atomic")
+endif()
+
 add_clang_library(clangDaemon
+  AST.cpp
   ClangdLSPServer.cpp
   ClangdServer.cpp
   ClangdUnit.cpp
@@ -11,7 +17,9 @@ add_clang_library(clangDaemon
   CompileArgsCache.cpp
   Compiler.cpp
   Context.cpp
+  Diagnostics.cpp
   DraftStore.cpp
+  FindSymbols.cpp
   FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
   Headers.cpp
@@ -48,6 +56,7 @@ add_clang_library(clangDaemon
   clangToolingCore
   clangToolingRefactor
   ${LLVM_PTHREAD_LIB}
+  ${CLANGD_ATOMIC_LIB}
   )
 
 if( LLVM_LIB_FUZZING_ENGINE OR LLVM_USE_SANITIZE_COVERAGE )

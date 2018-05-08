@@ -19,7 +19,8 @@ using namespace llvm;
 raw_ostream &operator<<(raw_ostream &OS, const SymbolLocation &L) {
   if (!L)
     return OS << "(none)";
-  return OS << L.FileURI << "[" << L.StartOffset << "-" << L.EndOffset << ")";
+  return OS << L.FileURI << "[" << L.Start.Line << ":" << L.Start.Column << "-"
+            << L.End.Line << ":" << L.End.Column << ")";
 }
 
 SymbolID::SymbolID(StringRef USR)
@@ -28,6 +29,13 @@ SymbolID::SymbolID(StringRef USR)
 raw_ostream &operator<<(raw_ostream &OS, const SymbolID &ID) {
   OS << toHex(toStringRef(ID.HashValue));
   return OS;
+}
+
+std::string SymbolID::str() const {
+  std::string ID;
+  llvm::raw_string_ostream OS(ID);
+  OS << *this;
+  return OS.str();
 }
 
 void operator>>(StringRef Str, SymbolID &ID) {

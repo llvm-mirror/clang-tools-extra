@@ -26,17 +26,19 @@ std::unique_ptr<SymbolSlab> indexAST(ASTContext &Ctx,
   // AST at this point, but we also need preprocessor callbacks (e.g.
   // CommentHandler for IWYU pragma) to canonicalize includes.
   CollectorOpts.CollectIncludePath = false;
+  CollectorOpts.CountReferences = false;
 
-  auto Collector = std::make_shared<SymbolCollector>(std::move(CollectorOpts));
-  Collector->setPreprocessor(std::move(PP));
+  SymbolCollector Collector(std::move(CollectorOpts));
+  Collector.setPreprocessor(std::move(PP));
   index::IndexingOptions IndexOpts;
+  // We only need declarations, because we don't count references.
   IndexOpts.SystemSymbolFilter =
-      index::IndexingOptions::SystemSymbolFilterKind::All;
+      index::IndexingOptions::SystemSymbolFilterKind::DeclarationsOnly;
   IndexOpts.IndexFunctionLocals = false;
 
   index::indexTopLevelDecls(Ctx, Decls, Collector, IndexOpts);
   auto Symbols = llvm::make_unique<SymbolSlab>();
-  *Symbols = Collector->takeSymbols();
+  *Symbols = Collector.takeSymbols();
   return Symbols;
 }
 
@@ -89,6 +91,12 @@ bool FileIndex::fuzzyFind(
     const FuzzyFindRequest &Req,
     llvm::function_ref<void(const Symbol &)> Callback) const {
   return Index.fuzzyFind(Req, Callback);
+}
+
+void FileIndex::lookup(
+    const LookupRequest &Req,
+    llvm::function_ref<void(const Symbol &)> Callback) const {
+  Index.lookup(Req, Callback);
 }
 
 } // namespace clangd

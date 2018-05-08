@@ -43,11 +43,18 @@ struct NormalizedSymbolID {
   std::string HexString;
 };
 
+template <> struct MappingTraits<SymbolLocation::Position> {
+  static void mapping(IO &IO, SymbolLocation::Position &Value) {
+    IO.mapRequired("Line", Value.Line);
+    IO.mapRequired("Column", Value.Column);
+  }
+};
+
 template <> struct MappingTraits<SymbolLocation> {
   static void mapping(IO &IO, SymbolLocation &Value) {
-    IO.mapRequired("StartOffset", Value.StartOffset);
-    IO.mapRequired("EndOffset", Value.EndOffset);
     IO.mapRequired("FileURI", Value.FileURI);
+    IO.mapRequired("Start", Value.Start);
+    IO.mapRequired("End", Value.End);
   }
 };
 
@@ -100,6 +107,7 @@ template <> struct MappingTraits<Symbol> {
     IO.mapOptional("CanonicalDeclaration", Sym.CanonicalDeclaration,
                    SymbolLocation());
     IO.mapOptional("Definition", Sym.Definition, SymbolLocation());
+    IO.mapOptional("References", Sym.References, 0u);
     IO.mapRequired("CompletionLabel", Sym.CompletionLabel);
     IO.mapRequired("CompletionFilterText", Sym.CompletionFilterText);
     IO.mapRequired("CompletionPlainInsertText", Sym.CompletionPlainInsertText);

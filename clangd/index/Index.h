@@ -1,4 +1,4 @@
-//===--- Symbol.h -----------------------------------------------*- C++-*-===//
+//===--- Index.h ------------------------------------------------*- C++-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -24,12 +24,26 @@ namespace clang {
 namespace clangd {
 
 struct SymbolLocation {
+  // Specify a position (Line, Column) of symbol. Using Line/Column allows us to
+  // build LSP responses without reading the file content.
+  struct Position {
+    uint32_t Line = 0; // 0-based
+    // Using UTF-16 code units.
+    uint32_t Column = 0; // 0-based
+  };
+
   // The URI of the source file where a symbol occurs.
   llvm::StringRef FileURI;
   // The 0-based offsets of the symbol from the beginning of the source file,
   // using half-open range, [StartOffset, EndOffset).
+  // DO NOT use these fields, as they will be removed immediately.
+  // FIXME(hokein): remove these fields in favor of Position.
   unsigned StartOffset = 0;
   unsigned EndOffset = 0;
+
+  /// The symbol range, using half-open range [Start, End).
+  Position Start;
+  Position End;
 
   operator bool() const { return !FileURI.empty(); }
 };
@@ -55,17 +69,24 @@ public:
     return HashValue < Sym.HashValue;
   }
 
+  // Returns a 40-bytes hex encoded string.
+  std::string str() const;
+
 private:
+  static constexpr unsigned HashByteLength = 20;
+
   friend llvm::hash_code hash_value(const SymbolID &ID) {
     // We already have a good hash, just return the first bytes.
-    static_assert(sizeof(size_t) <= 20, "size_t longer than SHA1!");
-    return *reinterpret_cast<const size_t *>(ID.HashValue.data());
+    static_assert(sizeof(size_t) <= HashByteLength, "size_t longer than SHA1!");
+    size_t Result;
+    memcpy(&Result, ID.HashValue.data(), sizeof(size_t));
+    return llvm::hash_code(Result);
   }
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
                                        const SymbolID &ID);
   friend void operator>>(llvm::StringRef Str, SymbolID &ID);
 
-  std::array<uint8_t, 20> HashValue;
+  std::array<uint8_t, HashByteLength> HashValue;
 };
 
 // Write SymbolID into the given stream. SymbolID is encoded as a 40-bytes
@@ -131,6 +152,9 @@ struct Symbol {
   //   * For non-inline functions, the canonical declaration typically appears
   //     in the ".h" file corresponding to the definition.
   SymbolLocation CanonicalDeclaration;
+  // The number of translation units that reference this symbol from their main
+  // file. This number is only meaningful if aggregated in an index.
+  unsigned References = 0;
 
   /// A brief description of the symbol that can be displayed in the completion
   /// candidate list. For example, "Foo(X x, Y y) const" is a labal for a
@@ -245,6 +269,10 @@ struct FuzzyFindRequest {
   size_t MaxCandidateCount = UINT_MAX;
 };
 
+struct LookupRequest {
+  llvm::DenseSet<SymbolID> IDs;
+};
+
 /// \brief Interface for symbol indexes that can be used for searching or
 /// matching symbols among a set of symbols based on names or unique IDs.
 class SymbolIndex {
@@ -260,8 +288,14 @@ public:
   fuzzyFind(const FuzzyFindRequest &Req,
             llvm::function_ref<void(const Symbol &)> Callback) const = 0;
 
+  /// Looks up symbols with any of the given symbol IDs and applies \p Callback
+  /// on each matched symbol.
+  /// The returned symbol must be deep-copied if it's used outside Callback.
+  virtual void
+  lookup(const LookupRequest &Req,
+         llvm::function_ref<void(const Symbol &)> Callback) const = 0;
+
   // FIXME: add interfaces for more index use cases:
-  //  - Symbol getSymbolInfo(SymbolID);
   //  - getAllOccurrences(SymbolID);
 };
 
