@@ -44,6 +44,36 @@ Major New Features
 
 ...
 
+- New :doc:`btc-singleton
+  <clang-tidy/checks/btc-singleton>` check
+
+  Find Singletons.
+
+- New :doc:`btc-calling-SFehler-with-stop-on-error
+  <clang-tidy/checks/btc-calling-SFehler-with-stop-on-error>` check
+
+  Find SFeler calls with 6th parameter set on STOP_ON_ERROR
+
+- New :doc:`btc-optional-parameter-in-virtual-method
+  <clang-tidy/checks/btc-optional-parameter-in-virtual-method>` check
+
+  Virtual methods should not have optional patameters.
+
+- New :doc:`btc-no-assignment-to-reference-parameter
+  <clang-tidy/checks/btc-no-assignment-to-reference-parameter>` check
+
+  Assiments to reference parameters are prohibited.
+
+- New :doc:`btc-multiple-parameters-of-same-type
+  <clang-tidy/checks/btc-multiple-parameters-of-same-type>` check
+
+  Find multiple parameters of the same type.
+
+- New :doc:`btc-global-variables
+  <clang-tidy/checks/btc-global-variables>` check
+
+  Find global variables.
+
 Improvements to clang-query
 ---------------------------
 

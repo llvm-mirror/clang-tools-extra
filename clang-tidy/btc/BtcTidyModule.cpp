@@ -11,6 +11,12 @@
 #include "../ClangTidyModule.h"
 #include "../ClangTidyModuleRegistry.h"
 #include "UnmanagedDerivedFromSharableCheck.h"
+#include "CallingSfehlerWithStopOnErrorCheck.h"
+#include "GlobalVariablesCheck.h"
+#include "MultipleParametersOfSameTypeCheck.h"
+#include "NoAssignmentToReferenceParameterCheck.h"
+#include "OptionalParameterInVirtualMethodCheck.h"
+#include "SingletonCheck.h"
 
 using namespace clang::ast_matchers;
 
@@ -24,6 +30,18 @@ public:
   void addCheckFactories(ClangTidyCheckFactories &CheckFactories) override {
     CheckFactories.registerCheck<UnmanagedDerivedFromSharableCheck>(
         "btc-unmanaged-derived-from-sharable");
+    CheckFactories.registerCheck<CallingSfehlerWithStopOnErrorCheck>(
+        "btc-calling-SFehler-with-stop-on-error");
+    CheckFactories.registerCheck<GlobalVariablesCheck>(
+        "btc-global-variables");
+    CheckFactories.registerCheck<MultipleParametersOfSameTypeCheck>(
+        "btc-multiple-parameters-of-same-type");
+    CheckFactories.registerCheck<NoAssignmentToReferenceParameterCheck>(
+        "btc-no-assignment-to-reference-parameter");
+    CheckFactories.registerCheck<OptionalParameterInVirtualMethodCheck>(
+        "btc-optional-parameter-in-virtual-method");
+    CheckFactories.registerCheck<SingletonCheck>(
+        "btc-singleton");
   }
 };
 
