@@ -36,10 +36,13 @@ void StringFindStartswithCheck::registerMatchers(MatchFinder *Finder) {
   auto ZeroLiteral = integerLiteral(equals(0));
   auto StringClassMatcher = cxxRecordDecl(hasAnyName(SmallVector<StringRef, 4>(
       StringLikeClasses.begin(), StringLikeClasses.end())));
+  auto StringType = hasUnqualifiedDesugaredType(
+      recordType(hasDeclaration(StringClassMatcher)));
 
   auto StringFind = cxxMemberCallExpr(
       // .find()-call on a string...
-      callee(cxxMethodDecl(hasName("find"), ofClass(StringClassMatcher))),
+      callee(cxxMethodDecl(hasName("find"))),
+      on(hasType(StringType)),
       // ... with some search expression ...
       hasArgument(0, expr().bind("needle")),
       // ... and either "0" as second argument or the default argument (also 0).
@@ -68,7 +71,7 @@ void StringFindStartswithCheck::check(const MatchFinder::MatchResult &Result) {
                              ->getImplicitObjectArgument();
   assert(Haystack != nullptr);
 
-  if (ComparisonExpr->getLocStart().isMacroID())
+  if (ComparisonExpr->getBeginLoc().isMacroID())
     return;
 
   // Get the source code blocks (as characters) for both the string object
@@ -91,7 +94,7 @@ void StringFindStartswithCheck::check(const MatchFinder::MatchResult &Result) {
 
   // Create the warning message and a FixIt hint replacing the original expr.
   auto Diagnostic =
-      diag(ComparisonExpr->getLocStart(),
+      diag(ComparisonExpr->getBeginLoc(),
            (StringRef("use ") + StartswithStr + " instead of find() " +
             ComparisonExpr->getOpcodeStr() + " 0")
                .str());
@@ -104,7 +107,7 @@ void StringFindStartswithCheck::check(const MatchFinder::MatchResult &Result) {
   // Create a preprocessor #include FixIt hint (CreateIncludeInsertion checks
   // whether this already exists).
   auto IncludeHint = IncludeInserter->CreateIncludeInsertion(
-      Source.getFileID(ComparisonExpr->getLocStart()), AbseilStringsMatchHeader,
+      Source.getFileID(ComparisonExpr->getBeginLoc()), AbseilStringsMatchHeader,
       false);
   if (IncludeHint) {
     Diagnostic << *IncludeHint;

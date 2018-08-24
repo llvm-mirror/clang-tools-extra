@@ -19,8 +19,6 @@ namespace tidy {
 namespace fuchsia {
 
 namespace {
-const internal::VariadicDynCastAllOfMatcher<Type, DecltypeType> decltypeType;
-
 AST_MATCHER(FunctionDecl, hasTrailingReturn) {
   return Node.getType()->castAs<FunctionProtoType>()->hasTrailingReturn();
 }
@@ -45,7 +43,7 @@ void TrailingReturnCheck::registerMatchers(MatchFinder *Finder) {
 
 void TrailingReturnCheck::check(const MatchFinder::MatchResult &Result) {
   if (const auto *D = Result.Nodes.getNodeAs<Decl>("decl"))
-    diag(D->getLocStart(),
+    diag(D->getBeginLoc(),
          "a trailing return type is disallowed for this type of declaration");
 }
 

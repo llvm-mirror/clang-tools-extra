@@ -18,6 +18,7 @@
 
 namespace clang {
 namespace clangd {
+class ParsedAST;
 class SymbolIndex;
 
 /// Searches for the symbols matching \p Query. The syntax of \p Query can be
@@ -27,9 +28,16 @@ class SymbolIndex;
 /// "::". For example, "std::" will list all children of the std namespace and
 /// "::" alone will list all children of the global namespace.
 /// \p Limit limits the number of results returned (0 means no limit).
+/// \p HintPath This is used when resolving URIs. If empty, URI resolution can
+/// fail if a hint path is required for the scheme of a specific URI.
 llvm::Expected<std::vector<SymbolInformation>>
 getWorkspaceSymbols(llvm::StringRef Query, int Limit,
-                    const SymbolIndex *const Index);
+                    const SymbolIndex *const Index, llvm::StringRef HintPath);
+
+/// Retrieves the symbols contained in the "main file" section of an AST in the
+/// same order that they appear.
+llvm::Expected<std::vector<SymbolInformation>>
+getDocumentSymbols(ParsedAST &AST);
 
 } // namespace clangd
 } // namespace clang

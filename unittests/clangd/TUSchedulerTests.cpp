@@ -18,8 +18,12 @@
 namespace clang {
 namespace clangd {
 
+using ::testing::_;
+using ::testing::Each;
+using ::testing::AnyOf;
 using ::testing::Pair;
 using ::testing::Pointee;
+using ::testing::UnorderedElementsAre;
 
 void ignoreUpdate(llvm::Optional<std::vector<Diag>>) {}
 void ignoreError(llvm::Error Err) {
@@ -29,21 +33,21 @@ void ignoreError(llvm::Error Err) {
 class TUSchedulerTests : public ::testing::Test {
 protected:
   ParseInputs getInputs(PathRef File, std::string Contents) {
-    return ParseInputs{*CDB.getCompileCommand(File), buildTestFS(Files),
-                       std::move(Contents)};
+    return ParseInputs{*CDB.getCompileCommand(File),
+                       buildTestFS(Files, Timestamps), std::move(Contents)};
   }
 
   llvm::StringMap<std::string> Files;
-
-private:
+  llvm::StringMap<time_t> Timestamps;
   MockCompilationDatabase CDB;
 };
 
 TEST_F(TUSchedulerTests, MissingFiles) {
   TUScheduler S(getDefaultAsyncThreadsCount(),
                 /*StorePreamblesInMemory=*/true,
-                /*ASTParsedCallback=*/nullptr,
-                /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero());
+                /*PreambleParsedCallback=*/nullptr,
+                /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+                ASTRetentionPolicy());
 
   auto Added = testPath("added.cpp");
   Files[Added] = "";
@@ -98,8 +102,9 @@ TEST_F(TUSchedulerTests, WantDiagnostics) {
     TUScheduler S(
         getDefaultAsyncThreadsCount(),
         /*StorePreamblesInMemory=*/true,
-        /*ASTParsedCallback=*/nullptr,
-        /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero());
+        /*PreambleParsedCallback=*/nullptr,
+        /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+        ASTRetentionPolicy());
     auto Path = testPath("foo.cpp");
     S.update(Path, getInputs(Path, ""), WantDiagnostics::Yes,
              [&](std::vector<Diag>) { Ready.wait(); });
@@ -126,8 +131,9 @@ TEST_F(TUSchedulerTests, Debounce) {
   {
     TUScheduler S(getDefaultAsyncThreadsCount(),
                   /*StorePreamblesInMemory=*/true,
-                  /*ASTParsedCallback=*/nullptr,
-                  /*UpdateDebounce=*/std::chrono::seconds(1));
+                  /*PreambleParsedCallback=*/nullptr,
+                  /*UpdateDebounce=*/std::chrono::seconds(1),
+                  ASTRetentionPolicy());
     // FIXME: we could probably use timeouts lower than 1 second here.
     auto Path = testPath("foo.cpp");
     S.update(Path, getInputs(Path, "auto (debounced)"), WantDiagnostics::Auto,
@@ -157,8 +163,9 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
   {
     TUScheduler S(getDefaultAsyncThreadsCount(),
                   /*StorePreamblesInMemory=*/true,
-                  /*ASTParsedCallback=*/nullptr,
-                  /*UpdateDebounce=*/std::chrono::milliseconds(50));
+                  /*PreambleParsedCallback=*/nullptr,
+                  /*UpdateDebounce=*/std::chrono::milliseconds(50),
+                  ASTRetentionPolicy());
 
     std::vector<std::string> Files;
     for (int I = 0; I < FilesCount; ++I) {
@@ -190,20 +197,22 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
         {
           WithContextValue WithNonce(NonceKey, ++Nonce);
           S.update(File, Inputs, WantDiagnostics::Auto,
-                   [Nonce, &Mut,
+                   [File, Nonce, &Mut,
                     &TotalUpdates](llvm::Optional<std::vector<Diag>> Diags) {
                      EXPECT_THAT(Context::current().get(NonceKey),
                                  Pointee(Nonce));
 
                      std::lock_guard<std::mutex> Lock(Mut);
                      ++TotalUpdates;
+                     EXPECT_EQ(File,
+                               *TUScheduler::getFileBeingProcessedInContext());
                    });
         }
 
         {
           WithContextValue WithNonce(NonceKey, ++Nonce);
           S.runWithAST("CheckAST", File,
-                       [Inputs, Nonce, &Mut,
+                       [File, Inputs, Nonce, &Mut,
                         &TotalASTReads](llvm::Expected<InputsAndAST> AST) {
                          EXPECT_THAT(Context::current().get(NonceKey),
                                      Pointee(Nonce));
@@ -214,6 +223,9 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
 
                          std::lock_guard<std::mutex> Lock(Mut);
                          ++TotalASTReads;
+                         EXPECT_EQ(
+                             File,
+                             *TUScheduler::getFileBeingProcessedInContext());
                        });
         }
 
@@ -221,7 +233,7 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
           WithContextValue WithNonce(NonceKey, ++Nonce);
           S.runWithPreamble(
               "CheckPreamble", File,
-              [Inputs, Nonce, &Mut, &TotalPreambleReads](
+              [File, Inputs, Nonce, &Mut, &TotalPreambleReads](
                   llvm::Expected<InputsAndPreamble> Preamble) {
                 EXPECT_THAT(Context::current().get(NonceKey), Pointee(Nonce));
 
@@ -230,6 +242,7 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
 
                 std::lock_guard<std::mutex> Lock(Mut);
                 ++TotalPreambleReads;
+                EXPECT_EQ(File, *TUScheduler::getFileBeingProcessedInContext());
               });
         }
       }
@@ -240,6 +253,226 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
   EXPECT_EQ(TotalUpdates, FilesCount * UpdatesPerFile);
   EXPECT_EQ(TotalASTReads, FilesCount * UpdatesPerFile);
   EXPECT_EQ(TotalPreambleReads, FilesCount * UpdatesPerFile);
+}
+
+TEST_F(TUSchedulerTests, EvictedAST) {
+  std::atomic<int> BuiltASTCounter(0);
+  ASTRetentionPolicy Policy;
+  Policy.MaxRetainedASTs = 2;
+  TUScheduler S(
+      /*AsyncThreadsCount=*/1, /*StorePreambleInMemory=*/true,
+      PreambleParsedCallback(),
+      /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(), Policy);
+
+  llvm::StringLiteral SourceContents = R"cpp(
+    int* a;
+    double* b = a;
+  )cpp";
+  llvm::StringLiteral OtherSourceContents = R"cpp(
+    int* a;
+    double* b = a + 0;
+  )cpp";
+
+  auto Foo = testPath("foo.cpp");
+  auto Bar = testPath("bar.cpp");
+  auto Baz = testPath("baz.cpp");
+
+  // Build one file in advance. We will not access it later, so it will be the
+  // one that the cache will evict.
+  S.update(Foo, getInputs(Foo, SourceContents), WantDiagnostics::Yes,
+           [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_EQ(BuiltASTCounter.load(), 1);
+
+  // Build two more files. Since we can retain only 2 ASTs, these should be the
+  // ones we see in the cache later.
+  S.update(Bar, getInputs(Bar, SourceContents), WantDiagnostics::Yes,
+           [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
+  S.update(Baz, getInputs(Baz, SourceContents), WantDiagnostics::Yes,
+           [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_EQ(BuiltASTCounter.load(), 3);
+
+  // Check only the last two ASTs are retained.
+  ASSERT_THAT(S.getFilesWithCachedAST(), UnorderedElementsAre(Bar, Baz));
+
+  // Access the old file again.
+  S.update(Foo, getInputs(Foo, OtherSourceContents), WantDiagnostics::Yes,
+           [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_EQ(BuiltASTCounter.load(), 4);
+
+  // Check the AST for foo.cpp is retained now and one of the others got
+  // evicted.
+  EXPECT_THAT(S.getFilesWithCachedAST(),
+              UnorderedElementsAre(Foo, AnyOf(Bar, Baz)));
+}
+
+TEST_F(TUSchedulerTests, EmptyPreamble) {
+  TUScheduler S(
+      /*AsyncThreadsCount=*/4, /*StorePreambleInMemory=*/true,
+      PreambleParsedCallback(),
+      /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+      ASTRetentionPolicy());
+
+  auto Foo = testPath("foo.cpp");
+  auto Header = testPath("foo.h");
+
+  Files[Header] = "void foo()";
+  Timestamps[Header] = time_t(0);
+  auto WithPreamble = R"cpp(
+    #include "foo.h"
+    int main() {}
+  )cpp";
+  auto WithEmptyPreamble = R"cpp(int main() {})cpp";
+  S.update(Foo, getInputs(Foo, WithPreamble), WantDiagnostics::Auto,
+           [](std::vector<Diag>) {});
+  S.runWithPreamble("getNonEmptyPreamble", Foo,
+                    [&](llvm::Expected<InputsAndPreamble> Preamble) {
+                      // We expect to get a non-empty preamble.
+                      EXPECT_GT(cantFail(std::move(Preamble))
+                                    .Preamble->Preamble.getBounds()
+                                    .Size,
+                                0u);
+                    });
+  // Wait for the preamble is being built.
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+
+  // Update the file which results in an empty preamble.
+  S.update(Foo, getInputs(Foo, WithEmptyPreamble), WantDiagnostics::Auto,
+           [](std::vector<Diag>) {});
+  // Wait for the preamble is being built.
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  S.runWithPreamble("getEmptyPreamble", Foo,
+                    [&](llvm::Expected<InputsAndPreamble> Preamble) {
+                      // We expect to get an empty preamble.
+                      EXPECT_EQ(cantFail(std::move(Preamble))
+                                    .Preamble->Preamble.getBounds()
+                                    .Size,
+                                0u);
+                    });
+}
+
+TEST_F(TUSchedulerTests, RunWaitsForPreamble) {
+  // Testing strategy: we update the file and schedule a few preamble reads at
+  // the same time. All reads should get the same non-null preamble.
+  TUScheduler S(
+      /*AsyncThreadsCount=*/4, /*StorePreambleInMemory=*/true,
+      PreambleParsedCallback(),
+      /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+      ASTRetentionPolicy());
+  auto Foo = testPath("foo.cpp");
+  auto NonEmptyPreamble = R"cpp(
+    #define FOO 1
+    #define BAR 2
+
+    int main() {}
+  )cpp";
+  constexpr int ReadsToSchedule = 10;
+  std::mutex PreamblesMut;
+  std::vector<const void *> Preambles(ReadsToSchedule, nullptr);
+  S.update(Foo, getInputs(Foo, NonEmptyPreamble), WantDiagnostics::Auto,
+           [](std::vector<Diag>) {});
+  for (int I = 0; I < ReadsToSchedule; ++I) {
+    S.runWithPreamble(
+        "test", Foo,
+        [I, &PreamblesMut, &Preambles](llvm::Expected<InputsAndPreamble> IP) {
+          std::lock_guard<std::mutex> Lock(PreamblesMut);
+          Preambles[I] = cantFail(std::move(IP)).Preamble;
+        });
+  }
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
+  // Check all actions got the same non-null preamble.
+  std::lock_guard<std::mutex> Lock(PreamblesMut);
+  ASSERT_NE(Preambles[0], nullptr);
+  ASSERT_THAT(Preambles, Each(Preambles[0]));
+}
+
+TEST_F(TUSchedulerTests, NoopOnEmptyChanges) {
+  TUScheduler S(
+      /*AsyncThreadsCount=*/getDefaultAsyncThreadsCount(),
+      /*StorePreambleInMemory=*/true, PreambleParsedCallback(),
+      /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+      ASTRetentionPolicy());
+
+  auto Source = testPath("foo.cpp");
+  auto Header = testPath("foo.h");
+
+  Files[Header] = "int a;";
+  Timestamps[Header] = time_t(0);
+
+  auto SourceContents = R"cpp(
+      #include "foo.h"
+      int b = a;
+    )cpp";
+
+  // Return value indicates if the updated callback was received.
+  auto DoUpdate = [&](ParseInputs Inputs) -> bool {
+    std::atomic<bool> Updated(false);
+    Updated = false;
+    S.update(Source, std::move(Inputs), WantDiagnostics::Yes,
+             [&Updated](std::vector<Diag>) { Updated = true; });
+    bool UpdateFinished = S.blockUntilIdle(timeoutSeconds(1));
+    if (!UpdateFinished)
+      ADD_FAILURE() << "Updated has not finished in one second. Threading bug?";
+    return Updated;
+  };
+
+  // Test that subsequent updates with the same inputs do not cause rebuilds.
+  ASSERT_TRUE(DoUpdate(getInputs(Source, SourceContents)));
+  ASSERT_FALSE(DoUpdate(getInputs(Source, SourceContents)));
+
+  // Update to a header should cause a rebuild, though.
+  Files[Header] = time_t(1);
+  ASSERT_TRUE(DoUpdate(getInputs(Source, SourceContents)));
+  ASSERT_FALSE(DoUpdate(getInputs(Source, SourceContents)));
+
+  // Update to the contents should cause a rebuild.
+  auto OtherSourceContents = R"cpp(
+      #include "foo.h"
+      int c = d;
+    )cpp";
+  ASSERT_TRUE(DoUpdate(getInputs(Source, OtherSourceContents)));
+  ASSERT_FALSE(DoUpdate(getInputs(Source, OtherSourceContents)));
+
+  // Update to the compile commands should also cause a rebuild.
+  CDB.ExtraClangFlags.push_back("-DSOMETHING");
+  ASSERT_TRUE(DoUpdate(getInputs(Source, OtherSourceContents)));
+  ASSERT_FALSE(DoUpdate(getInputs(Source, OtherSourceContents)));
+}
+
+TEST_F(TUSchedulerTests, NoChangeDiags) {
+  TUScheduler S(
+      /*AsyncThreadsCount=*/getDefaultAsyncThreadsCount(),
+      /*StorePreambleInMemory=*/true, PreambleParsedCallback(),
+      /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+      ASTRetentionPolicy());
+
+  auto FooCpp = testPath("foo.cpp");
+  auto Contents = "int a; int b;";
+
+  S.update(FooCpp, getInputs(FooCpp, Contents), WantDiagnostics::No,
+           [](std::vector<Diag>) { ADD_FAILURE() << "Should not be called."; });
+  S.runWithAST("touchAST", FooCpp, [](llvm::Expected<InputsAndAST> IA) {
+    // Make sure the AST was actually built.
+    cantFail(std::move(IA));
+  });
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+
+  // Even though the inputs didn't change and AST can be reused, we need to
+  // report the diagnostics, as they were not reported previously.
+  std::atomic<bool> SeenDiags(false);
+  S.update(FooCpp, getInputs(FooCpp, Contents), WantDiagnostics::Auto,
+           [&](std::vector<Diag>) { SeenDiags = true; });
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(SeenDiags);
+
+  // Subsequent request does not get any diagnostics callback because the same
+  // diags have previously been reported and the inputs didn't change.
+  S.update(
+      FooCpp, getInputs(FooCpp, Contents), WantDiagnostics::Auto,
+      [&](std::vector<Diag>) { ADD_FAILURE() << "Should not be called."; });
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
 }
 
 } // namespace clangd

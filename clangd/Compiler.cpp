@@ -1,11 +1,11 @@
-//===--- Compiler.cpp -------------------------------------------*- C++-*-===//
+//===--- Compiler.cpp --------------------------------------------*- C++-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
 //
-//===---------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 
 #include "Compiler.h"
 #include "Logger.h"
@@ -31,7 +31,7 @@ void IgnoreDiagnostics::log(DiagnosticsEngine::Level DiagLevel,
     OS << ":";
   }
 
-  clangd::log(llvm::formatv("Ignored diagnostic. {0}{1}", Location, Message));
+  clangd::log("Ignored diagnostic. {0}{1}", Location, Message);
 }
 
 void IgnoreDiagnostics::HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,

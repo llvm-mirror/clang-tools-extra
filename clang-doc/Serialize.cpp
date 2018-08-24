@@ -152,6 +152,21 @@ template <typename T> static std::string serialize(T &I) {
   return Buffer.str().str();
 }
 
+std::string serialize(std::unique_ptr<Info> &I) {
+  switch (I->IT) {
+  case InfoType::IT_namespace:
+    return serialize(*static_cast<NamespaceInfo *>(I.get()));
+  case InfoType::IT_record:
+    return serialize(*static_cast<RecordInfo *>(I.get()));
+  case InfoType::IT_enum:
+    return serialize(*static_cast<EnumInfo *>(I.get()));
+  case InfoType::IT_function:
+    return serialize(*static_cast<FunctionInfo *>(I.get()));
+  default:
+    return "";
+  }
+}
+
 static void parseFullComment(const FullComment *C, CommentInfo &CI) {
   ClangDocCommentVisitor Visitor(CI);
   Visitor.parseComment(C);
@@ -171,23 +186,37 @@ static RecordDecl *getDeclForType(const QualType &T) {
   return Ty->getDecl()->getDefinition();
 }
 
-static void parseFields(RecordInfo &I, const RecordDecl *D) {
+static bool isPublic(const clang::AccessSpecifier AS,
+                     const clang::Linkage Link) {
+  if (AS == clang::AccessSpecifier::AS_private)
+    return false;
+  else if ((Link == clang::Linkage::ModuleLinkage) ||
+           (Link == clang::Linkage::ExternalLinkage))
+    return true;
+  return false; // otherwise, linkage is some form of internal linkage
+}
+
+static void parseFields(RecordInfo &I, const RecordDecl *D, bool PublicOnly) {
   for (const FieldDecl *F : D->fields()) {
-    // FIXME: Set Access to the appropriate value.
-    SymbolID Type;
-    std::string Name;
-    InfoType RefType;
+    if (PublicOnly && !isPublic(F->getAccessUnsafe(), F->getLinkageInternal()))
+      continue;
     if (const auto *T = getDeclForType(F->getTypeSourceInfo()->getType())) {
-      Type = getUSRForDecl(T);
-      if (dyn_cast<EnumDecl>(T))
-        RefType = InfoType::IT_enum;
-      else if (dyn_cast<RecordDecl>(T))
-        RefType = InfoType::IT_record;
-      I.Members.emplace_back(Type, RefType, F->getQualifiedNameAsString());
-    } else {
-      Name = F->getTypeSourceInfo()->getType().getAsString();
-      I.Members.emplace_back(Name, F->getQualifiedNameAsString());
+      // Use getAccessUnsafe so that we just get the default AS_none if it's not
+      // valid, as opposed to an assert.
+      if (const auto *N = dyn_cast<EnumDecl>(T)) {
+        I.Members.emplace_back(getUSRForDecl(T), N->getNameAsString(),
+                               InfoType::IT_enum, F->getNameAsString(),
+                               N->getAccessUnsafe());
+        continue;
+      } else if (const auto *N = dyn_cast<RecordDecl>(T)) {
+        I.Members.emplace_back(getUSRForDecl(T), N->getNameAsString(),
+                               InfoType::IT_record, F->getNameAsString(),
+                               N->getAccessUnsafe());
+        continue;
+      }
     }
+    I.Members.emplace_back(F->getTypeSourceInfo()->getType().getAsString(),
+                           F->getNameAsString(), F->getAccessUnsafe());
   }
 }
 
@@ -198,20 +227,19 @@ static void parseEnumerators(EnumInfo &I, const EnumDecl *D) {
 
 static void parseParameters(FunctionInfo &I, const FunctionDecl *D) {
   for (const ParmVarDecl *P : D->parameters()) {
-    SymbolID Type;
-    std::string Name;
-    InfoType RefType;
     if (const auto *T = getDeclForType(P->getOriginalType())) {
-      Type = getUSRForDecl(T);
-      if (dyn_cast<EnumDecl>(T))
-        RefType = InfoType::IT_enum;
-      else if (dyn_cast<RecordDecl>(T))
-        RefType = InfoType::IT_record;
-      I.Params.emplace_back(Type, RefType, P->getQualifiedNameAsString());
-    } else {
-      Name = P->getOriginalType().getAsString();
-      I.Params.emplace_back(Name, P->getQualifiedNameAsString());
+      if (const auto *N = dyn_cast<EnumDecl>(T)) {
+        I.Params.emplace_back(getUSRForDecl(N), N->getNameAsString(),
+                              InfoType::IT_enum, P->getNameAsString());
+        continue;
+      } else if (const auto *N = dyn_cast<RecordDecl>(T)) {
+        I.Params.emplace_back(getUSRForDecl(N), N->getNameAsString(),
+                              InfoType::IT_record, P->getNameAsString());
+        continue;
+      }
     }
+    I.Params.emplace_back(P->getOriginalType().getAsString(),
+                          P->getNameAsString());
   }
 }
 
@@ -220,13 +248,15 @@ static void parseBases(RecordInfo &I, const CXXRecordDecl *D) {
     if (B.isVirtual())
       continue;
     if (const auto *P = getDeclForType(B.getType()))
-      I.Parents.emplace_back(getUSRForDecl(P), InfoType::IT_record);
+      I.Parents.emplace_back(getUSRForDecl(P), P->getNameAsString(),
+                             InfoType::IT_record);
     else
       I.Parents.emplace_back(B.getType().getAsString());
   }
   for (const CXXBaseSpecifier &B : D->vbases()) {
     if (const auto *P = getDeclForType(B.getType()))
-      I.VirtualParents.emplace_back(getUSRForDecl(P), InfoType::IT_record);
+      I.VirtualParents.emplace_back(getUSRForDecl(P), P->getNameAsString(),
+                                    InfoType::IT_record);
     else
       I.VirtualParents.emplace_back(B.getType().getAsString());
   }
@@ -239,13 +269,17 @@ populateParentNamespaces(llvm::SmallVector<Reference, 4> &Namespaces,
   const auto *DC = dyn_cast<DeclContext>(D);
   while ((DC = DC->getParent())) {
     if (const auto *N = dyn_cast<NamespaceDecl>(DC))
-      Namespaces.emplace_back(getUSRForDecl(N), InfoType::IT_namespace);
+      Namespaces.emplace_back(getUSRForDecl(N), N->getNameAsString(),
+                              InfoType::IT_namespace);
     else if (const auto *N = dyn_cast<RecordDecl>(DC))
-      Namespaces.emplace_back(getUSRForDecl(N), InfoType::IT_record);
+      Namespaces.emplace_back(getUSRForDecl(N), N->getNameAsString(),
+                              InfoType::IT_record);
     else if (const auto *N = dyn_cast<FunctionDecl>(DC))
-      Namespaces.emplace_back(getUSRForDecl(N), InfoType::IT_function);
+      Namespaces.emplace_back(getUSRForDecl(N), N->getNameAsString(),
+                              InfoType::IT_function);
     else if (const auto *N = dyn_cast<EnumDecl>(DC))
-      Namespaces.emplace_back(getUSRForDecl(N), InfoType::IT_enum);
+      Namespaces.emplace_back(getUSRForDecl(N), N->getNameAsString(),
+                              InfoType::IT_enum);
   }
 }
 
@@ -275,60 +309,118 @@ static void populateFunctionInfo(FunctionInfo &I, const FunctionDecl *D,
                                  StringRef Filename) {
   populateSymbolInfo(I, D, FC, LineNumber, Filename);
   if (const auto *T = getDeclForType(D->getReturnType())) {
-    I.ReturnType.Type.USR = getUSRForDecl(T);
     if (dyn_cast<EnumDecl>(T))
-      I.ReturnType.Type.RefType = InfoType::IT_enum;
+      I.ReturnType =
+          TypeInfo(getUSRForDecl(T), T->getNameAsString(), InfoType::IT_enum);
     else if (dyn_cast<RecordDecl>(T))
-      I.ReturnType.Type.RefType = InfoType::IT_record;
+      I.ReturnType =
+          TypeInfo(getUSRForDecl(T), T->getNameAsString(), InfoType::IT_record);
   } else {
-    I.ReturnType.Type.UnresolvedName = D->getReturnType().getAsString();
+    I.ReturnType = TypeInfo(D->getReturnType().getAsString());
   }
   parseParameters(I, D);
 }
 
-std::string emitInfo(const NamespaceDecl *D, const FullComment *FC,
-                     int LineNumber, llvm::StringRef File) {
-  NamespaceInfo I;
-  populateInfo(I, D, FC);
-  return serialize(I);
+std::unique_ptr<Info> emitInfo(const NamespaceDecl *D, const FullComment *FC,
+                               int LineNumber, llvm::StringRef File,
+                               bool PublicOnly) {
+  if (PublicOnly && ((D->isAnonymousNamespace()) ||
+                     !isPublic(D->getAccess(), D->getLinkageInternal())))
+    return nullptr;
+  auto I = llvm::make_unique<NamespaceInfo>();
+  populateInfo(*I, D, FC);
+  return std::unique_ptr<Info>{std::move(I)};
 }
 
-std::string emitInfo(const RecordDecl *D, const FullComment *FC, int LineNumber,
-                     llvm::StringRef File) {
-  RecordInfo I;
-  populateSymbolInfo(I, D, FC, LineNumber, File);
-  I.TagType = D->getTagKind();
-  parseFields(I, D);
+std::unique_ptr<Info> emitInfo(const RecordDecl *D, const FullComment *FC,
+                               int LineNumber, llvm::StringRef File,
+                               bool PublicOnly) {
+  if (PublicOnly && !isPublic(D->getAccess(), D->getLinkageInternal()))
+    return nullptr;
+  auto I = llvm::make_unique<RecordInfo>();
+  populateSymbolInfo(*I, D, FC, LineNumber, File);
+  I->TagType = D->getTagKind();
+  parseFields(*I, D, PublicOnly);
   if (const auto *C = dyn_cast<CXXRecordDecl>(D))
-    parseBases(I, C);
-  return serialize(I);
+    parseBases(*I, C);
+  return std::unique_ptr<Info>{std::move(I)};
 }
 
-std::string emitInfo(const FunctionDecl *D, const FullComment *FC,
-                     int LineNumber, llvm::StringRef File) {
-  FunctionInfo I;
-  populateFunctionInfo(I, D, FC, LineNumber, File);
-  I.Access = clang::AccessSpecifier::AS_none;
-  return serialize(I);
+std::unique_ptr<Info> emitInfo(const FunctionDecl *D, const FullComment *FC,
+                               int LineNumber, llvm::StringRef File,
+                               bool PublicOnly) {
+  if (PublicOnly && !isPublic(D->getAccess(), D->getLinkageInternal()))
+    return nullptr;
+  FunctionInfo Func;
+  populateFunctionInfo(Func, D, FC, LineNumber, File);
+  Func.Access = clang::AccessSpecifier::AS_none;
+
+  // Wrap in enclosing scope
+  auto I = llvm::make_unique<NamespaceInfo>();
+  if (!Func.Namespace.empty())
+    I->USR = Func.Namespace[0].USR;
+  else
+    I->USR = SymbolID();
+  I->ChildFunctions.push_back(std::move(Func));
+  return std::unique_ptr<Info>{std::move(I)};
 }
 
-std::string emitInfo(const CXXMethodDecl *D, const FullComment *FC,
-                     int LineNumber, llvm::StringRef File) {
-  FunctionInfo I;
-  populateFunctionInfo(I, D, FC, LineNumber, File);
-  I.IsMethod = true;
-  I.Parent = Reference(getUSRForDecl(D->getParent()), InfoType::IT_record);
-  I.Access = D->getAccess();
-  return serialize(I);
+std::unique_ptr<Info> emitInfo(const CXXMethodDecl *D, const FullComment *FC,
+                               int LineNumber, llvm::StringRef File,
+                               bool PublicOnly) {
+  if (PublicOnly && !isPublic(D->getAccess(), D->getLinkageInternal()))
+    return nullptr;
+  FunctionInfo Func;
+  populateFunctionInfo(Func, D, FC, LineNumber, File);
+  Func.IsMethod = true;
+
+  SymbolID ParentUSR = getUSRForDecl(D->getParent());
+  Func.Parent = Reference{ParentUSR, D->getParent()->getNameAsString(),
+                          InfoType::IT_record};
+  Func.Access = D->getAccess();
+
+  // Wrap in enclosing scope
+  auto I = llvm::make_unique<RecordInfo>();
+  I->USR = ParentUSR;
+  I->ChildFunctions.push_back(std::move(Func));
+  return std::unique_ptr<Info>{std::move(I)};
 }
 
-std::string emitInfo(const EnumDecl *D, const FullComment *FC, int LineNumber,
-                     llvm::StringRef File) {
-  EnumInfo I;
-  populateSymbolInfo(I, D, FC, LineNumber, File);
-  I.Scoped = D->isScoped();
-  parseEnumerators(I, D);
-  return serialize(I);
+std::unique_ptr<Info> emitInfo(const EnumDecl *D, const FullComment *FC,
+                               int LineNumber, llvm::StringRef File,
+                               bool PublicOnly) {
+  if (PublicOnly && !isPublic(D->getAccess(), D->getLinkageInternal()))
+    return nullptr;
+  EnumInfo Enum;
+  populateSymbolInfo(Enum, D, FC, LineNumber, File);
+  Enum.Scoped = D->isScoped();
+  parseEnumerators(Enum, D);
+
+  // Wrap in enclosing scope
+  if (!Enum.Namespace.empty()) {
+    switch (Enum.Namespace[0].RefType) {
+    case InfoType::IT_namespace: {
+      auto I = llvm::make_unique<NamespaceInfo>();
+      I->USR = Enum.Namespace[0].USR;
+      I->ChildEnums.push_back(std::move(Enum));
+      return std::unique_ptr<Info>{std::move(I)};
+    }
+    case InfoType::IT_record: {
+      auto I = llvm::make_unique<RecordInfo>();
+      I->USR = Enum.Namespace[0].USR;
+      I->ChildEnums.push_back(std::move(Enum));
+      return std::unique_ptr<Info>{std::move(I)};
+    }
+    default:
+      break;
+    }
+  }
+
+  // Put in global namespace
+  auto I = llvm::make_unique<NamespaceInfo>();
+  I->USR = SymbolID();
+  I->ChildEnums.push_back(std::move(Enum));
+  return std::unique_ptr<Info>{std::move(I)};
 }
 
 } // namespace serialize

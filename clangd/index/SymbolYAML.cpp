@@ -69,7 +69,7 @@ template <> struct MappingTraits<SymbolInfo> {
 template <> struct MappingTraits<Symbol::Details> {
   static void mapping(IO &io, Symbol::Details &Detail) {
     io.mapOptional("Documentation", Detail.Documentation);
-    io.mapOptional("CompletionDetail", Detail.CompletionDetail);
+    io.mapOptional("ReturnType", Detail.ReturnType);
     io.mapOptional("IncludeHeader", Detail.IncludeHeader);
   }
 };
@@ -108,12 +108,10 @@ template <> struct MappingTraits<Symbol> {
                    SymbolLocation());
     IO.mapOptional("Definition", Sym.Definition, SymbolLocation());
     IO.mapOptional("References", Sym.References, 0u);
-    IO.mapRequired("CompletionLabel", Sym.CompletionLabel);
-    IO.mapRequired("CompletionFilterText", Sym.CompletionFilterText);
-    IO.mapRequired("CompletionPlainInsertText", Sym.CompletionPlainInsertText);
-
-    IO.mapOptional("CompletionSnippetInsertText",
-                   Sym.CompletionSnippetInsertText);
+    IO.mapOptional("IsIndexedForCodeCompletion", Sym.IsIndexedForCodeCompletion,
+                   false);
+    IO.mapOptional("Signature", Sym.Signature);
+    IO.mapOptional("CompletionSnippetSuffix", Sym.CompletionSnippetSuffix);
     IO.mapOptional("Detail", NDetail->Opt);
   }
 };
@@ -170,7 +168,7 @@ template <> struct ScalarEnumerationTraits<SymbolKind> {
 namespace clang {
 namespace clangd {
 
-SymbolSlab SymbolsFromYAML(llvm::StringRef YAMLContent) {
+SymbolSlab symbolsFromYAML(llvm::StringRef YAMLContent) {
   // Store data of pointer fields (excl. `StringRef`) like `Detail`.
   llvm::BumpPtrAllocator Arena;
   llvm::yaml::Input Yin(YAMLContent, &Arena);

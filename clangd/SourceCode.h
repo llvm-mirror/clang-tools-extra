@@ -14,7 +14,9 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_SOURCECODE_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_SOURCECODE_H
 #include "Protocol.h"
+#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Tooling/Core/Replacement.h"
 
 namespace clang {
 class SourceManager;
@@ -23,14 +25,9 @@ namespace clangd {
 
 /// Turn a [line, column] pair into an offset in Code.
 ///
-/// If the character value is greater than the line length, the behavior depends
-/// on AllowColumnsBeyondLineLength:
-///
-/// - if true: default back to the end of the line
-/// - if false: return an error
-///
-/// If the line number is greater than the number of lines in the document,
-/// always return an error.
+/// If P.character exceeds the line length, returns the offset at end-of-line.
+/// (If !AllowColumnsBeyondLineLength, then returns an error instead).
+/// If the line number is out of range, returns an error.
 ///
 /// The returned value is in the range [0, Code.size()].
 llvm::Expected<size_t>
@@ -38,7 +35,7 @@ positionToOffset(llvm::StringRef Code, Position P,
                  bool AllowColumnsBeyondLineLength = true);
 
 /// Turn an offset in Code into a [line, column] pair.
-/// FIXME: This should return an error if the offset is invalid.
+/// The offset must be in range [0, Code.size()].
 Position offsetToPosition(llvm::StringRef Code, size_t Offset);
 
 /// Turn a SourceLocation into a [line, column] pair.
@@ -49,11 +46,38 @@ Position sourceLocToPosition(const SourceManager &SM, SourceLocation Loc);
 // Note that clang also uses closed source ranges, which this can't handle!
 Range halfOpenToRange(const SourceManager &SM, CharSourceRange R);
 
+// Converts an offset to a clang line/column (1-based, columns are bytes).
+// The offset must be in range [0, Code.size()].
+// Prefer to use SourceManager if one is available.
+std::pair<size_t, size_t> offsetToClangLineColumn(llvm::StringRef Code,
+                                                  size_t Offset);
+
 /// From "a::b::c", return {"a::b::", "c"}. Scope is empty if there's no
 /// qualifier.
 std::pair<llvm::StringRef, llvm::StringRef>
 splitQualifiedName(llvm::StringRef QName);
 
+TextEdit replacementToEdit(StringRef Code, const tooling::Replacement &R);
+
+std::vector<TextEdit> replacementsToEdits(StringRef Code,
+                                          const tooling::Replacements &Repls);
+
+TextEdit toTextEdit(const FixItHint &FixIt, const SourceManager &M,
+                    const LangOptions &L);
+
+/// Get the real/canonical path of \p F.  This means:
+///
+///   - Absolute path
+///   - Symlinks resolved
+///   - No "." or ".." component
+///   - No duplicate or trailing directory separator
+///
+/// This function should be used when sending paths to clients, so that paths
+/// are normalized as much as possible.
+llvm::Optional<std::string> getRealPath(const FileEntry *F,
+                                        const SourceManager &SourceMgr);
+
+bool IsRangeConsecutive(const Range &Left, const Range &Right);
 } // namespace clangd
 } // namespace clang
 #endif

@@ -19,6 +19,10 @@
 @property(strong, nonatomic) NSString *VCsPluralToAdd;
 @property(assign, nonatomic) int centerX;
 @property(assign, nonatomic) int enable2GBackgroundFetch;
+@property(assign, nonatomic) int shouldUseCFPreferences;
+@property(assign, nonatomic) int enableGLAcceleration;
+@property(assign, nonatomic) int ID;
+@property(assign, nonatomic) int hasADog;
 @end
 
 @interface Foo (Bar)

@@ -5,15 +5,16 @@
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
 //
-//===---------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
+
 #include "SyncAPI.h"
 
 namespace clang {
 namespace clangd {
 
 void runAddDocument(ClangdServer &Server, PathRef File, StringRef Contents,
-                    WantDiagnostics WantDiags, bool SkipCache) {
-  Server.addDocument(File, Contents, WantDiags, SkipCache);
+                    WantDiagnostics WantDiags) {
+  Server.addDocument(File, Contents, WantDiags);
   if (!Server.blockUntilIdleForTest())
     llvm_unreachable("not idle after addDocument");
 }
@@ -36,7 +37,7 @@ template <typename T> struct CaptureProxy {
   }
   CaptureProxy &operator=(CaptureProxy &&) = delete;
 
-  operator UniqueFunction<void(T)>() && {
+  operator llvm::unique_function<void(T)>() && {
     assert(!Future.valid() && "conversion to callback called multiple times");
     Future = Promise.get_future();
     return Bind(
@@ -68,10 +69,10 @@ template <typename T> CaptureProxy<T> capture(llvm::Optional<T> &Target) {
 }
 } // namespace
 
-llvm::Expected<CompletionList>
+llvm::Expected<CodeCompleteResult>
 runCodeComplete(ClangdServer &Server, PathRef File, Position Pos,
                 clangd::CodeCompleteOptions Opts) {
-  llvm::Optional<llvm::Expected<CompletionList>> Result;
+  llvm::Optional<llvm::Expected<CodeCompleteResult>> Result;
   Server.codeComplete(File, Pos, Opts, capture(Result));
   return std::move(*Result);
 }
@@ -114,6 +115,13 @@ llvm::Expected<std::vector<SymbolInformation>>
 runWorkspaceSymbols(ClangdServer &Server, StringRef Query, int Limit) {
   llvm::Optional<llvm::Expected<std::vector<SymbolInformation>>> Result;
   Server.workspaceSymbols(Query, Limit, capture(Result));
+  return std::move(*Result);
+}
+
+llvm::Expected<std::vector<SymbolInformation>>
+runDocumentSymbols(ClangdServer &Server, PathRef File) {
+  llvm::Optional<llvm::Expected<std::vector<SymbolInformation>>> Result;
+  Server.documentSymbols(File, capture(Result));
   return std::move(*Result);
 }
 

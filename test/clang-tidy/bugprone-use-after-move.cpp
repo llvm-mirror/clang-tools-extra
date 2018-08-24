@@ -1,4 +1,4 @@
-// RUN: %check_clang_tidy %s bugprone-use-after-move %t -- -- -std=c++11 -fno-delayed-template-parsing
+// RUN: %check_clang_tidy %s bugprone-use-after-move %t -- -- -std=c++17 -fno-delayed-template-parsing
 
 typedef decltype(nullptr) nullptr_t;
 
@@ -105,6 +105,15 @@ public:
   operator bool() const;
 
   int i;
+};
+
+template <class T>
+class AnnotatedContainer {
+public:
+  AnnotatedContainer();
+
+  void foo() const;
+  [[clang::reinitializes]] void clear();
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -898,6 +907,32 @@ void standardSmartPointerResetIsReinit() {
   }
 }
 
+void reinitAnnotation() {
+  {
+    AnnotatedContainer<int> obj;
+    std::move(obj);
+    obj.foo();
+    // CHECK-MESSAGES: [[@LINE-1]]:5: warning: 'obj' used after it was
+    // CHECK-MESSAGES: [[@LINE-3]]:5: note: move occurred here
+  }
+  {
+    AnnotatedContainer<int> obj;
+    std::move(obj);
+    obj.clear();
+    obj.foo();
+  }
+  {
+    // Calling clear() on a different object to the one that was moved is not
+    // considered a reinitialization.
+    AnnotatedContainer<int> obj1, obj2;
+    std::move(obj1);
+    obj2.clear();
+    obj1.foo();
+    // CHECK-MESSAGES: [[@LINE-1]]:5: warning: 'obj1' used after it was
+    // CHECK-MESSAGES: [[@LINE-4]]:5: note: move occurred here
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Tests related to order of evaluation within expressions
 
@@ -1132,13 +1167,30 @@ void forRangeSequences() {
   }
 }
 
-// If a variable is declared in an if statement, the declaration of the variable
-// (which is treated like a reinitialization by the check) is sequenced before
-// the evaluation of the condition (which constitutes a use).
-void ifStmtSequencesDeclAndCondition() {
+// If a variable is declared in an if, while or switch statement, the init
+// statement (for if and switch) is sequenced before the variable declaration,
+// which in turn is sequenced before the evaluation of the condition.
+void ifWhileAndSwitchSequenceInitDeclAndCondition() {
   for (int i = 0; i < 10; ++i) {
-    if (A a = A()) {
-      std::move(a);
+    A a1;
+    if (A a2 = std::move(a1)) {
+      std::move(a2);
+    }
+  }
+  for (int i = 0; i < 10; ++i) {
+    A a1;
+    if (A a2 = std::move(a1); A a3 = std::move(a2)) {
+      std::move(a3);
+    }
+  }
+  while (A a = A()) {
+    std::move(a);
+  }
+  for (int i = 0; i < 10; ++i) {
+    A a1;
+    switch (A a2 = a1; A a3 = std::move(a2)) {
+      case true:
+        std::move(a3);
     }
   }
 }

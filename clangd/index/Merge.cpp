@@ -1,17 +1,21 @@
-//===--- Merge.h ------------------------------------------------*- C++-*-===//
+//===--- Merge.cpp -----------------------------------------------*- C++-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
 //
-//===---------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
+
 #include "Merge.h"
+#include "../Logger.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
+
 namespace clang {
 namespace clangd {
 namespace {
+
 using namespace llvm;
 
 class MergedIndex : public SymbolIndex {
@@ -74,10 +78,16 @@ class MergedIndex : public SymbolIndex {
         Callback(*Sym);
   }
 
+  void findOccurrences(const OccurrencesRequest &Req,
+                       llvm::function_ref<void(const SymbolOccurrence &)>
+                           Callback) const override {
+    log("findOccurrences is not implemented.");
+  }
+
 private:
   const SymbolIndex *Dynamic, *Static;
 };
-}
+} // namespace
 
 Symbol
 mergeSymbol(const Symbol &L, const Symbol &R, Symbol::Details *Scratch) {
@@ -96,14 +106,10 @@ mergeSymbol(const Symbol &L, const Symbol &R, Symbol::Details *Scratch) {
   if (!S.CanonicalDeclaration)
     S.CanonicalDeclaration = O.CanonicalDeclaration;
   S.References += O.References;
-  if (S.CompletionLabel == "")
-    S.CompletionLabel = O.CompletionLabel;
-  if (S.CompletionFilterText == "")
-    S.CompletionFilterText = O.CompletionFilterText;
-  if (S.CompletionPlainInsertText == "")
-    S.CompletionPlainInsertText = O.CompletionPlainInsertText;
-  if (S.CompletionSnippetInsertText == "")
-    S.CompletionSnippetInsertText = O.CompletionSnippetInsertText;
+  if (S.Signature == "")
+    S.Signature = O.Signature;
+  if (S.CompletionSnippetSuffix == "")
+    S.CompletionSnippetSuffix = O.CompletionSnippetSuffix;
 
   if (O.Detail) {
     if (S.Detail) {
@@ -111,14 +117,16 @@ mergeSymbol(const Symbol &L, const Symbol &R, Symbol::Details *Scratch) {
       *Scratch = *S.Detail;
       if (Scratch->Documentation == "")
         Scratch->Documentation = O.Detail->Documentation;
-      if (Scratch->CompletionDetail == "")
-        Scratch->CompletionDetail = O.Detail->CompletionDetail;
+      if (Scratch->ReturnType == "")
+        Scratch->ReturnType = O.Detail->ReturnType;
       if (Scratch->IncludeHeader == "")
         Scratch->IncludeHeader = O.Detail->IncludeHeader;
       S.Detail = Scratch;
     } else
       S.Detail = O.Detail;
   }
+
+  S.Origin |= O.Origin | SymbolOrigin::Merge;
   return S;
 }
 
@@ -126,5 +134,6 @@ std::unique_ptr<SymbolIndex> mergeIndex(const SymbolIndex *Dynamic,
                                         const SymbolIndex *Static) {
   return llvm::make_unique<MergedIndex>(Dynamic, Static);
 }
+
 } // namespace clangd
 } // namespace clang

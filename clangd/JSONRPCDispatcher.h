@@ -10,13 +10,13 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_JSONRPCDISPATCHER_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_JSONRPCDISPATCHER_H
 
-#include "JSONExpr.h"
 #include "Logger.h"
 #include "Protocol.h"
 #include "Trace.h"
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/JSON.h"
 #include <iosfwd>
 #include <mutex>
 
@@ -30,14 +30,16 @@ class JSONOutput : public Logger {
   // JSONOutput now that we pass Context everywhere.
 public:
   JSONOutput(llvm::raw_ostream &Outs, llvm::raw_ostream &Logs,
-             llvm::raw_ostream *InputMirror = nullptr, bool Pretty = false)
-      : Pretty(Pretty), Outs(Outs), Logs(Logs), InputMirror(InputMirror) {}
+             Logger::Level MinLevel, llvm::raw_ostream *InputMirror = nullptr,
+             bool Pretty = false)
+      : Pretty(Pretty), MinLevel(MinLevel), Outs(Outs), Logs(Logs),
+        InputMirror(InputMirror) {}
 
   /// Emit a JSONRPC message.
-  void writeMessage(const json::Expr &Result);
+  void writeMessage(const llvm::json::Value &Result);
 
   /// Write a line to the logging stream.
-  void log(const Twine &Message) override;
+  void log(Level, const llvm::formatv_object_base &Message) override;
 
   /// Mirror \p Message into InputMirror stream. Does nothing if InputMirror is
   /// null.
@@ -48,6 +50,7 @@ public:
   const bool Pretty;
 
 private:
+  Logger::Level MinLevel;
   llvm::raw_ostream &Outs;
   llvm::raw_ostream &Logs;
   llvm::raw_ostream *InputMirror;
@@ -57,20 +60,20 @@ private:
 
 /// Sends a successful reply.
 /// Current context must derive from JSONRPCDispatcher::Handler.
-void reply(json::Expr &&Result);
+void reply(llvm::json::Value &&Result);
 /// Sends an error response to the client, and logs it.
 /// Current context must derive from JSONRPCDispatcher::Handler.
-void replyError(ErrorCode code, const llvm::StringRef &Message);
+void replyError(ErrorCode Code, const llvm::StringRef &Message);
 /// Sends a request to the client.
 /// Current context must derive from JSONRPCDispatcher::Handler.
-void call(llvm::StringRef Method, json::Expr &&Params);
+void call(llvm::StringRef Method, llvm::json::Value &&Params);
 
 /// Main JSONRPC entry point. This parses the JSONRPC "header" and calls the
 /// registered Handler for the method received.
 class JSONRPCDispatcher {
 public:
   // A handler responds to requests for a particular method name.
-  using Handler = std::function<void(const json::Expr &)>;
+  using Handler = std::function<void(const llvm::json::Value &)>;
 
   /// Create a new JSONRPCDispatcher. UnknownHandler is called when an unknown
   /// method is received.
@@ -81,7 +84,7 @@ public:
   void registerHandler(StringRef Method, Handler H);
 
   /// Parses a JSONRPC message and calls the Handler for it.
-  bool call(const json::Expr &Message, JSONOutput &Out) const;
+  bool call(const llvm::json::Value &Message, JSONOutput &Out) const;
 
 private:
   llvm::StringMap<Handler> Handlers;
@@ -102,7 +105,9 @@ enum JSONStreamStyle {
 /// if it is.
 /// Input stream(\p In) must be opened in binary mode to avoid preliminary
 /// replacements of \r\n with \n.
-void runLanguageServerLoop(std::istream &In, JSONOutput &Out,
+/// We use C-style FILE* for reading as std::istream has unclear interaction
+/// with signals, which are sent by debuggers on some OSs.
+void runLanguageServerLoop(std::FILE *In, JSONOutput &Out,
                            JSONStreamStyle InputStyle,
                            JSONRPCDispatcher &Dispatcher, bool &IsDone);
 

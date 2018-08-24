@@ -15,7 +15,7 @@
 //   We have a lookup table for common standard library implementations.
 //   libstdc++ puts char_traits in bits/char_traits.h, but we #include <string>.
 //
-//===---------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_CANONICALINCLUDES_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_CANONICALINCLUDES_H
@@ -48,9 +48,10 @@ public:
   void addSymbolMapping(llvm::StringRef QualifiedName,
                         llvm::StringRef CanonicalPath);
 
-  /// Returns the canonical include for symbol with \p QualifiedName, which is
-  /// declared in \p Header
-  llvm::StringRef mapHeader(llvm::StringRef Header,
+  /// Returns the canonical include for symbol with \p QualifiedName.
+  /// \p Headers is the include stack: Headers.front() is the file declaring the
+  /// symbol, and Headers.back() is the main file.
+  llvm::StringRef mapHeader(llvm::ArrayRef<std::string> Headers,
                             llvm::StringRef QualifiedName) const;
 
 private:
@@ -89,4 +90,4 @@ void addSystemHeadersMapping(CanonicalIncludes *Includes);
 } // namespace clangd
 } // namespace clang
 
-#endif //LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_HEADERMAPCOLLECTOR_H
+#endif // LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_HEADERMAPCOLLECTOR_H

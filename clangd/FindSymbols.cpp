@@ -8,12 +8,20 @@
 //===----------------------------------------------------------------------===//
 #include "FindSymbols.h"
 
+#include "AST.h"
+#include "ClangdUnit.h"
+#include "FuzzyMatch.h"
 #include "Logger.h"
+#include "Quality.h"
 #include "SourceCode.h"
 #include "index/Index.h"
+#include "clang/Index/IndexDataConsumer.h"
 #include "clang/Index/IndexSymbol.h"
+#include "clang/Index/IndexingAction.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
+
+#define DEBUG_TYPE "FindSymbols"
 
 namespace clang {
 namespace clangd {
@@ -79,11 +87,20 @@ SymbolKind indexSymbolKindToSymbolKind(index::SymbolKind Kind) {
   llvm_unreachable("invalid symbol kind");
 }
 
+using ScoredSymbolInfo = std::pair<float, SymbolInformation>;
+struct ScoredSymbolGreater {
+  bool operator()(const ScoredSymbolInfo &L, const ScoredSymbolInfo &R) {
+    if (L.first != R.first)
+      return L.first > R.first;
+    return L.second.name < R.second.name; // Earlier name is better.
+  }
+};
+
 } // namespace
 
 llvm::Expected<std::vector<SymbolInformation>>
-getWorkspaceSymbols(StringRef Query, int Limit,
-                    const SymbolIndex *const Index) {
+getWorkspaceSymbols(StringRef Query, int Limit, const SymbolIndex *const Index,
+                    StringRef HintPath) {
   std::vector<SymbolInformation> Result;
   if (Query.empty() || !Index)
     return Result;
@@ -101,23 +118,22 @@ getWorkspaceSymbols(StringRef Query, int Limit,
     Req.Scopes = {Names.first};
   if (Limit)
     Req.MaxCandidateCount = Limit;
-  Index->fuzzyFind(Req, [&Result](const Symbol &Sym) {
+  TopN<ScoredSymbolInfo, ScoredSymbolGreater> Top(Req.MaxCandidateCount);
+  FuzzyMatcher Filter(Req.Query);
+  Index->fuzzyFind(Req, [HintPath, &Top, &Filter](const Symbol &Sym) {
     // Prefer the definition over e.g. a function declaration in a header
     auto &CD = Sym.Definition ? Sym.Definition : Sym.CanonicalDeclaration;
     auto Uri = URI::parse(CD.FileURI);
     if (!Uri) {
-      log(llvm::formatv(
-          "Workspace symbol: Could not parse URI '{0}' for symbol '{1}'.",
-          CD.FileURI, Sym.Name));
+      log("Workspace symbol: Could not parse URI '{0}' for symbol '{1}'.",
+          CD.FileURI, Sym.Name);
       return;
     }
-    // FIXME: Passing no HintPath here will work for "file" and "test" schemes
-    // because they don't use it but this might not work for other custom ones.
-    auto Path = URI::resolve(*Uri);
+    auto Path = URI::resolve(*Uri, HintPath);
     if (!Path) {
-      log(llvm::formatv("Workspace symbol: Could not resolve path for URI "
-                        "'{0}' for symbol '{1}'.",
-                        (*Uri).toString(), Sym.Name.str()));
+      log("Workspace symbol: Could not resolve path for URI '{0}' for symbol "
+          "'{1}'.",
+          Uri->toString(), Sym.Name);
       return;
     }
     Location L;
@@ -132,9 +148,131 @@ getWorkspaceSymbols(StringRef Query, int Limit,
     std::string Scope = Sym.Scope;
     StringRef ScopeRef = Scope;
     ScopeRef.consume_back("::");
-    Result.push_back({Sym.Name, SK, L, ScopeRef});
+    SymbolInformation Info = {Sym.Name, SK, L, ScopeRef};
+
+    SymbolQualitySignals Quality;
+    Quality.merge(Sym);
+    SymbolRelevanceSignals Relevance;
+    Relevance.Query = SymbolRelevanceSignals::Generic;
+    if (auto NameMatch = Filter.match(Sym.Name))
+      Relevance.NameMatch = *NameMatch;
+    else {
+      log("Workspace symbol: {0} didn't match query {1}", Sym.Name,
+          Filter.pattern());
+      return;
+    }
+    Relevance.merge(Sym);
+    auto Score =
+        evaluateSymbolAndRelevance(Quality.evaluate(), Relevance.evaluate());
+    dlog("FindSymbols: {0}{1} = {2}\n{3}{4}\n", Sym.Scope, Sym.Name, Score,
+         Quality, Relevance);
+
+    Top.push({Score, std::move(Info)});
   });
+  for (auto &R : std::move(Top).items())
+    Result.push_back(std::move(R.second));
   return Result;
+}
+
+namespace {
+/// Finds document symbols in the main file of the AST.
+class DocumentSymbolsConsumer : public index::IndexDataConsumer {
+  ASTContext &AST;
+  std::vector<SymbolInformation> Symbols;
+  // We are always list document for the same file, so cache the value.
+  llvm::Optional<URIForFile> MainFileUri;
+
+public:
+  DocumentSymbolsConsumer(ASTContext &AST) : AST(AST) {}
+  std::vector<SymbolInformation> takeSymbols() { return std::move(Symbols); }
+
+  void initialize(ASTContext &Ctx) override {
+    // Compute the absolute path of the main file which we will use for all
+    // results.
+    const SourceManager &SM = AST.getSourceManager();
+    const FileEntry *F = SM.getFileEntryForID(SM.getMainFileID());
+    if (!F)
+      return;
+    auto FilePath = getRealPath(F, SM);
+    if (FilePath)
+      MainFileUri = URIForFile(*FilePath);
+  }
+
+  bool shouldIncludeSymbol(const NamedDecl *ND) {
+    if (!ND || ND->isImplicit())
+      return false;
+    // Skip anonymous declarations, e.g (anonymous enum/class/struct).
+    if (ND->getDeclName().isEmpty())
+      return false;
+    return true;
+  }
+
+  bool
+  handleDeclOccurence(const Decl *, index::SymbolRoleSet Roles,
+                      ArrayRef<index::SymbolRelation> Relations,
+                      SourceLocation Loc,
+                      index::IndexDataConsumer::ASTNodeInfo ASTNode) override {
+    assert(ASTNode.OrigD);
+    // No point in continuing the index consumer if we could not get the
+    // absolute path of the main file.
+    if (!MainFileUri)
+      return false;
+    // We only want declarations and definitions, i.e. no references.
+    if (!(Roles & static_cast<unsigned>(index::SymbolRole::Declaration) ||
+          Roles & static_cast<unsigned>(index::SymbolRole::Definition)))
+      return true;
+    SourceLocation NameLoc = findNameLoc(ASTNode.OrigD);
+    const SourceManager &SourceMgr = AST.getSourceManager();
+    // We should be only be looking at "local" decls in the main file.
+    if (!SourceMgr.isWrittenInMainFile(NameLoc)) {
+      // Even thought we are visiting only local (non-preamble) decls,
+      // we can get here when in the presense of "extern" decls.
+      return true;
+    }
+    const NamedDecl *ND = llvm::dyn_cast<NamedDecl>(ASTNode.OrigD);
+    if (!shouldIncludeSymbol(ND))
+      return true;
+
+    SourceLocation EndLoc =
+        Lexer::getLocForEndOfToken(NameLoc, 0, SourceMgr, AST.getLangOpts());
+    Position Begin = sourceLocToPosition(SourceMgr, NameLoc);
+    Position End = sourceLocToPosition(SourceMgr, EndLoc);
+    Range R = {Begin, End};
+    Location L;
+    L.uri = *MainFileUri;
+    L.range = R;
+
+    std::string QName = printQualifiedName(*ND);
+    StringRef Scope, Name;
+    std::tie(Scope, Name) = splitQualifiedName(QName);
+    Scope.consume_back("::");
+
+    index::SymbolInfo SymInfo = index::getSymbolInfo(ND);
+    SymbolKind SK = indexSymbolKindToSymbolKind(SymInfo.Kind);
+
+    SymbolInformation SI;
+    SI.name = Name;
+    SI.kind = SK;
+    SI.location = L;
+    SI.containerName = Scope;
+    Symbols.push_back(std::move(SI));
+    return true;
+  }
+};
+} // namespace
+
+llvm::Expected<std::vector<SymbolInformation>>
+getDocumentSymbols(ParsedAST &AST) {
+  DocumentSymbolsConsumer DocumentSymbolsCons(AST.getASTContext());
+
+  index::IndexingOptions IndexOpts;
+  IndexOpts.SystemSymbolFilter =
+      index::IndexingOptions::SystemSymbolFilterKind::DeclarationsOnly;
+  IndexOpts.IndexFunctionLocals = false;
+  indexTopLevelDecls(AST.getASTContext(), AST.getLocalTopLevelDecls(),
+                     DocumentSymbolsCons, IndexOpts);
+
+  return DocumentSymbolsCons.takeSymbols();
 }
 
 } // namespace clangd

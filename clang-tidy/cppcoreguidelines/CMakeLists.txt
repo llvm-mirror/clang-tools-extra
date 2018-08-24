@@ -4,6 +4,7 @@ add_clang_library(clangTidyCppCoreGuidelinesModule
   AvoidGotoCheck.cpp
   CppCoreGuidelinesTidyModule.cpp
   InterfacesGlobalInitCheck.cpp
+  NarrowingConversionsCheck.cpp
   NoMallocCheck.cpp
   OwningMemoryCheck.cpp
   ProBoundsArrayToPointerDecayCheck.cpp
@@ -26,6 +27,7 @@ add_clang_library(clangTidyCppCoreGuidelinesModule
   clangLex
   clangTidy
   clangTidyMiscModule
+  clangTidyReadabilityModule
   clangTidyUtils
   clangTooling
   )

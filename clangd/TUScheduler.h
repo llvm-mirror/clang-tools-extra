@@ -42,6 +42,15 @@ enum class WantDiagnostics {
         /// within a bounded amount of time.
 };
 
+/// Configuration of the AST retention policy. This only covers retention of
+/// *idle* ASTs. If queue has operations requiring the AST, they might be
+/// kept in memory.
+struct ASTRetentionPolicy {
+  /// Maximum number of ASTs to be retained in memory when there are no pending
+  /// requests for them.
+  unsigned MaxRetainedASTs = 3;
+};
+
 /// Handles running tasks for ClangdServer and managing the resources (e.g.,
 /// preambles and ASTs) for opened files.
 /// TUScheduler is not thread-safe, only one thread should be providing updates
@@ -52,19 +61,25 @@ enum class WantDiagnostics {
 class TUScheduler {
 public:
   TUScheduler(unsigned AsyncThreadsCount, bool StorePreamblesInMemory,
-              ASTParsedCallback ASTCallback,
-              std::chrono::steady_clock::duration UpdateDebounce);
+              PreambleParsedCallback PreambleCallback,
+              std::chrono::steady_clock::duration UpdateDebounce,
+              ASTRetentionPolicy RetentionPolicy);
   ~TUScheduler();
 
   /// Returns estimated memory usage for each of the currently open files.
   /// The order of results is unspecified.
   std::vector<std::pair<Path, std::size_t>> getUsedBytesPerFile() const;
 
+  /// Returns a list of files with ASTs currently stored in memory. This method
+  /// is not very reliable and is only used for test. E.g., the results will not
+  /// contain files that currently run something over their AST.
+  std::vector<Path> getFilesWithCachedAST() const;
+
   /// Schedule an update for \p File. Adds \p File to a list of tracked files if
   /// \p File was not part of it before.
   /// FIXME(ibiryukov): remove the callback from this function.
   void update(PathRef File, ParseInputs Inputs, WantDiagnostics WD,
-              UniqueFunction<void(std::vector<Diag>)> OnUpdated);
+              llvm::unique_function<void(std::vector<Diag>)> OnUpdated);
 
   /// Remove \p File from the list of tracked files and schedule removal of its
   /// resources.
@@ -86,6 +101,9 @@ public:
   /// - validate that the preamble is still valid, and only use it in this case
   /// - accept that preamble contents may be outdated, and try to avoid reading
   ///   source code from headers.
+  /// If there's no preamble yet (because the file was just opened), we'll wait
+  /// for it to build. The preamble may still be null if it fails to build or is
+  /// empty.
   /// If an error occurs during processing, it is forwarded to the \p Action
   /// callback.
   void runWithPreamble(llvm::StringRef Name, PathRef File,
@@ -99,17 +117,32 @@ private:
   /// This class stores per-file data in the Files map.
   struct FileData;
 
+public:
+  /// Responsible for retaining and rebuilding idle ASTs. An implementation is
+  /// an LRU cache.
+  class ASTCache;
+
+  // The file being built/processed in the current thread. This is a hack in
+  // order to get the file name into the index implementations. Do not depend on
+  // this inside clangd.
+  // FIXME: remove this when there is proper index support via build system
+  // integration.
+  static llvm::Optional<llvm::StringRef> getFileBeingProcessedInContext();
+
+private:
   const bool StorePreamblesInMemory;
   const std::shared_ptr<PCHContainerOperations> PCHOps;
-  const ASTParsedCallback ASTCallback;
+  const PreambleParsedCallback PreambleCallback;
   Semaphore Barrier;
   llvm::StringMap<std::unique_ptr<FileData>> Files;
+  std::unique_ptr<ASTCache> IdleASTs;
   // None when running tasks synchronously and non-None when running tasks
   // asynchronously.
   llvm::Optional<AsyncTaskRunner> PreambleTasks;
   llvm::Optional<AsyncTaskRunner> WorkerThreads;
   std::chrono::steady_clock::duration UpdateDebounce;
 };
+
 } // namespace clangd
 } // namespace clang
 

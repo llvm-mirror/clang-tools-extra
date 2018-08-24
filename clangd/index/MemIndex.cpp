@@ -45,9 +45,11 @@ bool MemIndex::fuzzyFind(
       // Exact match against all possible scopes.
       if (!Req.Scopes.empty() && !llvm::is_contained(Req.Scopes, Sym->Scope))
         continue;
+      if (Req.RestrictForCodeCompletion && !Sym->IsIndexedForCodeCompletion)
+        continue;
 
       if (auto Score = Filter.match(Sym->Name)) {
-        Top.emplace(-*Score, Sym);
+        Top.emplace(-*Score * quality(*Sym), Sym);
         if (Top.size() > Req.MaxCandidateCount) {
           More = true;
           Top.pop();
@@ -62,6 +64,7 @@ bool MemIndex::fuzzyFind(
 
 void MemIndex::lookup(const LookupRequest &Req,
                       llvm::function_ref<void(const Symbol &)> Callback) const {
+  std::lock_guard<std::mutex> Lock(Mutex);
   for (const auto &ID : Req.IDs) {
     auto I = Index.find(ID);
     if (I != Index.end())
@@ -83,6 +86,12 @@ std::unique_ptr<SymbolIndex> MemIndex::build(SymbolSlab Slab) {
   auto MemIdx = llvm::make_unique<MemIndex>();
   MemIdx->build(std::move(S));
   return std::move(MemIdx);
+}
+
+void MemIndex::findOccurrences(
+    const OccurrencesRequest &Req,
+    llvm::function_ref<void(const SymbolOccurrence &)> Callback) const {
+  log("findOccurrences is not implemented.");
 }
 
 } // namespace clangd

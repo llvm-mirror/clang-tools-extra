@@ -19,7 +19,7 @@ namespace bugprone {
 
 namespace {
 
-AST_MATCHER(Expr, isInMacro) { return Node.getLocStart().isMacroID(); }
+AST_MATCHER(Expr, isInMacro) { return Node.getBeginLoc().isMacroID(); }
 
 /// \brief Find the next statement after `S`.
 const Stmt *nextStmt(const MatchFinder::MatchResult &Result, const Stmt *S) {
@@ -38,7 +38,7 @@ const Stmt *nextStmt(const MatchFinder::MatchResult &Result, const Stmt *S) {
   return nextStmt(Result, Parent);
 }
 
-using ExpansionRanges = std::vector<std::pair<SourceLocation, SourceLocation>>;
+using ExpansionRanges = std::vector<SourceRange>;
 
 /// \bried Get all the macro expansion ranges related to `Loc`.
 ///
@@ -47,8 +47,9 @@ ExpansionRanges getExpansionRanges(SourceLocation Loc,
                                    const MatchFinder::MatchResult &Result) {
   ExpansionRanges Locs;
   while (Loc.isMacroID()) {
-    Locs.push_back(Result.SourceManager->getImmediateExpansionRange(Loc));
-    Loc = Locs.back().first;
+    Locs.push_back(
+        Result.SourceManager->getImmediateExpansionRange(Loc).getAsRange());
+    Loc = Locs.back().getBegin();
   }
   return Locs;
 }
@@ -72,13 +73,13 @@ void MultipleStatementMacroCheck::check(
   if (!Next)
     return;
 
-  SourceLocation OuterLoc = Outer->getLocStart();
+  SourceLocation OuterLoc = Outer->getBeginLoc();
   if (Result.Nodes.getNodeAs<Stmt>("else"))
     OuterLoc = cast<IfStmt>(Outer)->getElseLoc();
 
-  auto InnerRanges = getExpansionRanges(Inner->getLocStart(), Result);
+  auto InnerRanges = getExpansionRanges(Inner->getBeginLoc(), Result);
   auto OuterRanges = getExpansionRanges(OuterLoc, Result);
-  auto NextRanges = getExpansionRanges(Next->getLocStart(), Result);
+  auto NextRanges = getExpansionRanges(Next->getBeginLoc(), Result);
 
   // Remove all the common ranges, starting from the top (the last ones in the
   // list).
@@ -96,9 +97,9 @@ void MultipleStatementMacroCheck::check(
       InnerRanges.back() != NextRanges.back())
     return;
 
-  diag(InnerRanges.back().first, "multiple statement macro used without "
-                                 "braces; some statements will be "
-                                 "unconditionally executed");
+  diag(InnerRanges.back().getBegin(), "multiple statement macro used without "
+                                      "braces; some statements will be "
+                                      "unconditionally executed");
 }
 
 } // namespace bugprone

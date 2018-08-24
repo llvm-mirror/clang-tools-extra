@@ -11,6 +11,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
+#include "clang/Basic/AttrKinds.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/TargetInfo.h"
@@ -56,13 +57,22 @@ void IntegerTypesCheck::registerMatchers(MatchFinder *Finder) {
   // Find all TypeLocs. The relevant Style Guide rule only applies to C++.
   if (!getLangOpts().CPlusPlus)
     return;
-  Finder->addMatcher(typeLoc(loc(isInteger())).bind("tl"), this);
+  // Match any integer types, unless they are passed to a printf-based API:
+  //
+  // http://google.github.io/styleguide/cppguide.html#64-bit_Portability
+  // "Where possible, avoid passing arguments of types specified by
+  // bitwidth typedefs to printf-based APIs."
+  Finder->addMatcher(typeLoc(loc(isInteger()),
+                             unless(hasAncestor(callExpr(
+                                 callee(functionDecl(hasAttr(attr::Format)))))))
+                         .bind("tl"),
+                     this);
   IdentTable = llvm::make_unique<IdentifierTable>(getLangOpts());
 }
 
 void IntegerTypesCheck::check(const MatchFinder::MatchResult &Result) {
   auto TL = *Result.Nodes.getNodeAs<TypeLoc>("tl");
-  SourceLocation Loc = TL.getLocStart();
+  SourceLocation Loc = TL.getBeginLoc();
 
   if (Loc.isInvalid() || Loc.isMacroID())
     return;

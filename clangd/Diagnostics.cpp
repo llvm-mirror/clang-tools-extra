@@ -1,11 +1,11 @@
-//===--- Diagnostics.cpp ----------------------------------------*- C++-*-===//
+//===--- Diagnostics.cpp -----------------------------------------*- C++-*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
 // This file is distributed under the University of Illinois Open Source
 // License. See LICENSE.TXT for details.
 //
-//===---------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 
 #include "Diagnostics.h"
 #include "Compiler.h"
@@ -68,15 +68,6 @@ Range diagnosticRange(const clang::Diagnostic &D, const LangOptions &L) {
   if (!R.isValid()) // Fall back to location only, let the editor deal with it.
     R = CharSourceRange::getCharRange(Loc);
   return halfOpenToRange(M, R);
-}
-
-TextEdit toTextEdit(const FixItHint &FixIt, const SourceManager &M,
-                    const LangOptions &L) {
-  TextEdit Result;
-  Result.range =
-      halfOpenToRange(M, Lexer::makeFileCharRange(FixIt.RemoveRange, M, L));
-  Result.newText = FixIt.CodeToInsert;
-  return Result;
 }
 
 bool isInsideMainFile(const SourceLocation Loc, const SourceManager &M) {
@@ -145,6 +136,13 @@ void printDiag(llvm::raw_string_ostream &OS, const DiagBase &D) {
   OS << diagLeveltoString(D.Severity) << ": " << D.Message;
 }
 
+/// Capitalizes the first word in the diagnostic's message.
+std::string capitalize(std::string Message) {
+  if (!Message.empty())
+    Message[0] = llvm::toUpper(Message[0]);
+  return Message;
+}
+
 /// Returns a message sent to LSP for the main diagnostic in \p D.
 /// The message includes all the notes with their corresponding locations.
 /// However, notes with fix-its are excluded as those usually only contain a
@@ -166,7 +164,7 @@ std::string mainMessage(const Diag &D) {
     printDiag(OS, Note);
   }
   OS.flush();
-  return Result;
+  return capitalize(std::move(Result));
 }
 
 /// Returns a message sent to LSP for the note of the main diagnostic.
@@ -179,7 +177,7 @@ std::string noteMessage(const Diag &Main, const DiagBase &Note) {
   OS << "\n\n";
   printDiag(OS, Main);
   OS.flush();
-  return Result;
+  return capitalize(std::move(Result));
 }
 } // namespace
 
@@ -228,6 +226,7 @@ void toLSPDiags(
     clangd::Diagnostic Res;
     Res.range = D.Range;
     Res.severity = getSeverity(D.Severity);
+    Res.category = D.Category;
     return Res;
   };
 
@@ -294,6 +293,9 @@ void StoreDiags::HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
     D.InsideMainFile = InsideMainFile;
     D.File = Info.getSourceManager().getFilename(Info.getLocation());
     D.Severity = DiagLevel;
+    D.Category = DiagnosticIDs::getCategoryNameFromID(
+                     DiagnosticIDs::getCategoryNumberForDiag(Info.getID()))
+                     .str();
     return D;
   };
 
@@ -375,7 +377,7 @@ void StoreDiags::flushLastDiag() {
   if (mentionsMainFile(*LastDiag))
     Output.push_back(std::move(*LastDiag));
   else
-    log(Twine("Dropped diagnostic outside main file:") + LastDiag->File + ":" +
+    log("Dropped diagnostic outside main file: {0}: {1}", LastDiag->File,
         LastDiag->Message);
   LastDiag.reset();
 }

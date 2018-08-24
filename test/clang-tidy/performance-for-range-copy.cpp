@@ -117,6 +117,11 @@ struct Mutable {
   ~Mutable() {}
 };
 
+struct Point {
+  ~Point() {}
+  int x, y;
+};
+
 Mutable& operator<<(Mutable &Out, bool B) {
   Out.setBool(B);
   return Out;
@@ -214,6 +219,15 @@ void positiveOnlyUsedAsConstArguments() {
   }
 }
 
+void positiveOnlyAccessedFieldAsConst() {
+  for (auto UsedAsConst : View<Iterator<Point>>()) {
+    // CHECK-MESSAGES: [[@LINE-1]]:13: warning: loop variable is copied but only used as const reference; consider making it a const reference [performance-for-range-copy]
+    // CHECK-FIXES: for (const auto& UsedAsConst : View<Iterator<Point>>()) {
+    use(UsedAsConst.x);
+    use(UsedAsConst.y);
+  }
+}
+
 void positiveOnlyUsedInCopyConstructor() {
   for (auto A : View<Iterator<Mutable>>()) {
     // CHECK-MESSAGES: [[@LINE-1]]:13: warning: loop variable is copied but only used as const reference; consider making it a const reference [performance-for-range-copy]
@@ -244,5 +258,10 @@ void PositiveConstNonMemberOperatorInvoked() {
     // CHECK-MESSAGES: [[@LINE-1]]:13: warning: loop variable is copied but only used as const reference; consider making it a const reference [performance-for-range-copy]
     // CHECK-FIXES: for (const auto& ConstOperatorInvokee : View<Iterator<Mutable>>()) {
     bool result = ConstOperatorInvokee != Mutable();
+  }
+}
+
+void IgnoreLoopVariableNotUsedInLoopBody() {
+  for (auto _ : View<Iterator<S>>()) {
   }
 }

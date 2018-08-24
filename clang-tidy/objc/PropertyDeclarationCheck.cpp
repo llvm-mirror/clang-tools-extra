@@ -34,7 +34,7 @@ enum NamingStyle {
   CategoryProperty = 2,
 };
 
-/// The acronyms are from
+/// The acronyms are aggregated from multiple sources including
 /// https://developer.apple.com/library/content/documentation/Cocoa/Conceptual/CodingGuidelines/Articles/APIAbbreviations.html#//apple_ref/doc/uid/20001285-BCIHCGAE
 ///
 /// Keep this list sorted.
@@ -42,18 +42,28 @@ constexpr llvm::StringLiteral DefaultSpecialAcronyms[] = {
     "[2-9]G",
     "ACL",
     "API",
+    "AR",
     "ARGB",
     "ASCII",
+    "AV",
     "BGRA",
+    "CA",
+    "CF",
+    "CG",
+    "CI",
+    "CRC",
+    "CV",
     "CMYK",
     "DNS",
     "FPS",
     "FTP",
     "GIF",
+    "GL",
     "GPS",
     "GUID",
     "HD",
     "HDR",
+    "HMAC",
     "HTML",
     "HTTP",
     "HTTPS",
@@ -63,8 +73,11 @@ constexpr llvm::StringLiteral DefaultSpecialAcronyms[] = {
     "JS",
     "LAN",
     "LZW",
+    "MAC",
+    "MD",
     "MDNS",
     "MIDI",
+    "NS",
     "OS",
     "PDF",
     "PIN",
@@ -77,11 +90,15 @@ constexpr llvm::StringLiteral DefaultSpecialAcronyms[] = {
     "RGB",
     "RGBA",
     "RGBX",
+    "RIPEMD",
     "ROM",
     "RPC",
     "RTF",
     "RTL",
+    "SC",
     "SDK",
+    "SHA",
+    "SQL",
     "SSO",
     "TCP",
     "TIFF",
@@ -144,7 +161,7 @@ std::string validPropertyNameRegex(llvm::ArrayRef<std::string> EscapedAcronyms,
   std::string StartMatcher = UsedInMatcher ? "::" : "^";
   std::string AcronymsMatcher = AcronymsGroupRegex(EscapedAcronyms);
   return StartMatcher + "(" + AcronymsMatcher + "[A-Z]?)?[a-z]+[a-z0-9]*(" +
-         AcronymsMatcher + "|([A-Z][a-z0-9]+))*$";
+         AcronymsMatcher + "|([A-Z][a-z0-9]+)|A|I)*$";
 }
 
 bool hasCategoryPropertyPrefix(llvm::StringRef PropertyName) {
@@ -209,6 +226,12 @@ void PropertyDeclarationCheck::check(const MatchFinder::MatchResult &Result) {
   assert(MatchedDecl->getName().size() > 0);
   auto *DeclContext = MatchedDecl->getDeclContext();
   auto *CategoryDecl = llvm::dyn_cast<ObjCCategoryDecl>(DeclContext);
+
+  auto AcronymsRegex =
+      llvm::Regex("^" + AcronymsGroupRegex(EscapedAcronyms) + "$");
+  if (AcronymsRegex.match(MatchedDecl->getName())) {
+    return;
+  }
   if (CategoryDecl != nullptr &&
       hasCategoryPropertyPrefix(MatchedDecl->getName())) {
     if (!prefixedPropertyNameValid(MatchedDecl->getName(), EscapedAcronyms) ||

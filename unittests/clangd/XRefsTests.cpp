@@ -12,10 +12,11 @@
 #include "Matchers.h"
 #include "SyncAPI.h"
 #include "TestFS.h"
+#include "TestTU.h"
 #include "XRefs.h"
-#include "clang/Frontend/CompilerInvocation.h"
-#include "clang/Frontend/PCHContainerOperations.h"
-#include "clang/Frontend/Utils.h"
+#include "index/FileIndex.h"
+#include "index/SymbolCollector.h"
+#include "clang/Index/IndexingAction.h"
 #include "llvm/Support/Path.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -35,18 +36,6 @@ class IgnoreDiagnostics : public DiagnosticsConsumer {
   void onDiagnosticsReady(PathRef File,
                           std::vector<Diag> Diagnostics) override {}
 };
-
-// FIXME: this is duplicated with FileIndexTests. Share it.
-ParsedAST build(StringRef Code) {
-  auto CI = createInvocationFromCommandLine(
-      {"clang", "-xc++", testPath("Foo.cpp").c_str()});
-  auto Buf = MemoryBuffer::getMemBuffer(Code);
-  auto AST = ParsedAST::Build(std::move(CI), nullptr, std::move(Buf),
-                              std::make_shared<PCHContainerOperations>(),
-                              vfs::getRealFileSystem());
-  assert(AST.hasValue());
-  return std::move(*AST);
-}
 
 // Extracts ranges from an annotated example, and constructs a matcher for a
 // highlight set. Ranges should be named $read/$write as appropriate.
@@ -98,13 +87,74 @@ TEST(HighlightsTest, All) {
   };
   for (const char *Test : Tests) {
     Annotations T(Test);
-    auto AST = build(T.code());
+    auto AST = TestTU::withCode(T.code()).build();
     EXPECT_THAT(findDocumentHighlights(AST, T.point()), HighlightsFrom(T))
         << Test;
   }
 }
 
 MATCHER_P(RangeIs, R, "") { return arg.range == R; }
+
+TEST(GoToDefinition, WithIndex) {
+  Annotations SymbolHeader(R"cpp(
+        class $forward[[Forward]];
+        class $foo[[Foo]] {};
+
+        void $f1[[f1]]();
+
+        inline void $f2[[f2]]() {}
+      )cpp");
+  Annotations SymbolCpp(R"cpp(
+      class $forward[[forward]] {};
+      void  $f1[[f1]]() {}
+    )cpp");
+
+  TestTU TU;
+  TU.Code = SymbolCpp.code();
+  TU.HeaderCode = SymbolHeader.code();
+  auto Index = TU.index();
+  auto runFindDefinitionsWithIndex = [&Index](const Annotations &Main) {
+    auto AST = TestTU::withCode(Main.code()).build();
+    return clangd::findDefinitions(AST, Main.point(), Index.get());
+  };
+
+  Annotations Test(R"cpp(// only declaration in AST.
+        void [[f1]]();
+        int main() {
+          ^f1();
+        }
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray(
+                  {RangeIs(SymbolCpp.range("f1")), RangeIs(Test.range())}));
+
+  Test = Annotations(R"cpp(// definition in AST.
+        void [[f1]]() {}
+        int main() {
+          ^f1();
+        }
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray(
+                  {RangeIs(Test.range()), RangeIs(SymbolHeader.range("f1"))}));
+
+  Test = Annotations(R"cpp(// forward declaration in AST.
+        class [[Foo]];
+        F^oo* create();
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray(
+                  {RangeIs(SymbolHeader.range("foo")), RangeIs(Test.range())}));
+
+  Test = Annotations(R"cpp(// defintion in AST.
+        class [[Forward]] {};
+        F^orward create();
+      )cpp");
+  EXPECT_THAT(runFindDefinitionsWithIndex(Test),
+              testing::ElementsAreArray({
+                  RangeIs(Test.range()), RangeIs(SymbolHeader.range("forward")),
+              }));
+}
 
 TEST(GoToDefinition, All) {
   const char *Tests[] = {
@@ -251,7 +301,7 @@ TEST(GoToDefinition, All) {
   };
   for (const char *Test : Tests) {
     Annotations T(Test);
-    auto AST = build(T.code());
+    auto AST = TestTU::withCode(T.code()).build();
     std::vector<Matcher<Location>> ExpectedLocations;
     for (const auto &R : T.ranges())
       ExpectedLocations.push_back(RangeIs(R));
@@ -262,27 +312,65 @@ TEST(GoToDefinition, All) {
 }
 
 TEST(GoToDefinition, RelPathsInCompileCommand) {
+  // The source is in "/clangd-test/src".
+  // We build in "/clangd-test/build".
+
   Annotations SourceAnnotations(R"cpp(
+#include "header_in_preamble.h"
 int [[foo]];
-int baz = f^oo;
+#include "header_not_in_preamble.h"
+int baz = f$p1^oo + bar_pre$p2^amble + bar_not_pre$p3^amble;
 )cpp");
 
+  Annotations HeaderInPreambleAnnotations(R"cpp(
+int [[bar_preamble]];
+)cpp");
+
+  Annotations HeaderNotInPreambleAnnotations(R"cpp(
+int [[bar_not_preamble]];
+)cpp");
+
+  // Make the compilation paths appear as ../src/foo.cpp in the compile
+  // commands.
+  SmallString<32> RelPathPrefix("..");
+  llvm::sys::path::append(RelPathPrefix, "src");
+  std::string BuildDir = testPath("build");
+  MockCompilationDatabase CDB(BuildDir, RelPathPrefix);
+
   IgnoreDiagnostics DiagConsumer;
-  MockCompilationDatabase CDB(/*UseRelPaths=*/true);
   MockFSProvider FS;
   ClangdServer Server(CDB, FS, DiagConsumer, ClangdServer::optsForTest());
 
-  auto FooCpp = testPath("foo.cpp");
+  // Fill the filesystem.
+  auto FooCpp = testPath("src/foo.cpp");
   FS.Files[FooCpp] = "";
+  auto HeaderInPreambleH = testPath("src/header_in_preamble.h");
+  FS.Files[HeaderInPreambleH] = HeaderInPreambleAnnotations.code();
+  auto HeaderNotInPreambleH = testPath("src/header_not_in_preamble.h");
+  FS.Files[HeaderNotInPreambleH] = HeaderNotInPreambleAnnotations.code();
 
-  Server.addDocument(FooCpp, SourceAnnotations.code());
   runAddDocument(Server, FooCpp, SourceAnnotations.code());
-  auto Locations =
-      runFindDefinitions(Server, FooCpp, SourceAnnotations.point());
-  EXPECT_TRUE(bool(Locations)) << "findDefinitions returned an error";
 
+  // Go to a definition in main source file.
+  auto Locations =
+      runFindDefinitions(Server, FooCpp, SourceAnnotations.point("p1"));
+  EXPECT_TRUE(bool(Locations)) << "findDefinitions returned an error";
   EXPECT_THAT(*Locations, ElementsAre(Location{URIForFile{FooCpp},
                                                SourceAnnotations.range()}));
+
+  // Go to a definition in header_in_preamble.h.
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("p2"));
+  EXPECT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations,
+              ElementsAre(Location{URIForFile{HeaderInPreambleH},
+                                   HeaderInPreambleAnnotations.range()}));
+
+  // Go to a definition in header_not_in_preamble.h.
+  Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("p3"));
+  EXPECT_TRUE(bool(Locations)) << "findDefinitions returned an error";
+  EXPECT_THAT(*Locations,
+              ElementsAre(Location{URIForFile{HeaderNotInPreambleH},
+                                   HeaderNotInPreambleAnnotations.range()}));
 }
 
 TEST(Hover, All) {
@@ -292,6 +380,13 @@ TEST(Hover, All) {
   };
 
   OneTest Tests[] = {
+      {
+          R"cpp(// No hover
+            ^int main() {
+            }
+          )cpp",
+          "",
+      },
       {
           R"cpp(// Local variable
             int main() {
@@ -579,14 +674,283 @@ TEST(Hover, All) {
           )cpp",
           "Declared in union outer::(anonymous)\n\nint def",
       },
+      {
+          R"cpp(// Nothing
+            void foo() {
+              ^
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// Simple initialization with auto
+            void foo() {
+              ^auto i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with const auto
+            void foo() {
+              const ^auto i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with const auto&
+            void foo() {
+              const ^auto& i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with auto&
+            void foo() {
+              ^auto& i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Auto with initializer list.
+            namespace std
+            {
+              template<class _E>
+              class initializer_list {};
+            }
+            void foo() {
+              ^auto i = {1,2};
+            }
+          )cpp",
+          "class std::initializer_list<int>",
+      },
+      {
+          R"cpp(// User defined conversion to auto
+            struct Bar {
+              operator ^auto() const { return 10; }
+            };
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with decltype(auto)
+            void foo() {
+              ^decltype(auto) i = 1;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// Simple initialization with const decltype(auto)
+            void foo() {
+              const int j = 0;
+              ^decltype(auto) i = j;
+            }
+          )cpp",
+          "const int",
+      },
+      {
+          R"cpp(// Simple initialization with const& decltype(auto)
+            void foo() {
+              int k = 0;
+              const int& j = k;
+              ^decltype(auto) i = j;
+            }
+          )cpp",
+          "const int &",
+      },
+      {
+          R"cpp(// Simple initialization with & decltype(auto)
+            void foo() {
+              int k = 0;
+              int& j = k;
+              ^decltype(auto) i = j;
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype with initializer list: nothing
+            namespace std
+            {
+              template<class _E>
+              class initializer_list {};
+            }
+            void foo() {
+              ^decltype(auto) i = {1,2};
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// auto function return with trailing type
+            struct Bar {};
+            ^auto test() -> decltype(Bar()) {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// trailing return type
+            struct Bar {};
+            auto test() -> ^decltype(Bar()) {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// auto in function return
+            struct Bar {};
+            ^auto test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// auto& in function return
+            struct Bar {};
+            ^auto& test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// const auto& in function return
+            struct Bar {};
+            const ^auto& test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// decltype(auto) in function return
+            struct Bar {};
+            ^decltype(auto) test() {
+              return Bar();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// decltype(auto) reference in function return
+            struct Bar {};
+            ^decltype(auto) test() {
+              int a;
+              return (a);
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype lvalue reference
+            void foo() {
+              int I = 0;
+              ^decltype(I) J = I;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// decltype lvalue reference
+            void foo() {
+              int I= 0;
+              int &K = I;
+              ^decltype(K) J = I;
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype lvalue reference parenthesis
+            void foo() {
+              int I = 0;
+              ^decltype((I)) J = I;
+            }
+          )cpp",
+          "int &",
+      },
+      {
+          R"cpp(// decltype rvalue reference
+            void foo() {
+              int I = 0;
+              ^decltype(static_cast<int&&>(I)) J = static_cast<int&&>(I);
+            }
+          )cpp",
+          "int &&",
+      },
+      {
+          R"cpp(// decltype rvalue reference function call
+            int && bar();
+            void foo() {
+              int I = 0;
+              ^decltype(bar()) J = bar();
+            }
+          )cpp",
+          "int &&",
+      },
+      {
+          R"cpp(// decltype of function with trailing return type.
+            struct Bar {};
+            auto test() -> decltype(Bar()) {
+              return Bar();
+            }
+            void foo() {
+              ^decltype(test()) i = test();
+            }
+          )cpp",
+          "struct Bar",
+      },
+      {
+          R"cpp(// decltype of var with decltype.
+            void foo() {
+              int I = 0;
+              decltype(I) J = I;
+              ^decltype(J) K = J;
+            }
+          )cpp",
+          "int",
+      },
+      {
+          R"cpp(// structured binding. Not supported yet
+            struct Bar {};
+            void foo() {
+              Bar a[2];
+              ^auto [x,y] = a;
+            }
+          )cpp",
+          "",
+      },
+      {
+          R"cpp(// Template auto parameter. Nothing (Not useful).
+            template<^auto T>
+            void func() {
+            }
+            void foo() {
+               func<1>();
+            }
+          )cpp",
+          "",
+      },
   };
 
   for (const OneTest &Test : Tests) {
     Annotations T(Test.Input);
-    auto AST = build(T.code());
-    Hover H = getHover(AST, T.point());
-
-    EXPECT_EQ(H.contents.value, Test.ExpectedHover) << Test.Input;
+    TestTU TU = TestTU::withCode(T.code());
+    TU.ExtraArgs.push_back("-std=c++17");
+    auto AST = TU.build();
+    if (auto H = getHover(AST, T.point())) {
+      EXPECT_NE("", Test.ExpectedHover) << Test.Input;
+      EXPECT_EQ(H->contents.value, Test.ExpectedHover.str()) << Test.Input;
+    } else
+      EXPECT_EQ("", Test.ExpectedHover.str()) << Test.Input;
   }
 }
 
@@ -655,6 +1019,51 @@ TEST(GoToInclude, All) {
   Locations = runFindDefinitions(Server, FooCpp, SourceAnnotations.point("7"));
   ASSERT_TRUE(bool(Locations)) << "findDefinitions returned an error";
   EXPECT_THAT(*Locations, IsEmpty());
+}
+
+TEST(GoToDefinition, WithPreamble) {
+  // Test stragety: AST should always use the latest preamble instead of last
+  // good preamble.
+  MockFSProvider FS;
+  IgnoreDiagnostics DiagConsumer;
+  MockCompilationDatabase CDB;
+  ClangdServer Server(CDB, FS, DiagConsumer, ClangdServer::optsForTest());
+
+  auto FooCpp = testPath("foo.cpp");
+  auto FooCppUri = URIForFile{FooCpp};
+  // The trigger locations must be the same.
+  Annotations FooWithHeader(R"cpp(#include "fo^o.h")cpp");
+  Annotations FooWithoutHeader(R"cpp(double    [[fo^o]]();)cpp");
+
+  FS.Files[FooCpp] = FooWithHeader.code();
+
+  auto FooH = testPath("foo.h");
+  auto FooHUri = URIForFile{FooH};
+  Annotations FooHeader(R"cpp([[]])cpp");
+  FS.Files[FooH] = FooHeader.code();
+
+  runAddDocument(Server, FooCpp, FooWithHeader.code());
+  // GoToDefinition goes to a #include file: the result comes from the preamble.
+  EXPECT_THAT(
+      cantFail(runFindDefinitions(Server, FooCpp, FooWithHeader.point())),
+      ElementsAre(Location{FooHUri, FooHeader.range()}));
+
+  // Only preamble is built, and no AST is built in this request.
+  Server.addDocument(FooCpp, FooWithoutHeader.code(), WantDiagnostics::No);
+  // We build AST here, and it should use the latest preamble rather than the
+  // stale one.
+  EXPECT_THAT(
+      cantFail(runFindDefinitions(Server, FooCpp, FooWithoutHeader.point())),
+      ElementsAre(Location{FooCppUri, FooWithoutHeader.range()}));
+
+  // Reset test environment.
+  runAddDocument(Server, FooCpp, FooWithHeader.code());
+  // Both preamble and AST are built in this request.
+  Server.addDocument(FooCpp, FooWithoutHeader.code(), WantDiagnostics::Yes);
+  // Use the AST being built in above request.
+  EXPECT_THAT(
+      cantFail(runFindDefinitions(Server, FooCpp, FooWithoutHeader.point())),
+      ElementsAre(Location{FooCppUri, FooWithoutHeader.range()}));
 }
 
 } // namespace

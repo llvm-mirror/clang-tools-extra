@@ -97,6 +97,7 @@ static bool isCopyConstructorAndCanBeDefaulted(ASTContext *Context,
                 isMemberInitializer(), forField(equalsNode(Field)),
                 withInitializer(anyOf(
                     AccessToFieldInParam,
+                    initListExpr(has(AccessToFieldInParam)),
                     cxxConstructExpr(allOf(
                         hasDeclaration(cxxConstructorDecl(isCopyConstructor())),
                         argumentCountIs(1),
@@ -297,7 +298,7 @@ void UseEqualsDefaultCheck::check(const MatchFinder::MatchResult &Result) {
   // expansion locations are reported.
   SourceLocation Location = SpecialFunctionDecl->getLocation();
   if (Location.isMacroID())
-    Location = Body->getLocStart();
+    Location = Body->getBeginLoc();
 
   auto Diag = diag(Location, "use '= default' to define a trivial " +
                                  SpecialFunctionName);

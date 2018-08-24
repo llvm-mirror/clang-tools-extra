@@ -62,7 +62,7 @@ const char SimplifyConditionalReturnDiagnostic[] =
 const CXXBoolLiteralExpr *getBoolLiteral(const MatchFinder::MatchResult &Result,
                                          StringRef Id) {
   const auto *Literal = Result.Nodes.getNodeAs<CXXBoolLiteralExpr>(Id);
-  return (Literal && Literal->getLocStart().isMacroID()) ? nullptr : Literal;
+  return (Literal && Literal->getBeginLoc().isMacroID()) ? nullptr : Literal;
 }
 
 internal::Matcher<Stmt> returnsBool(bool Value, StringRef Id = "ignored") {
@@ -195,6 +195,9 @@ std::string compareExpressionToZero(const MatchFinder::MatchResult &Result,
 std::string replacementExpression(const MatchFinder::MatchResult &Result,
                                   bool Negated, const Expr *E) {
   E = E->ignoreParenBaseCasts();
+  if (const auto *EC = dyn_cast<ExprWithCleanups>(E))
+    E = EC->getSubExpr();
+
   const bool NeedsStaticCast = needsStaticCast(E);
   if (Negated) {
     if (const auto *UnOp = dyn_cast<UnaryOperator>(E)) {
@@ -369,7 +372,7 @@ void SimplifyBooleanExprCheck::reportBinOp(
   else
     return;
 
-  if (Bool->getLocStart().isMacroID())
+  if (Bool->getBeginLoc().isMacroID())
     return;
 
   // FIXME: why do we need this?
@@ -382,8 +385,8 @@ void SimplifyBooleanExprCheck::reportBinOp(
                                    const Expr *ReplaceWith, bool Negated) {
     std::string Replacement =
         replacementExpression(Result, Negated, ReplaceWith);
-    SourceRange Range(LHS->getLocStart(), RHS->getLocEnd());
-    issueDiag(Result, Bool->getLocStart(), SimplifyOperatorDiagnostic, Range,
+    SourceRange Range(LHS->getBeginLoc(), RHS->getEndLoc());
+    issueDiag(Result, Bool->getBeginLoc(), SimplifyOperatorDiagnostic, Range,
               Replacement);
   };
 
@@ -574,7 +577,7 @@ void SimplifyBooleanExprCheck::replaceWithThenStatement(
     const MatchFinder::MatchResult &Result,
     const CXXBoolLiteralExpr *TrueConditionRemoved) {
   const auto *IfStatement = Result.Nodes.getNodeAs<IfStmt>(IfStmtId);
-  issueDiag(Result, TrueConditionRemoved->getLocStart(),
+  issueDiag(Result, TrueConditionRemoved->getBeginLoc(),
             SimplifyConditionDiagnostic, IfStatement->getSourceRange(),
             getText(Result, *IfStatement->getThen()));
 }
@@ -584,7 +587,7 @@ void SimplifyBooleanExprCheck::replaceWithElseStatement(
     const CXXBoolLiteralExpr *FalseConditionRemoved) {
   const auto *IfStatement = Result.Nodes.getNodeAs<IfStmt>(IfStmtId);
   const Stmt *ElseStatement = IfStatement->getElse();
-  issueDiag(Result, FalseConditionRemoved->getLocStart(),
+  issueDiag(Result, FalseConditionRemoved->getBeginLoc(),
             SimplifyConditionDiagnostic, IfStatement->getSourceRange(),
             ElseStatement ? getText(Result, *ElseStatement) : "");
 }
@@ -594,7 +597,7 @@ void SimplifyBooleanExprCheck::replaceWithCondition(
     bool Negated) {
   std::string Replacement =
       replacementExpression(Result, Negated, Ternary->getCond());
-  issueDiag(Result, Ternary->getTrueExpr()->getLocStart(),
+  issueDiag(Result, Ternary->getTrueExpr()->getBeginLoc(),
             "redundant boolean literal in ternary expression result",
             Ternary->getSourceRange(), Replacement);
 }
@@ -605,7 +608,7 @@ void SimplifyBooleanExprCheck::replaceWithReturnCondition(
   std::string Condition = replacementExpression(Result, Negated, If->getCond());
   std::string Replacement = ("return " + Condition + Terminator).str();
   SourceLocation Start =
-      Result.Nodes.getNodeAs<CXXBoolLiteralExpr>(ThenLiteralId)->getLocStart();
+      Result.Nodes.getNodeAs<CXXBoolLiteralExpr>(ThenLiteralId)->getBeginLoc();
   issueDiag(Result, Start, SimplifyConditionalReturnDiagnostic,
             If->getSourceRange(), Replacement);
 }
@@ -637,8 +640,8 @@ void SimplifyBooleanExprCheck::replaceCompoundReturnWithCondition(
           std::string Replacement =
               "return " + replacementExpression(Result, Negated, Condition);
           issueDiag(
-              Result, Lit->getLocStart(), SimplifyConditionalReturnDiagnostic,
-              SourceRange(If->getLocStart(), Ret->getLocEnd()), Replacement);
+              Result, Lit->getBeginLoc(), SimplifyConditionalReturnDiagnostic,
+              SourceRange(If->getBeginLoc(), Ret->getEndLoc()), Replacement);
           return;
         }
 
@@ -662,7 +665,7 @@ void SimplifyBooleanExprCheck::replaceWithAssignment(
   std::string Replacement =
       (VariableName + " = " + Condition + Terminator).str();
   SourceLocation Location =
-      Result.Nodes.getNodeAs<CXXBoolLiteralExpr>(IfAssignLocId)->getLocStart();
+      Result.Nodes.getNodeAs<CXXBoolLiteralExpr>(IfAssignLocId)->getBeginLoc();
   issueDiag(Result, Location,
             "redundant boolean literal in conditional assignment", Range,
             Replacement);

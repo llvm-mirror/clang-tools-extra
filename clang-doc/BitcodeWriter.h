@@ -31,10 +31,10 @@ namespace doc {
 // Current version number of clang-doc bitcode.
 // Should be bumped when removing or changing BlockIds, RecordIds, or
 // BitCodeConstants, though they can be added without breaking it.
-static const unsigned VersionNumber = 1;
+static const unsigned VersionNumber = 2;
 
 struct BitCodeConstants {
-  static constexpr unsigned RecordSize = 16U;
+  static constexpr unsigned RecordSize = 32U;
   static constexpr unsigned SignatureBitSize = 8U;
   static constexpr unsigned SubblockIDSize = 4U;
   static constexpr unsigned BoolSize = 1U;
@@ -45,6 +45,8 @@ struct BitCodeConstants {
   static constexpr unsigned ReferenceTypeSize = 8U;
   static constexpr unsigned USRLengthSize = 6U;
   static constexpr unsigned USRBitLengthSize = 8U;
+  static constexpr char Signature[4] = {'D', 'O', 'C', 'S'};
+  static constexpr int USRHashSize = 20;
 };
 
 // New Ids need to be added to both the enum here and the relevant IdNameMap in
@@ -59,20 +61,19 @@ enum BlockId {
   BI_RECORD_BLOCK_ID,
   BI_FUNCTION_BLOCK_ID,
   BI_COMMENT_BLOCK_ID,
-  BI_FIRST = BI_VERSION_BLOCK_ID,
-  BI_LAST = BI_COMMENT_BLOCK_ID
+  BI_REFERENCE_BLOCK_ID,
+  BI_LAST,
+  BI_FIRST = BI_VERSION_BLOCK_ID
 };
 
 // New Ids need to be added to the enum here, and to the relevant IdNameMap and
 // initialization list in the implementation file.
-#define INFORECORDS(X) X##_USR, X##_NAME, X##_NAMESPACE
-
 enum RecordId {
   VERSION = 1,
-  INFORECORDS(FUNCTION),
+  FUNCTION_USR,
+  FUNCTION_NAME,
   FUNCTION_DEFLOCATION,
   FUNCTION_LOCATION,
-  FUNCTION_PARENT,
   FUNCTION_ACCESS,
   FUNCTION_IS_METHOD,
   COMMENT_KIND,
@@ -86,32 +87,43 @@ enum RecordId {
   COMMENT_ATTRKEY,
   COMMENT_ATTRVAL,
   COMMENT_ARG,
-  TYPE_REF,
-  FIELD_TYPE_REF,
   FIELD_TYPE_NAME,
-  MEMBER_TYPE_REF,
   MEMBER_TYPE_NAME,
   MEMBER_TYPE_ACCESS,
-  INFORECORDS(NAMESPACE),
-  INFORECORDS(ENUM),
+  NAMESPACE_USR,
+  NAMESPACE_NAME,
+  ENUM_USR,
+  ENUM_NAME,
   ENUM_DEFLOCATION,
   ENUM_LOCATION,
   ENUM_MEMBER,
   ENUM_SCOPED,
-  INFORECORDS(RECORD),
+  RECORD_USR,
+  RECORD_NAME,
   RECORD_DEFLOCATION,
   RECORD_LOCATION,
   RECORD_TAG_TYPE,
-  RECORD_PARENT,
-  RECORD_VPARENT,
-  RI_FIRST = VERSION,
-  RI_LAST = RECORD_VPARENT
+  REFERENCE_USR,
+  REFERENCE_NAME,
+  REFERENCE_TYPE,
+  REFERENCE_FIELD,
+  RI_LAST,
+  RI_FIRST = VERSION
 };
 
-static constexpr unsigned BlockIdCount = BI_LAST - BI_FIRST + 1;
-static constexpr unsigned RecordIdCount = RI_LAST - RI_FIRST + 1;
+static constexpr unsigned BlockIdCount = BI_LAST - BI_FIRST;
+static constexpr unsigned RecordIdCount = RI_LAST - RI_FIRST;
 
-#undef INFORECORDS
+// Identifiers for differentiating between subblocks
+enum class FieldId {
+  F_default,
+  F_namespace,
+  F_parent,
+  F_vparent,
+  F_type,
+  F_child_namespace,
+  F_child_record
+};
 
 class ClangDocBitcodeWriter {
 public:
@@ -121,12 +133,8 @@ public:
     emitVersionBlock();
   }
 
-#ifndef NDEBUG // Don't want explicit dtor unless needed.
-  ~ClangDocBitcodeWriter() {
-    // Check that the static size is large-enough.
-    assert(Record.capacity() > BitCodeConstants::RecordSize);
-  }
-#endif
+  // Write a specific info to a bitcode stream.
+  bool dispatchInfoForWrite(Info *I);
 
   // Block emission of different info types.
   void emitBlock(const NamespaceInfo &I);
@@ -137,6 +145,7 @@ public:
   void emitBlock(const FieldTypeInfo &B);
   void emitBlock(const MemberTypeInfo &B);
   void emitBlock(const CommentInfo &B);
+  void emitBlock(const Reference &B, FieldId F);
 
 private:
   class AbbreviationMap {
