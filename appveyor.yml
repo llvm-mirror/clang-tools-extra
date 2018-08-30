@@ -1,0 +1,100 @@
+###############################################################################
+# Appveyor configuration file for LLVM
+# -----------------------------------------------------------------------------
+# This appveyor.yml is for the LLVM repository (Example: github.com/llvm-mirror/llvm)
+# It builds LLVM, Clang, Clang tools extra, LLD.
+#
+# designed after https://gist.github.com/EricWF/28b1e46fdecee9bb0219d5aa55293041
+###############################################################################
+
+version: '{build}'
+
+shallow_clone: true
+
+build:
+  verbosity: detailed
+
+configuration:
+  - Release
+
+environment:
+  matrix:
+    ###########################################################################
+    # Build x64 version using MSVC 2017
+    ###########################################################################
+    - APPVEYOR_BUILD_WORKER_IMAGE: Visual Studio 2017
+      MSVC_SETUP_PATH: C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvarsall.bat
+      MSVC_SETUP_ARG: x64
+
+install:
+  #############################################################################
+  # Setup Ninja and CMake dependencies
+  #############################################################################
+  - mkdir C:\projects\deps
+  - cd C:\projects\deps
+  - cmake --version
+  # Setup Ninja
+  - set NINJA_URL=https://github.com/ninja-build/ninja/releases/download/v1.8.2/ninja-win.zip
+  - appveyor DownloadFile https://github.com/ninja-build/ninja/releases/download/v1.8.2/ninja-win.zip -FileName ninja.zip
+  - 7z x ninja.zip -oC:\projects\deps\ninja > nul
+  - set PATH=C:\projects\deps\ninja;%PATH%
+  - ninja --version
+
+before_build:
+  ############################################################################
+  # Download extra sources and place them in the right place under LLVM
+  # --------------------------------------------------------------------------
+  # Replace the git repositories with the source versions you desire. It should
+  # all still work the same.
+  ############################################################################
+  - set LLVM_ROOT=%APPVEYOR_BUILD_FOLDER%\..\root
+  - set LLVM_GIT=http://llvm.org/git
+  - git clone --depth=1 %LLVM_GIT%/llvm.git %LLVM_ROOT%\llvm -b release_70
+  - git clone --depth=1 %LLVM_GIT%/clang.git %LLVM_ROOT%\llvm\tools\clang -b release_70
+  # (sigiesec) instead of cloning clang-tools-extra from upstream, use the checkout out one, and place it at the correct location
+  # - git clone --depth=1 %LLVM_GIT%/clang-tools-extra.git %LLVM_ROOT%\llvm\tools\clang\tools\extra -b release_70
+  - move %APPVEYOR_BUILD_FOLDER% %LLVM_ROOT%\llvm\tools\clang\tools\extra
+  # TODO (sigiesec) do we need lld?
+  #- git clone --depth=1 %LLVM_GIT%/lld.git %LLVM_ROOT%\tools\lld
+
+  #############################################################################
+  # Setup MSVC Environment
+  #############################################################################
+  - call "%MSVC_SETUP_PATH%" %MSVC_SETUP_ARG%
+
+build_script:
+  - md C:\projects\build-llvm
+  - cd C:\projects\build-llvm
+  - echo %configuration%
+
+  #############################################################################
+  # Configuration Step
+  # ---------------------------------------------------------------------------
+  # Optional CMake options:
+  #   -DLLVM_ENABLE_ASSERTIONS=ON
+  #     Turn on assertions within LLVM even in release mode. Very helpful
+  #     for catching API misuses and problems.
+  #   -DCMAKE_BUILD_TYPE=RELWITHDEBINFO
+  #      Use this instead of "RELEASE" if you want the created libraries to
+  #      have debug information.
+  #############################################################################
+  - cmake -G Ninja
+    "-DCMAKE_INSTALL_PREFIX=C:\Libraries"
+    "-DCMAKE_BUILD_TYPE=%configuration%"
+    "-DLLVM_INSTALL_UTILS=ON"
+    %CMAKE_EXTRA_OPTIONS%
+    %LLVM_ROOT%\llvm
+
+  #############################################################################
+  # Build Step
+  - ninja clang-tidy
+  # - ninja check-all # I wouldn't sweat a few failures here. This step is optional
+  # - ninja install
+
+on_success:
+  - appveyor PushArtifact bin\clang-tidy.exe
+  
+on_failure:
+  - appveyor PushArtifact CMakeFiles/CMakeOutput.log
+  - appveyor PushArtifact CMakeFiles/CMakeError.log
+
