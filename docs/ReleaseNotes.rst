@@ -57,6 +57,9 @@ The improvements are...
 Improvements to clang-tidy
 --------------------------
 
+- The 'btc-derived-from-sharable-stack-prohibition' check was renamed to :doc:`btc-unmanaged-derived-from-sharable
+  <clang-tidy/checks/btc-unmanaged-derived-from-sharable>`
+
 - The checks profiling info can now be stored as JSON files for futher
   post-processing and analysis.
 

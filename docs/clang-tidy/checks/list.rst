@@ -19,6 +19,7 @@ Clang-Tidy Checks
    android-cloexec-socket
    android-comparison-in-temp-failure-retry
    boost-use-to-string
+   btc-unmanaged-derived-from-sharable
    bugprone-argument-comment
    bugprone-assert-side-effect
    bugprone-bool-pointer-implicit-conversion
