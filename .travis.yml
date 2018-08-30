@@ -1,0 +1,51 @@
+sudo: true
+dist: trusty
+
+addons:
+  apt:
+    sources:
+      - llvm-toolchain-trusty-6.0
+      - ubuntu-toolchain-r-test
+    packages:
+      - clang-6.0
+      - gcc-6
+      - g++-6
+#      - libc++-dev
+#      - libc++abi-dev
+
+language: cpp
+
+compiler: clang
+git:
+  depth: 2
+  quiet: true
+
+cache:
+  timeout: 1000
+  directories:
+  - $HOME/llvm
+  - $HOME/output
+
+env:
+  global:
+    - TIMEOUT=2700
+
+before_install:
+    - chmod +x travis-ci/setup.sh
+    - gcc --version
+    - g++ --version
+    - export CC="clang-6.0"
+    - export CXX="clang++-6.0"
+
+before_script:
+    - export TOP_SRC_DIR=$HOME/llvm/
+    - export BUILD_DIR=$HOME/output/
+    - ./travis-ci/setup.sh "$TRAVIS_BUILD_DIR" "$TOP_SRC_DIR" "$BUILD_DIR"
+script:
+    - cd "$BUILD_DIR"
+    - timeout $TIMEOUT make -j2  check-clang-tools RESULT=$?; if [ "$RESULT" -eq 127 ]; then RESULT = 0; if [ "$RESULT" -eq 0 ]; then mkdir Completed; fi; fi;
+before_cache:
+    - if [[ -d Completed ]]; then 
+       find . -type f -printf "%.10T@ %p\n" > touch_mtimes.txt;
+       cd "${ACTUAL_SRC_DIR}" && git rev-parse HEAD > "${BUILD_DIR}previous_git_commit.txt";     
+      fi
