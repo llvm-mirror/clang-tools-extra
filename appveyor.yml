@@ -9,13 +9,16 @@
 
 version: '{build}'
 
-shallow_clone: true
+clone_depth: 16
 
 build:
   verbosity: detailed
 
 configuration:
   - Release
+  
+cache:
+  - C:\projects\build-llvm
 
 environment:
   matrix:
@@ -35,9 +38,10 @@ install:
   - cmake --version
   # Setup Ninja
   - set NINJA_URL=https://github.com/ninja-build/ninja/releases/download/v1.8.2/ninja-win.zip
-  - appveyor DownloadFile https://github.com/ninja-build/ninja/releases/download/v1.8.2/ninja-win.zip -FileName ninja.zip
-  - 7z x ninja.zip -oC:\projects\deps\ninja > nul
-  - set PATH=C:\projects\deps\ninja;%PATH%
+  - appveyor DownloadFile %NINJA_URL% -FileName ninja.zip
+  - set NINJA_DIR=C:\projects\deps\ninja
+  - 7z x ninja.zip -o%NINJA_DIR% > nul
+  - set PATH=%NINJA_DIR%;%PATH%
   - ninja --version
 
 before_build:
@@ -49,11 +53,13 @@ before_build:
   ############################################################################
   - set LLVM_ROOT=%APPVEYOR_BUILD_FOLDER%\..\root
   - set LLVM_GIT=http://llvm.org/git
+  # TODO (sigiesec) Also cache external git repos, and fetch/pull instead of clone here if directories already exist?
   - git clone --depth=1 %LLVM_GIT%/llvm.git %LLVM_ROOT%\llvm -b release_70
   - git clone --depth=1 %LLVM_GIT%/clang.git %LLVM_ROOT%\llvm\tools\clang -b release_70
   # (sigiesec) instead of cloning clang-tools-extra from upstream, use the checkout out one, and place it at the correct location
   # - git clone --depth=1 %LLVM_GIT%/clang-tools-extra.git %LLVM_ROOT%\llvm\tools\clang\tools\extra -b release_70
-  - move %APPVEYOR_BUILD_FOLDER% %LLVM_ROOT%\llvm\tools\clang\tools\extra
+  - set MOVED_BUILD_FOLDER=%LLVM_ROOT%\llvm\tools\clang\tools\extra
+  - move %APPVEYOR_BUILD_FOLDER% %MOVED_BUILD_FOLDER%
   # TODO (sigiesec) do we need lld?
   #- git clone --depth=1 %LLVM_GIT%/lld.git %LLVM_ROOT%\tools\lld
 
@@ -63,8 +69,9 @@ before_build:
   - call "%MSVC_SETUP_PATH%" %MSVC_SETUP_ARG%
 
 build_script:
-  - md C:\projects\build-llvm
-  - cd C:\projects\build-llvm
+  - set LLVM_CMAKE_BUILD_ROOT=C:\projects\build-llvm
+  - if not exist "%LLVM_CMAKE_BUILD_ROOT%" md %LLVM_CMAKE_BUILD_ROOT%
+  - cd %LLVM_CMAKE_BUILD_ROOT%
   - echo %configuration%
 
   #############################################################################
@@ -78,18 +85,18 @@ build_script:
   #      Use this instead of "RELEASE" if you want the created libraries to
   #      have debug information.
   #############################################################################
-  - cmake -G Ninja
+  - if not exist "%LLVM_CMAKE_BUILD_ROOT%\CMakeCache.txt" cmake -G Ninja
     "-DCMAKE_INSTALL_PREFIX=C:\Libraries"
     "-DCMAKE_BUILD_TYPE=%configuration%"
     "-DLLVM_INSTALL_UTILS=ON"
     %CMAKE_EXTRA_OPTIONS%
     %LLVM_ROOT%\llvm
+  - set APPVEYOR_SAVE_CACHE_ON_ERROR=true
 
   #############################################################################
   # Build Step
-  - ninja clang-tidy
-  # - ninja check-all # I wouldn't sweat a few failures here. This step is optional
-  # - ninja install
+  # TODO (sigiesec) when timeout hits, schedule a rebuild: https://www.appveyor.com/docs/api/projects-builds/#start-build-of-specific-branch-commit
+  - C:\cygwin64\bin\bash -e -l %MOVED_BUILD_FOLDER%\appveyor\build.sh
 
 on_success:
   - appveyor PushArtifact bin\clang-tidy.exe

@@ -46,6 +46,5 @@ script:
     - timeout $TIMEOUT make -j2  check-clang-tools RESULT=$?; if [ "$RESULT" -eq 127 ]; then RESULT = 0; if [ "$RESULT" -eq 0 ]; then mkdir Completed; fi; fi;
 before_cache:
     - if [[ -d Completed ]]; then 
-       find . -type f -printf "%.10T@ %p\n" > touch_mtimes.txt;
-       cd "${ACTUAL_SRC_DIR}" && git rev-parse HEAD > "${BUILD_DIR}previous_git_commit.txt";     
+         ${TRAVIS_BUILD_DIR}/store-mtimes.sh
       fi
