@@ -45,6 +45,7 @@ deploy:
   api_key:
     secure: XaOqyduVrJHIpRBUxwQ4iTN8Swh4D5wY34UVZ2bWLYeF8He6hW9BqrpNDMsz7Subq4REWI/+stbrChKUbgcu4wPWTFNixCE2aLzJehKSLzmtJfW6Tm73kcJZij+yWk/XQFzfFuv38V5dzXc+X4Ydqhnhq6JPy0icAYs7N21lklsdSAEMpM0O5D870AenXdOPk72ozbABMUaysQAHTCwSxBWJ0CJ4f7h/sqjBgY0cmHJCwnBMkYk0pT3Ct9J5TMoVSe2O3QwDro77elgbdxWfslWQcNUF/PNoWpBIv8dAzZ8zoHCF3TyiGeYYqc8MgkLCUhRxLVufCUFQSBDjEzu75jGgGN0ZsdLUrGNRj38a6fnhuaoSyYfEzWjc32OYhUsGNYauIb0hkd/YXGhdTzc/xyNC015NKLAKS+ZdD11HUyHvVs4TOVZw72WbKjptJiIWzQf5/I7hYAUd4srPy/jay5IB50cXGCDat/6dqP8lJ3NkTYKJT3FFJM/VhPpYggRu6VcTDx6aQUFHApKQfXtIk/1eve3s+C+dmhdW45KQKVT/+QalZc3hPO+iaIPHQRcCNRx1jCgVkMWwHFjuo/XfDmEpeKaOztxaqnejgfX47jilIZn91Y6w4YhhU8CNonIPDTxz5jIvJbZkB393QKYPI0RKjxfQdTQNRmp9C8mM38U=
   file:
+  - "${BUILD_DIR}/bin/clang"
   - "${BUILD_DIR}/bin/clang-tidy"
   skip_cleanup: true
   on:
