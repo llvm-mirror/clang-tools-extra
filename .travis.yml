@@ -1,51 +1,52 @@
 sudo: true
 dist: trusty
-
 addons:
   apt:
     sources:
-      - llvm-toolchain-trusty-6.0
-      - ubuntu-toolchain-r-test
+    - llvm-toolchain-trusty-6.0
+    - ubuntu-toolchain-r-test
     packages:
-      - clang-6.0
-      - gcc-6
-      - g++-6
-#      - libc++-dev
-#      - libc++abi-dev
-
+    - clang-6.0
+    - gcc-6
+    - g++-6
 language: cpp
-
 compiler: clang
 git:
   depth: 2
   quiet: true
-
 cache:
   timeout: 1000
   directories:
-  - $HOME/llvm
-  - $HOME/output
-
+  - "$HOME/llvm"
+  - "$HOME/output"
 env:
   global:
-    - TIMEOUT=2700
-
+  - TIMEOUT=2700
 before_install:
-    - chmod +x travis-ci/setup.sh
-    - gcc --version
-    - g++ --version
-    - export CC="clang-6.0"
-    - export CXX="clang++-6.0"
-
+- chmod +x travis-ci/setup.sh
+- gcc --version
+- g++ --version
+- export CC="clang-6.0"
+- export CXX="clang++-6.0"
 before_script:
-    - export TOP_SRC_DIR=$HOME/llvm/
-    - export BUILD_DIR=$HOME/output/
-    - if [[ -d ${BUILD_DIR}/Completed ]] ; then rmdir ${BUILD_DIR}/Completed ; fi
-    - ./travis-ci/setup.sh "$TRAVIS_BUILD_DIR" "$TOP_SRC_DIR" "$BUILD_DIR"
+- export TOP_SRC_DIR=$HOME/llvm/
+- export BUILD_DIR=$HOME/output/
+- if [[ -d ${BUILD_DIR}/Completed ]] ; then rmdir ${BUILD_DIR}/Completed ; fi
+- ./travis-ci/setup.sh "$TRAVIS_BUILD_DIR" "$TOP_SRC_DIR" "$BUILD_DIR"
 script:
-    - cd "$BUILD_DIR"
-    - timeout $TIMEOUT make -j2 check-clang-tools ; RESULT=$?; if [ "$RESULT" -eq 127 ]; then RESULT = 0; fi; if [ "$RESULT" -eq 0 ]; then mkdir Completed; else false; fi
+- cd "$BUILD_DIR"
+- timeout $TIMEOUT make -j2 check-clang-tools ; RESULT=$?; if [ "$RESULT" -eq 127
+  ]; then RESULT = 0; fi; if [ "$RESULT" -eq 0 ]; then mkdir Completed; else false;
+  fi
 before_cache:
-    - if [[ -d Completed ]]; then 
-         ${TRAVIS_BUILD_DIR}/store-mtimes.sh
-      fi
+- if [[ -d Completed ]]; then ${TRAVIS_BUILD_DIR}/store-mtimes.sh fi
+deploy:
+  provider: releases
+  api_key:
+    secure: XaOqyduVrJHIpRBUxwQ4iTN8Swh4D5wY34UVZ2bWLYeF8He6hW9BqrpNDMsz7Subq4REWI/+stbrChKUbgcu4wPWTFNixCE2aLzJehKSLzmtJfW6Tm73kcJZij+yWk/XQFzfFuv38V5dzXc+X4Ydqhnhq6JPy0icAYs7N21lklsdSAEMpM0O5D870AenXdOPk72ozbABMUaysQAHTCwSxBWJ0CJ4f7h/sqjBgY0cmHJCwnBMkYk0pT3Ct9J5TMoVSe2O3QwDro77elgbdxWfslWQcNUF/PNoWpBIv8dAzZ8zoHCF3TyiGeYYqc8MgkLCUhRxLVufCUFQSBDjEzu75jGgGN0ZsdLUrGNRj38a6fnhuaoSyYfEzWjc32OYhUsGNYauIb0hkd/YXGhdTzc/xyNC015NKLAKS+ZdD11HUyHvVs4TOVZw72WbKjptJiIWzQf5/I7hYAUd4srPy/jay5IB50cXGCDat/6dqP8lJ3NkTYKJT3FFJM/VhPpYggRu6VcTDx6aQUFHApKQfXtIk/1eve3s+C+dmhdW45KQKVT/+QalZc3hPO+iaIPHQRcCNRx1jCgVkMWwHFjuo/XfDmEpeKaOztxaqnejgfX47jilIZn91Y6w4YhhU8CNonIPDTxz5jIvJbZkB393QKYPI0RKjxfQdTQNRmp9C8mM38U=
+  file:
+  - "${BUILD_DIR}/bin/clang-tidy"
+  skip_cleanup: true
+  on:
+    repo: btc-ag/clang-tools-extra
+    tags: true
