@@ -35,7 +35,7 @@ before_script:
 - ./travis-ci/setup.sh "$TRAVIS_BUILD_DIR" "$TOP_SRC_DIR" "$BUILD_DIR"
 script:
 - cd "$BUILD_DIR"
-- timeout $TIMEOUT make -j2 check-clang-tools ; RESULT=$?; if [ "$RESULT" -eq 127
+- timeout $TIMEOUT make -j2 check-clang-tools clang ; RESULT=$?; if [ "$RESULT" -eq 127
   ]; then RESULT = 0; fi; if [ "$RESULT" -eq 0 ]; then mkdir Completed; else false;
   fi
 before_cache:
