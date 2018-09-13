@@ -40,12 +40,12 @@ before_install:
 before_script:
     - export TOP_SRC_DIR=$HOME/llvm/
     - export BUILD_DIR=$HOME/output/
+    - if [[ -d ${BUILD_DIR}/Completed ]] ; then rmdir ${BUILD_DIR}/Completed ; fi
     - ./travis-ci/setup.sh "$TRAVIS_BUILD_DIR" "$TOP_SRC_DIR" "$BUILD_DIR"
 script:
     - cd "$BUILD_DIR"
-    - timeout $TIMEOUT make -j2  check-clang-tools RESULT=$?; if [ "$RESULT" -eq 127 ]; then RESULT = 0; if [ "$RESULT" -eq 0 ]; then mkdir Completed; fi; fi;
+    - timeout $TIMEOUT make -j2 check-clang-tools ; RESULT=$?; if [ "$RESULT" -eq 127 ]; then RESULT = 0; fi; if [ "$RESULT" -eq 0 ]; then mkdir Completed; else false; fi
 before_cache:
     - if [[ -d Completed ]]; then 
-       find . -type f -printf "%.10T@ %p\n" > touch_mtimes.txt;
-       cd "${ACTUAL_SRC_DIR}" && git rev-parse HEAD > "${BUILD_DIR}previous_git_commit.txt";     
+         ${TRAVIS_BUILD_DIR}/store-mtimes.sh
       fi
