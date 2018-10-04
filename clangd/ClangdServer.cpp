@@ -12,7 +12,9 @@
 #include "FindSymbols.h"
 #include "Headers.h"
 #include "SourceCode.h"
+#include "Trace.h"
 #include "XRefs.h"
+#include "index/FileIndex.h"
 #include "index/Merge.h"
 #include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -22,6 +24,7 @@
 #include "clang/Tooling/Refactoring/RefactoringResultConsumer.h"
 #include "clang/Tooling/Refactoring/Rename/RenamingAction.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Errc.h"
@@ -29,6 +32,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include <future>
+#include <mutex>
 
 using namespace clang;
 using namespace clang::clangd;
@@ -65,8 +69,25 @@ public:
 
   Optional<Expected<tooling::AtomicChanges>> Result;
 };
-
 } // namespace
+
+// Returns callbacks that can be used to update the FileIndex with new ASTs.
+std::unique_ptr<ParsingCallbacks> makeUpdateCallbacks(FileIndex *FIndex) {
+  struct CB : public ParsingCallbacks {
+    CB(FileIndex *FIndex) : FIndex(FIndex) {}
+    FileIndex *FIndex;
+
+    void onPreambleAST(PathRef Path, ASTContext &Ctx,
+                       std::shared_ptr<clang::Preprocessor> PP) override {
+      FIndex->updatePreamble(Path, Ctx, std::move(PP));
+    }
+
+    void onMainAST(PathRef Path, ParsedAST &AST) override {
+      FIndex->updateMain(Path, AST);
+    }
+  };
+  return llvm::make_unique<CB>(FIndex);
+}
 
 ClangdServer::Options ClangdServer::optsForTest() {
   ClangdServer::Options Opts;
@@ -83,31 +104,31 @@ ClangdServer::ClangdServer(GlobalCompilationDatabase &CDB,
     : CDB(CDB), DiagConsumer(DiagConsumer), FSProvider(FSProvider),
       ResourceDir(Opts.ResourceDir ? Opts.ResourceDir->str()
                                    : getStandardResourceDir()),
-      FileIdx(Opts.BuildDynamicSymbolIndex ? new FileIndex(Opts.URISchemes)
-                                           : nullptr),
+      DynamicIdx(Opts.BuildDynamicSymbolIndex ? new FileIndex(Opts.URISchemes)
+                                              : nullptr),
       PCHs(std::make_shared<PCHContainerOperations>()),
       // Pass a callback into `WorkScheduler` to extract symbols from a newly
       // parsed file and rebuild the file index synchronously each time an AST
       // is parsed.
       // FIXME(ioeric): this can be slow and we may be able to index on less
       // critical paths.
-      WorkScheduler(
-          Opts.AsyncThreadsCount, Opts.StorePreamblesInMemory,
-          FileIdx
-              ? [this](PathRef Path, ASTContext &AST,
-                       std::shared_ptr<Preprocessor>
-                           PP) { FileIdx->update(Path, &AST, std::move(PP)); }
-              : PreambleParsedCallback(),
-          Opts.UpdateDebounce, Opts.RetentionPolicy) {
-  if (FileIdx && Opts.StaticIndex) {
-    MergedIndex = mergeIndex(FileIdx.get(), Opts.StaticIndex);
+      WorkScheduler(Opts.AsyncThreadsCount, Opts.StorePreamblesInMemory,
+                    DynamicIdx ? makeUpdateCallbacks(DynamicIdx.get())
+                               : nullptr,
+                    Opts.UpdateDebounce, Opts.RetentionPolicy) {
+  if (DynamicIdx && Opts.StaticIndex) {
+    MergedIndex = mergeIndex(&DynamicIdx->index(), Opts.StaticIndex);
     Index = MergedIndex.get();
-  } else if (FileIdx)
-    Index = FileIdx.get();
+  } else if (DynamicIdx)
+    Index = &DynamicIdx->index();
   else if (Opts.StaticIndex)
     Index = Opts.StaticIndex;
   else
     Index = nullptr;
+}
+
+const SymbolIndex *ClangdServer::dynamicIndex() const {
+  return DynamicIdx ? &DynamicIdx->index() : nullptr;
 }
 
 void ClangdServer::setRootPath(PathRef RootPath) {
@@ -151,24 +172,50 @@ void ClangdServer::codeComplete(PathRef File, Position Pos,
   // Copy PCHs to avoid accessing this->PCHs concurrently
   std::shared_ptr<PCHContainerOperations> PCHs = this->PCHs;
   auto FS = FSProvider.getFileSystem();
-  auto Task = [PCHs, Pos, FS,
-               CodeCompleteOpts](Path File, Callback<CodeCompleteResult> CB,
-                                 llvm::Expected<InputsAndPreamble> IP) {
+
+  auto Task = [PCHs, Pos, FS, CodeCompleteOpts,
+               this](Path File, Callback<CodeCompleteResult> CB,
+                     llvm::Expected<InputsAndPreamble> IP) {
     if (!IP)
       return CB(IP.takeError());
+    if (isCancelled())
+      return CB(llvm::make_error<CancelledError>());
 
     auto PreambleData = IP->Preamble;
+
+    llvm::Optional<SpeculativeFuzzyFind> SpecFuzzyFind;
+    if (CodeCompleteOpts.Index && CodeCompleteOpts.SpeculativeIndexRequest) {
+      SpecFuzzyFind.emplace();
+      {
+        std::lock_guard<std::mutex> Lock(CachedCompletionFuzzyFindRequestMutex);
+        SpecFuzzyFind->CachedReq = CachedCompletionFuzzyFindRequestByFile[File];
+      }
+    }
 
     // FIXME(ibiryukov): even if Preamble is non-null, we may want to check
     // both the old and the new version in case only one of them matches.
     CodeCompleteResult Result = clangd::codeComplete(
         File, IP->Command, PreambleData ? &PreambleData->Preamble : nullptr,
         PreambleData ? PreambleData->Includes : IncludeStructure(),
-        IP->Contents, Pos, FS, PCHs, CodeCompleteOpts);
-    CB(std::move(Result));
+        IP->Contents, Pos, FS, PCHs, CodeCompleteOpts,
+        SpecFuzzyFind ? SpecFuzzyFind.getPointer() : nullptr);
+    {
+      clang::clangd::trace::Span Tracer("Completion results callback");
+      CB(std::move(Result));
+    }
+    if (SpecFuzzyFind && SpecFuzzyFind->NewReq.hasValue()) {
+      std::lock_guard<std::mutex> Lock(CachedCompletionFuzzyFindRequestMutex);
+      CachedCompletionFuzzyFindRequestByFile[File] =
+          SpecFuzzyFind->NewReq.getValue();
+    }
+    // SpecFuzzyFind is only destroyed after speculative fuzzy find finishes.
+    // We don't want `codeComplete` to wait for the async call if it doesn't use
+    // the result (e.g. non-index completion, speculation fails), so that `CB`
+    // is called as soon as results are available.
   };
 
-  WorkScheduler.runWithPreamble("CodeComplete", File,
+  // We use a potentially-stale preamble because latency is critical here.
+  WorkScheduler.runWithPreamble("CodeComplete", File, TUScheduler::Stale,
                                 Bind(Task, File.str(), std::move(CB)));
 }
 
@@ -189,7 +236,11 @@ void ClangdServer::signatureHelp(PathRef File, Position Pos,
                              IP->Contents, Pos, FS, PCHs, Index));
   };
 
-  WorkScheduler.runWithPreamble("SignatureHelp", File,
+  // Unlike code completion, we wait for an up-to-date preamble here.
+  // Signature help is often triggered after code completion. If the code
+  // completion inserted a header to make the symbol available, then using
+  // the old preamble would yield useless results.
+  WorkScheduler.runWithPreamble("SignatureHelp", File, TUScheduler::Consistent,
                                 Bind(Action, File.str(), std::move(CB)));
 }
 
@@ -432,6 +483,7 @@ void ClangdServer::consumeDiagnostics(PathRef File, DocVersion Version,
 }
 
 tooling::CompileCommand ClangdServer::getCompileCommand(PathRef File) {
+  trace::Span Span("GetCompileCommand");
   llvm::Optional<tooling::CompileCommand> C = CDB.getCompileCommand(File);
   if (!C) // FIXME: Suppress diagnostics? Let the user know?
     C = CDB.getFallbackCommand(File);
@@ -463,6 +515,18 @@ void ClangdServer::documentSymbols(
   };
   WorkScheduler.runWithAST("documentSymbols", File,
                            Bind(Action, std::move(CB)));
+}
+
+void ClangdServer::findReferences(PathRef File, Position Pos,
+                                  Callback<std::vector<Location>> CB) {
+  auto Action = [Pos, this](Callback<std::vector<Location>> CB,
+                            llvm::Expected<InputsAndAST> InpAST) {
+    if (!InpAST)
+      return CB(InpAST.takeError());
+    CB(clangd::findReferences(InpAST->AST, Pos, Index));
+  };
+
+  WorkScheduler.runWithAST("References", File, Bind(Action, std::move(CB)));
 }
 
 std::vector<std::pair<Path, std::size_t>>

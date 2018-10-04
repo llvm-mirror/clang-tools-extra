@@ -5,7 +5,12 @@ Clang-Tidy Checks
 
 .. toctree::
    abseil-duration-division
+   abseil-faster-strsplit-delimiter
+   abseil-no-internal-dependencies
+   abseil-no-namespace
+   abseil-redundant-strcat-calls
    abseil-string-find-startswith
+   abseil-str-cat-append
    android-cloexec-accept
    android-cloexec-accept4
    android-cloexec-creat
@@ -167,6 +172,7 @@ Clang-Tidy Checks
    misc-unused-parameters
    misc-unused-using-decls
    modernize-avoid-bind
+   modernize-concat-nested-namespaces
    modernize-deprecated-headers
    modernize-loop-convert
    modernize-make-shared

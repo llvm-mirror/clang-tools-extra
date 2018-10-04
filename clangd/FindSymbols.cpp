@@ -117,8 +117,9 @@ getWorkspaceSymbols(StringRef Query, int Limit, const SymbolIndex *const Index,
   if (IsGlobalQuery || !Names.first.empty())
     Req.Scopes = {Names.first};
   if (Limit)
-    Req.MaxCandidateCount = Limit;
-  TopN<ScoredSymbolInfo, ScoredSymbolGreater> Top(Req.MaxCandidateCount);
+    Req.Limit = Limit;
+  TopN<ScoredSymbolInfo, ScoredSymbolGreater> Top(
+      Req.Limit ? *Req.Limit : std::numeric_limits<size_t>::max());
   FuzzyMatcher Filter(Req.Query);
   Index->fuzzyFind(Req, [HintPath, &Top, &Filter](const Symbol &Sym) {
     // Prefer the definition over e.g. a function declaration in a header
@@ -226,7 +227,7 @@ public:
     // We should be only be looking at "local" decls in the main file.
     if (!SourceMgr.isWrittenInMainFile(NameLoc)) {
       // Even thought we are visiting only local (non-preamble) decls,
-      // we can get here when in the presense of "extern" decls.
+      // we can get here when in the presence of "extern" decls.
       return true;
     }
     const NamedDecl *ND = llvm::dyn_cast<NamedDecl>(ASTNode.OrigD);
@@ -269,8 +270,9 @@ getDocumentSymbols(ParsedAST &AST) {
   IndexOpts.SystemSymbolFilter =
       index::IndexingOptions::SystemSymbolFilterKind::DeclarationsOnly;
   IndexOpts.IndexFunctionLocals = false;
-  indexTopLevelDecls(AST.getASTContext(), AST.getLocalTopLevelDecls(),
-                     DocumentSymbolsCons, IndexOpts);
+  indexTopLevelDecls(AST.getASTContext(), AST.getPreprocessor(),
+                     AST.getLocalTopLevelDecls(), DocumentSymbolsCons,
+                     IndexOpts);
 
   return DocumentSymbolsCons.takeSymbols();
 }

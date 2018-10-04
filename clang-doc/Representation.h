@@ -48,13 +48,14 @@ struct CommentInfo {
   CommentInfo(CommentInfo &Other) = delete;
   CommentInfo(CommentInfo &&Other) = default;
 
-  SmallString<16> Kind; // Kind of comment (TextComment, InlineCommandComment,
-                        // HTMLStartTagComment, HTMLEndTagComment,
-                        // BlockCommandComment, ParamCommandComment,
-                        // TParamCommandComment, VerbatimBlockComment,
-                        // VerbatimBlockLineComment, VerbatimLineComment).
-  SmallString<64> Text; // Text of the comment.
-  SmallString<16> Name; // Name of the comment (for Verbatim and HTML).
+  SmallString<16>
+      Kind; // Kind of comment (FullComment, ParagraphComment, TextComment,
+            // InlineCommandComment, HTMLStartTagComment, HTMLEndTagComment,
+            // BlockCommandComment, ParamCommandComment,
+            // TParamCommandComment, VerbatimBlockComment,
+            // VerbatimBlockLineComment, VerbatimLineComment).
+  SmallString<64> Text;      // Text of the comment.
+  SmallString<16> Name;      // Name of the comment (for Verbatim and HTML).
   SmallString<8> Direction;  // Parameter direction (for (T)ParamCommand).
   SmallString<16> ParamName; // Parameter name (for (T)ParamCommand).
   SmallString<16> CloseName; // Closing tag name (for VerbatimBlock).
@@ -161,6 +162,8 @@ struct Info {
       : USR(USR), IT(IT), Name(Name) {}
   Info(const Info &Other) = delete;
   Info(Info &&Other) = default;
+
+  virtual ~Info() = default;
 
   SymbolID USR =
       SymbolID(); // Unique identifier for the decl described by this Info.

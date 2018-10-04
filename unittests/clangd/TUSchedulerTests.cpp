@@ -17,10 +17,12 @@
 
 namespace clang {
 namespace clangd {
+namespace {
 
 using ::testing::_;
-using ::testing::Each;
 using ::testing::AnyOf;
+using ::testing::Each;
+using ::testing::ElementsAre;
 using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::UnorderedElementsAre;
@@ -44,8 +46,7 @@ protected:
 
 TEST_F(TUSchedulerTests, MissingFiles) {
   TUScheduler S(getDefaultAsyncThreadsCount(),
-                /*StorePreamblesInMemory=*/true,
-                /*PreambleParsedCallback=*/nullptr,
+                /*StorePreamblesInMemory=*/true, /*ASTCallbacks=*/nullptr,
                 /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
                 ASTRetentionPolicy());
 
@@ -63,7 +64,7 @@ TEST_F(TUSchedulerTests, MissingFiles) {
     ASSERT_FALSE(bool(AST));
     ignoreError(AST.takeError());
   });
-  S.runWithPreamble("", Missing,
+  S.runWithPreamble("", Missing, TUScheduler::Stale,
                     [&](llvm::Expected<InputsAndPreamble> Preamble) {
                       ASSERT_FALSE(bool(Preamble));
                       ignoreError(Preamble.takeError());
@@ -75,9 +76,10 @@ TEST_F(TUSchedulerTests, MissingFiles) {
   S.runWithAST("", Added, [&](llvm::Expected<InputsAndAST> AST) {
     EXPECT_TRUE(bool(AST));
   });
-  S.runWithPreamble("", Added, [&](llvm::Expected<InputsAndPreamble> Preamble) {
-    EXPECT_TRUE(bool(Preamble));
-  });
+  S.runWithPreamble("", Added, TUScheduler::Stale,
+                    [&](llvm::Expected<InputsAndPreamble> Preamble) {
+                      EXPECT_TRUE(bool(Preamble));
+                    });
   S.remove(Added);
 
   // Assert that all operations fail after removing the file.
@@ -85,10 +87,11 @@ TEST_F(TUSchedulerTests, MissingFiles) {
     ASSERT_FALSE(bool(AST));
     ignoreError(AST.takeError());
   });
-  S.runWithPreamble("", Added, [&](llvm::Expected<InputsAndPreamble> Preamble) {
-    ASSERT_FALSE(bool(Preamble));
-    ignoreError(Preamble.takeError());
-  });
+  S.runWithPreamble("", Added, TUScheduler::Stale,
+                    [&](llvm::Expected<InputsAndPreamble> Preamble) {
+                      ASSERT_FALSE(bool(Preamble));
+                      ignoreError(Preamble.takeError());
+                    });
   // remove() shouldn't crash on missing files.
   S.remove(Added);
 }
@@ -101,8 +104,7 @@ TEST_F(TUSchedulerTests, WantDiagnostics) {
     Notification Ready;
     TUScheduler S(
         getDefaultAsyncThreadsCount(),
-        /*StorePreamblesInMemory=*/true,
-        /*PreambleParsedCallback=*/nullptr,
+        /*StorePreamblesInMemory=*/true, /*ASTCallbacks=*/nullptr,
         /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
         ASTRetentionPolicy());
     auto Path = testPath("foo.cpp");
@@ -130,8 +132,7 @@ TEST_F(TUSchedulerTests, Debounce) {
   std::atomic<int> CallbackCount(0);
   {
     TUScheduler S(getDefaultAsyncThreadsCount(),
-                  /*StorePreamblesInMemory=*/true,
-                  /*PreambleParsedCallback=*/nullptr,
+                  /*StorePreamblesInMemory=*/true, /*ASTCallbacks=*/nullptr,
                   /*UpdateDebounce=*/std::chrono::seconds(1),
                   ASTRetentionPolicy());
     // FIXME: we could probably use timeouts lower than 1 second here.
@@ -150,6 +151,64 @@ TEST_F(TUSchedulerTests, Debounce) {
   EXPECT_EQ(2, CallbackCount);
 }
 
+static std::vector<std::string> includes(const PreambleData *Preamble) {
+  std::vector<std::string> Result;
+  if (Preamble)
+    for (const auto &Inclusion : Preamble->Includes.MainFileIncludes)
+      Result.push_back(Inclusion.Written);
+  return Result;
+}
+
+TEST_F(TUSchedulerTests, PreambleConsistency) {
+  std::atomic<int> CallbackCount(0);
+  {
+    Notification InconsistentReadDone; // Must live longest.
+    TUScheduler S(
+        getDefaultAsyncThreadsCount(), /*StorePreamblesInMemory=*/true,
+        /*ASTCallbacks=*/nullptr,
+        /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
+        ASTRetentionPolicy());
+    auto Path = testPath("foo.cpp");
+    // Schedule two updates (A, B) and two preamble reads (stale, consistent).
+    // The stale read should see A, and the consistent read should see B.
+    // (We recognize the preambles by their included files).
+    S.update(Path, getInputs(Path, "#include <A>"), WantDiagnostics::Yes,
+             [&](std::vector<Diag> Diags) {
+               // This callback runs in between the two preamble updates.
+
+               // This blocks update B, preventing it from winning the race
+               // against the stale read.
+               // If the first read was instead consistent, this would deadlock.
+               InconsistentReadDone.wait();
+               // This delays update B, preventing it from winning a race
+               // against the consistent read. The consistent read sees B
+               // only because it waits for it.
+               // If the second read was stale, it would usually see A.
+               std::this_thread::sleep_for(std::chrono::milliseconds(100));
+             });
+    S.update(Path, getInputs(Path, "#include <B>"), WantDiagnostics::Yes,
+             [&](std::vector<Diag> Diags) {});
+
+    S.runWithPreamble("StaleRead", Path, TUScheduler::Stale,
+                      [&](llvm::Expected<InputsAndPreamble> Pre) {
+                        ASSERT_TRUE(bool(Pre));
+                        assert(bool(Pre));
+                        EXPECT_THAT(includes(Pre->Preamble),
+                                    ElementsAre("<A>"));
+                        InconsistentReadDone.notify();
+                        ++CallbackCount;
+                      });
+    S.runWithPreamble("ConsistentRead", Path, TUScheduler::Consistent,
+                      [&](llvm::Expected<InputsAndPreamble> Pre) {
+                        ASSERT_TRUE(bool(Pre));
+                        EXPECT_THAT(includes(Pre->Preamble),
+                                    ElementsAre("<B>"));
+                        ++CallbackCount;
+                      });
+  }
+  EXPECT_EQ(2, CallbackCount);
+}
+
 TEST_F(TUSchedulerTests, ManyUpdates) {
   const int FilesCount = 3;
   const int UpdatesPerFile = 10;
@@ -162,8 +221,7 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
   // Run TUScheduler and collect some stats.
   {
     TUScheduler S(getDefaultAsyncThreadsCount(),
-                  /*StorePreamblesInMemory=*/true,
-                  /*PreambleParsedCallback=*/nullptr,
+                  /*StorePreamblesInMemory=*/true, /*ASTCallbacks=*/nullptr,
                   /*UpdateDebounce=*/std::chrono::milliseconds(50),
                   ASTRetentionPolicy());
 
@@ -232,7 +290,7 @@ TEST_F(TUSchedulerTests, ManyUpdates) {
         {
           WithContextValue WithNonce(NonceKey, ++Nonce);
           S.runWithPreamble(
-              "CheckPreamble", File,
+              "CheckPreamble", File, TUScheduler::Stale,
               [File, Inputs, Nonce, &Mut, &TotalPreambleReads](
                   llvm::Expected<InputsAndPreamble> Preamble) {
                 EXPECT_THAT(Context::current().get(NonceKey), Pointee(Nonce));
@@ -261,7 +319,7 @@ TEST_F(TUSchedulerTests, EvictedAST) {
   Policy.MaxRetainedASTs = 2;
   TUScheduler S(
       /*AsyncThreadsCount=*/1, /*StorePreambleInMemory=*/true,
-      PreambleParsedCallback(),
+      /*ASTCallbacks=*/nullptr,
       /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(), Policy);
 
   llvm::StringLiteral SourceContents = R"cpp(
@@ -281,7 +339,7 @@ TEST_F(TUSchedulerTests, EvictedAST) {
   // one that the cache will evict.
   S.update(Foo, getInputs(Foo, SourceContents), WantDiagnostics::Yes,
            [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
   ASSERT_EQ(BuiltASTCounter.load(), 1);
 
   // Build two more files. Since we can retain only 2 ASTs, these should be the
@@ -290,7 +348,7 @@ TEST_F(TUSchedulerTests, EvictedAST) {
            [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
   S.update(Baz, getInputs(Baz, SourceContents), WantDiagnostics::Yes,
            [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
   ASSERT_EQ(BuiltASTCounter.load(), 3);
 
   // Check only the last two ASTs are retained.
@@ -299,7 +357,7 @@ TEST_F(TUSchedulerTests, EvictedAST) {
   // Access the old file again.
   S.update(Foo, getInputs(Foo, OtherSourceContents), WantDiagnostics::Yes,
            [&BuiltASTCounter](std::vector<Diag> Diags) { ++BuiltASTCounter; });
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
   ASSERT_EQ(BuiltASTCounter.load(), 4);
 
   // Check the AST for foo.cpp is retained now and one of the others got
@@ -311,7 +369,7 @@ TEST_F(TUSchedulerTests, EvictedAST) {
 TEST_F(TUSchedulerTests, EmptyPreamble) {
   TUScheduler S(
       /*AsyncThreadsCount=*/4, /*StorePreambleInMemory=*/true,
-      PreambleParsedCallback(),
+      /*ASTCallbacks=*/nullptr,
       /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
       ASTRetentionPolicy());
 
@@ -327,7 +385,7 @@ TEST_F(TUSchedulerTests, EmptyPreamble) {
   auto WithEmptyPreamble = R"cpp(int main() {})cpp";
   S.update(Foo, getInputs(Foo, WithPreamble), WantDiagnostics::Auto,
            [](std::vector<Diag>) {});
-  S.runWithPreamble("getNonEmptyPreamble", Foo,
+  S.runWithPreamble("getNonEmptyPreamble", Foo, TUScheduler::Stale,
                     [&](llvm::Expected<InputsAndPreamble> Preamble) {
                       // We expect to get a non-empty preamble.
                       EXPECT_GT(cantFail(std::move(Preamble))
@@ -336,14 +394,14 @@ TEST_F(TUSchedulerTests, EmptyPreamble) {
                                 0u);
                     });
   // Wait for the preamble is being built.
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
 
   // Update the file which results in an empty preamble.
   S.update(Foo, getInputs(Foo, WithEmptyPreamble), WantDiagnostics::Auto,
            [](std::vector<Diag>) {});
   // Wait for the preamble is being built.
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
-  S.runWithPreamble("getEmptyPreamble", Foo,
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
+  S.runWithPreamble("getEmptyPreamble", Foo, TUScheduler::Stale,
                     [&](llvm::Expected<InputsAndPreamble> Preamble) {
                       // We expect to get an empty preamble.
                       EXPECT_EQ(cantFail(std::move(Preamble))
@@ -358,7 +416,7 @@ TEST_F(TUSchedulerTests, RunWaitsForPreamble) {
   // the same time. All reads should get the same non-null preamble.
   TUScheduler S(
       /*AsyncThreadsCount=*/4, /*StorePreambleInMemory=*/true,
-      PreambleParsedCallback(),
+      /*ASTCallbacks=*/nullptr,
       /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
       ASTRetentionPolicy());
   auto Foo = testPath("foo.cpp");
@@ -375,7 +433,7 @@ TEST_F(TUSchedulerTests, RunWaitsForPreamble) {
            [](std::vector<Diag>) {});
   for (int I = 0; I < ReadsToSchedule; ++I) {
     S.runWithPreamble(
-        "test", Foo,
+        "test", Foo, TUScheduler::Stale,
         [I, &PreamblesMut, &Preambles](llvm::Expected<InputsAndPreamble> IP) {
           std::lock_guard<std::mutex> Lock(PreamblesMut);
           Preambles[I] = cantFail(std::move(IP)).Preamble;
@@ -391,7 +449,7 @@ TEST_F(TUSchedulerTests, RunWaitsForPreamble) {
 TEST_F(TUSchedulerTests, NoopOnEmptyChanges) {
   TUScheduler S(
       /*AsyncThreadsCount=*/getDefaultAsyncThreadsCount(),
-      /*StorePreambleInMemory=*/true, PreambleParsedCallback(),
+      /*StorePreambleInMemory=*/true, /*ASTCallbacks=*/nullptr,
       /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
       ASTRetentionPolicy());
 
@@ -412,7 +470,7 @@ TEST_F(TUSchedulerTests, NoopOnEmptyChanges) {
     Updated = false;
     S.update(Source, std::move(Inputs), WantDiagnostics::Yes,
              [&Updated](std::vector<Diag>) { Updated = true; });
-    bool UpdateFinished = S.blockUntilIdle(timeoutSeconds(1));
+    bool UpdateFinished = S.blockUntilIdle(timeoutSeconds(10));
     if (!UpdateFinished)
       ADD_FAILURE() << "Updated has not finished in one second. Threading bug?";
     return Updated;
@@ -444,7 +502,7 @@ TEST_F(TUSchedulerTests, NoopOnEmptyChanges) {
 TEST_F(TUSchedulerTests, NoChangeDiags) {
   TUScheduler S(
       /*AsyncThreadsCount=*/getDefaultAsyncThreadsCount(),
-      /*StorePreambleInMemory=*/true, PreambleParsedCallback(),
+      /*StorePreambleInMemory=*/true, /*ASTCallbacks=*/nullptr,
       /*UpdateDebounce=*/std::chrono::steady_clock::duration::zero(),
       ASTRetentionPolicy());
 
@@ -457,14 +515,14 @@ TEST_F(TUSchedulerTests, NoChangeDiags) {
     // Make sure the AST was actually built.
     cantFail(std::move(IA));
   });
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
 
   // Even though the inputs didn't change and AST can be reused, we need to
   // report the diagnostics, as they were not reported previously.
   std::atomic<bool> SeenDiags(false);
   S.update(FooCpp, getInputs(FooCpp, Contents), WantDiagnostics::Auto,
            [&](std::vector<Diag>) { SeenDiags = true; });
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
   ASSERT_TRUE(SeenDiags);
 
   // Subsequent request does not get any diagnostics callback because the same
@@ -472,8 +530,9 @@ TEST_F(TUSchedulerTests, NoChangeDiags) {
   S.update(
       FooCpp, getInputs(FooCpp, Contents), WantDiagnostics::Auto,
       [&](std::vector<Diag>) { ADD_FAILURE() << "Should not be called."; });
-  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(1)));
+  ASSERT_TRUE(S.blockUntilIdle(timeoutSeconds(10)));
 }
 
+} // namespace
 } // namespace clangd
 } // namespace clang

@@ -55,7 +55,8 @@ set(CLANG_TOOLS_TEST_DEPS
 
   # These individual tools have no tests, add them here to make them compile
   # together with check-clang-tools, so that we won't break them in the future.
-  global-symbol-builder
+  clangd-indexer
+  dexp
 
   # Unit tests
   ExtraToolsUnitTests

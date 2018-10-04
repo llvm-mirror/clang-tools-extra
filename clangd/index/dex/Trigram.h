@@ -6,18 +6,19 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-//
-// Trigrams are attributes of the symbol unqualified name used to effectively
-// extract symbols which can be fuzzy-matched given user query from the inverted
-// index. To match query with the extracted set of trigrams Q, the set of
-// generated trigrams T for identifier (unqualified symbol name) should contain
-// all items of Q, i.e. Q ⊆ T.
-//
-// Trigram sets extracted from unqualified name and from query are different:
-// the set of query trigrams only contains consecutive sequences of three
-// characters (which is only a subset of all trigrams generated for an
-// identifier).
-//
+///
+/// \file
+/// Trigrams are attributes of the symbol unqualified name used to effectively
+/// extract symbols which can be fuzzy-matched given user query from the
+/// inverted index. To match query with the extracted set of trigrams Q, the set
+/// of generated trigrams T for identifier (unqualified symbol name) should
+/// contain all items of Q, i.e. Q ⊆ T.
+///
+/// Trigram sets extracted from unqualified name and from query are different:
+/// the set of query trigrams only contains consecutive sequences of three
+/// characters (which is only a subset of all trigrams generated for an
+/// identifier).
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_DEX_TRIGRAM_H
@@ -62,7 +63,7 @@ std::vector<Token> generateIdentifierTrigrams(llvm::StringRef Identifier);
 ///
 /// For short queries (less than 3 characters with Head or Tail roles in Fuzzy
 /// Matching segmentation) this returns a single trigram with the first
-/// characters (up to 3) to perfrom prefix match.
+/// characters (up to 3) to perform prefix match.
 std::vector<Token> generateQueryTrigrams(llvm::StringRef Query);
 
 } // namespace dex

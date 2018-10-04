@@ -11,7 +11,6 @@
 #include "TestFS.h"
 #include "TestTU.h"
 #include "index/SymbolCollector.h"
-#include "index/SymbolYAML.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/FileSystemOptions.h"
 #include "clang/Basic/VirtualFileSystem.h"
@@ -28,10 +27,19 @@
 #include <memory>
 #include <string>
 
+namespace clang {
+namespace clangd {
+
+namespace {
+
+using testing::_;
 using testing::AllOf;
+using testing::Contains;
 using testing::Eq;
 using testing::Field;
+using testing::IsEmpty;
 using testing::Not;
+using testing::Pair;
 using testing::UnorderedElementsAre;
 using testing::UnorderedElementsAreArray;
 
@@ -39,13 +47,8 @@ using testing::UnorderedElementsAreArray;
 MATCHER_P(Labeled, Label, "") {
   return (arg.Name + arg.Signature).str() == Label;
 }
-MATCHER(HasReturnType, "") {
-  return arg.Detail && !arg.Detail->ReturnType.empty();
-}
-MATCHER_P(ReturnType, D, "") {
-  return arg.Detail && arg.Detail->ReturnType == D;
-}
-MATCHER_P(Doc, D, "") { return arg.Detail && arg.Detail->Documentation == D; }
+MATCHER_P(ReturnType, D, "") { return arg.ReturnType == D; }
+MATCHER_P(Doc, D, "") { return arg.Documentation == D; }
 MATCHER_P(Snippet, S, "") {
   return (arg.Name + arg.CompletionSnippetSuffix).str() == S;
 }
@@ -53,7 +56,11 @@ MATCHER_P(QName, Name, "") { return (arg.Scope + arg.Name).str() == Name; }
 MATCHER_P(DeclURI, P, "") { return arg.CanonicalDeclaration.FileURI == P; }
 MATCHER_P(DefURI, P, "") { return arg.Definition.FileURI == P; }
 MATCHER_P(IncludeHeader, P, "") {
-  return arg.Detail && arg.Detail->IncludeHeader == P;
+  return (arg.IncludeHeaders.size() == 1) &&
+         (arg.IncludeHeaders.begin()->IncludeHeader == P);
+}
+MATCHER_P2(IncludeHeaderWithRef, IncludeHeader, References,  "") {
+  return (arg.IncludeHeader == IncludeHeader) && (arg.References == References);
 }
 MATCHER_P(DeclRange, Pos, "") {
   return std::tie(arg.CanonicalDeclaration.Start.Line,
@@ -70,15 +77,24 @@ MATCHER_P(DefRange, Pos, "") {
          std::tie(Pos.start.line, Pos.start.character, Pos.end.line,
                   Pos.end.character);
 }
-MATCHER_P(Refs, R, "") { return int(arg.References) == R; }
+MATCHER_P(RefCount, R, "") { return int(arg.References) == R; }
 MATCHER_P(ForCodeCompletion, IsIndexedForCodeCompletion, "") {
-  return arg.IsIndexedForCodeCompletion == IsIndexedForCodeCompletion;
+  return static_cast<bool>(arg.Flags & Symbol::IndexedForCodeCompletion) ==
+         IsIndexedForCodeCompletion;
 }
-
-namespace clang {
-namespace clangd {
-
-namespace {
+MATCHER(Deprecated, "") { return arg.Flags & Symbol::Deprecated; }
+MATCHER(RefRange, "") {
+  const Ref &Pos = testing::get<0>(arg);
+  const Range &Range = testing::get<1>(arg);
+  return std::tie(Pos.Location.Start.Line, Pos.Location.Start.Column,
+                  Pos.Location.End.Line, Pos.Location.End.Column) ==
+         std::tie(Range.start.line, Range.start.character, Range.end.line,
+                  Range.end.character);
+}
+testing::Matcher<const std::vector<Ref> &>
+HaveRanges(const std::vector<Range> Ranges) {
+  return testing::UnorderedPointwise(RefRange(), Ranges);
+}
 
 class ShouldCollectSymbolTest : public ::testing::Test {
 public:
@@ -237,6 +253,7 @@ public:
                                 llvm::MemoryBuffer::getMemBuffer(MainCode));
     Invocation.run();
     Symbols = Factory->Collector->takeSymbols();
+    Refs = Factory->Collector->takeRefs();
     return true;
   }
 
@@ -247,6 +264,7 @@ protected:
   std::string TestFileName;
   std::string TestFileURI;
   SymbolSlab Symbols;
+  RefSlab Refs;
   SymbolCollector::Options CollectorOpts;
   std::unique_ptr<CommentHandler> PragmaHandler;
 };
@@ -413,6 +431,54 @@ o]]();
           ));
 }
 
+TEST_F(SymbolCollectorTest, Refs) {
+  Annotations Header(R"(
+  class $foo[[Foo]] {
+  public:
+    $foo[[Foo]]() {}
+    $foo[[Foo]](int);
+  };
+  class $bar[[Bar]];
+  void $func[[func]]();
+  )");
+  Annotations Main(R"(
+  class $bar[[Bar]] {};
+
+  void $func[[func]]();
+
+  void fff() {
+    $foo[[Foo]] foo;
+    $bar[[Bar]] bar;
+    $func[[func]]();
+    int abc = 0;
+    $foo[[Foo]] foo2 = abc;
+  }
+  )");
+  Annotations SymbolsOnlyInMainCode(R"(
+  int a;
+  void b() {}
+  static const int c = 0;
+  class d {};
+  )");
+  CollectorOpts.RefFilter = RefKind::All;
+  runSymbolCollector(Header.code(),
+                     (Main.code() + SymbolsOnlyInMainCode.code()).str());
+  auto HeaderSymbols = TestTU::withHeaderCode(Header.code()).headerSymbols();
+
+  EXPECT_THAT(Refs, Contains(Pair(findSymbol(Symbols, "Foo").ID,
+                                  HaveRanges(Main.ranges("foo")))));
+  EXPECT_THAT(Refs, Contains(Pair(findSymbol(Symbols, "Bar").ID,
+                                  HaveRanges(Main.ranges("bar")))));
+  EXPECT_THAT(Refs, Contains(Pair(findSymbol(Symbols, "func").ID,
+                                  HaveRanges(Main.ranges("func")))));
+  // Symbols *only* in the main file (a, b, c) had no refs collected.
+  auto MainSymbols =
+      TestTU::withHeaderCode(SymbolsOnlyInMainCode.code()).headerSymbols();
+  EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(MainSymbols, "a").ID, _))));
+  EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(MainSymbols, "b").ID, _))));
+  EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(MainSymbols, "c").ID, _))));
+}
+
 TEST_F(SymbolCollectorTest, References) {
   const std::string Header = R"(
     class W;
@@ -434,10 +500,10 @@ TEST_F(SymbolCollectorTest, References) {
   CollectorOpts.CountReferences = true;
   runSymbolCollector(Header, Main);
   EXPECT_THAT(Symbols,
-              UnorderedElementsAre(AllOf(QName("W"), Refs(1)),
-                                   AllOf(QName("X"), Refs(1)),
-                                   AllOf(QName("Y"), Refs(0)),
-                                   AllOf(QName("Z"), Refs(0)), QName("y")));
+              UnorderedElementsAre(AllOf(QName("W"), RefCount(1)),
+                                   AllOf(QName("X"), RefCount(1)),
+                                   AllOf(QName("Y"), RefCount(0)),
+                                   AllOf(QName("Z"), RefCount(0)), QName("y")));
 }
 
 TEST_F(SymbolCollectorTest, SymbolRelativeNoFallback) {
@@ -678,82 +744,13 @@ TEST_F(SymbolCollectorTest, Snippet) {
                         Snippet("ff(${1:int x}, ${2:double y})"))));
 }
 
-TEST_F(SymbolCollectorTest, YAMLConversions) {
-  const std::string YAML1 = R"(
----
-ID: 057557CEBF6E6B2DD437FBF60CC58F352D1DF856
-Name:   'Foo1'
-Scope:   'clang::'
-SymInfo:
-  Kind:            Function
-  Lang:            Cpp
-CanonicalDeclaration:
-  FileURI:        file:///path/foo.h
-  Start:
-    Line: 1
-    Column: 0
-  End:
-    Line: 1
-    Column: 1
-IsIndexedForCodeCompletion:    true
-Detail:
-  Documentation:    'Foo doc'
-  ReturnType:    'int'
-...
-)";
-  const std::string YAML2 = R"(
----
-ID: 057557CEBF6E6B2DD437FBF60CC58F352D1DF858
-Name:   'Foo2'
-Scope:   'clang::'
-SymInfo:
-  Kind:            Function
-  Lang:            Cpp
-CanonicalDeclaration:
-  FileURI:        file:///path/bar.h
-  Start:
-    Line: 1
-    Column: 0
-  End:
-    Line: 1
-    Column: 1
-IsIndexedForCodeCompletion:    false
-Signature:    '-sig'
-CompletionSnippetSuffix:    '-snippet'
-...
-)";
-
-  auto Symbols1 = symbolsFromYAML(YAML1);
-
-  EXPECT_THAT(Symbols1,
-              UnorderedElementsAre(AllOf(QName("clang::Foo1"), Labeled("Foo1"),
-                                         Doc("Foo doc"), ReturnType("int"),
-                                         DeclURI("file:///path/foo.h"),
-                                         ForCodeCompletion(true))));
-  auto Symbols2 = symbolsFromYAML(YAML2);
-  EXPECT_THAT(Symbols2, UnorderedElementsAre(AllOf(
-                            QName("clang::Foo2"), Labeled("Foo2-sig"),
-                            Not(HasReturnType()), DeclURI("file:///path/bar.h"),
-                            ForCodeCompletion(false))));
-
-  std::string ConcatenatedYAML;
-  {
-    llvm::raw_string_ostream OS(ConcatenatedYAML);
-    SymbolsToYAML(Symbols1, OS);
-    SymbolsToYAML(Symbols2, OS);
-  }
-  auto ConcatenatedSymbols = symbolsFromYAML(ConcatenatedYAML);
-  EXPECT_THAT(ConcatenatedSymbols,
-              UnorderedElementsAre(QName("clang::Foo1"),
-                                   QName("clang::Foo2")));
-}
-
 TEST_F(SymbolCollectorTest, IncludeHeaderSameAsFileURI) {
   CollectorOpts.CollectIncludePath = true;
   runSymbolCollector("class Foo {};", /*Main=*/"");
-  EXPECT_THAT(Symbols,
-              UnorderedElementsAre(AllOf(QName("Foo"), DeclURI(TestHeaderURI),
-                                         IncludeHeader(TestHeaderURI))));
+  EXPECT_THAT(Symbols, UnorderedElementsAre(
+                           AllOf(QName("Foo"), DeclURI(TestHeaderURI))));
+  EXPECT_THAT(Symbols.begin()->IncludeHeaders,
+              UnorderedElementsAre(IncludeHeaderWithRef(TestHeaderURI, 1u)));
 }
 
 #ifndef _WIN32
@@ -981,8 +978,8 @@ TEST_F(SymbolCollectorTest, ReferencesInFriendDecl) {
   )";
   CollectorOpts.CountReferences = true;
   runSymbolCollector(Header, Main);
-  EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("X"), Refs(1)),
-                                            AllOf(QName("Y"), Refs(1))));
+  EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("X"), RefCount(1)),
+                                            AllOf(QName("Y"), RefCount(1))));
 }
 
 TEST_F(SymbolCollectorTest, Origin) {
@@ -1008,14 +1005,25 @@ TEST_F(SymbolCollectorTest, CollectMacros) {
   CollectorOpts.CountReferences = true;
   CollectorOpts.CollectMacro = true;
   runSymbolCollector(Header.code(), Main);
-  EXPECT_THAT(
-      Symbols,
-      UnorderedElementsAre(
-          QName("p"),
-          AllOf(QName("X"), DeclURI(TestHeaderURI),
-                IncludeHeader(TestHeaderURI)),
-          AllOf(Labeled("MAC(x)"), Refs(0), DeclRange(Header.range("mac"))),
-          AllOf(Labeled("USED(y)"), Refs(1), DeclRange(Header.range("used")))));
+  EXPECT_THAT(Symbols,
+              UnorderedElementsAre(QName("p"),
+                                   AllOf(QName("X"), DeclURI(TestHeaderURI),
+                                         IncludeHeader(TestHeaderURI)),
+                                   AllOf(Labeled("MAC(x)"), RefCount(0),
+                                         DeclRange(Header.range("mac"))),
+                                   AllOf(Labeled("USED(y)"), RefCount(1),
+                                         DeclRange(Header.range("used")))));
+}
+
+TEST_F(SymbolCollectorTest, DeprecatedSymbols) {
+  const std::string Header = R"(
+    void TestClangc() __attribute__((deprecated("", "")));
+    void TestClangd();
+  )";
+  runSymbolCollector(Header, /**/ "");
+  EXPECT_THAT(Symbols, UnorderedElementsAre(
+                           AllOf(QName("TestClangc"), Deprecated()),
+                           AllOf(QName("TestClangd"), Not(Deprecated()))));
 }
 
 } // namespace

@@ -19,6 +19,7 @@
 #include "ProtocolHandlers.h"
 #include "clang/Tooling/Core/Replacement.h"
 #include "llvm/ADT/Optional.h"
+#include <memory>
 
 namespace clang {
 namespace clangd {
@@ -26,8 +27,11 @@ namespace clangd {
 class JSONOutput;
 class SymbolIndex;
 
-/// This class provides implementation of an LSP server, glueing the JSON
-/// dispatch and ClangdServer together.
+/// This class exposes ClangdServer's capabilities via Language Server Protocol.
+///
+/// JSONRPCDispatcher binds the implemented ProtocolCallbacks methods
+/// (e.g. onInitialize) to corresponding JSON-RPC methods ("initialize").
+/// The server also supports $/cancelRequest (JSONRPCDispatcher provides this).
 class ClangdLSPServer : private DiagnosticsConsumer, private ProtocolCallbacks {
 public:
   /// If \p CompileCommandsDir has a value, compile_commands.json will be
@@ -67,6 +71,7 @@ private:
   void onCompletion(TextDocumentPositionParams &Params) override;
   void onSignatureHelp(TextDocumentPositionParams &Params) override;
   void onGoToDefinition(TextDocumentPositionParams &Params) override;
+  void onReference(ReferenceParams &Params) override;
   void onSwitchSourceHeader(TextDocumentIdentifier &Params) override;
   void onDocumentHighlight(TextDocumentPositionParams &Params) override;
   void onFileEvent(DidChangeWatchedFilesParams &Params) override;
@@ -159,6 +164,8 @@ private:
   ClangdDiagnosticOptions DiagOpts;
   /// The supported kinds of the client.
   SymbolKindBitset SupportedSymbolKinds;
+  /// The supported completion item kinds of the client.
+  CompletionItemKindBitset SupportedCompletionItemKinds;
 
   // Store of the current versions of the open documents.
   DraftStore DraftMgr;
@@ -166,9 +173,10 @@ private:
   // Server must be the last member of the class to allow its destructor to exit
   // the worker thread that may otherwise run an async callback on partially
   // destructed instance of ClangdLSPServer.
-  ClangdServer Server;
+  // Set in construtor and destroyed when run() finishes. To ensure all worker
+  // threads exit before run() returns.
+  std::unique_ptr<ClangdServer> Server;
 };
-
 } // namespace clangd
 } // namespace clang
 

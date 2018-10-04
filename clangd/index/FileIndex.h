@@ -16,15 +16,16 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_FILEINDEX_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_FILEINDEX_H
 
-#include "../ClangdUnit.h"
+#include "ClangdUnit.h"
 #include "Index.h"
 #include "MemIndex.h"
 #include "clang/Lex/Preprocessor.h"
+#include <memory>
 
 namespace clang {
 namespace clangd {
 
-/// \brief A container of Symbols from several source files. It can be updated
+/// A container of Symbols from several source files. It can be updated
 /// at source-file granularity, replacing all symbols from one file with a new
 /// set.
 ///
@@ -36,58 +37,87 @@ namespace clangd {
 /// the snapshot, either this class or the symbol index.
 ///
 /// The snapshot semantics keeps critical sections minimal since we only need
-/// locking when we swap or obtain refereces to snapshots.
+/// locking when we swap or obtain references to snapshots.
 class FileSymbols {
 public:
-  /// \brief Updates all symbols in a file. If \p Slab is nullptr, symbols for
-  /// \p Path will be removed.
-  void update(PathRef Path, std::unique_ptr<SymbolSlab> Slab);
+  /// Updates all symbols and refs in a file.
+  /// If either is nullptr, corresponding data for \p Path will be removed.
+  void update(PathRef Path, std::unique_ptr<SymbolSlab> Slab,
+              std::unique_ptr<RefSlab> Refs);
 
-  // The shared_ptr keeps the symbols alive
-  std::shared_ptr<std::vector<const Symbol *>> allSymbols();
+  // The index keeps the symbols alive.
+  std::unique_ptr<SymbolIndex> buildMemIndex();
 
 private:
   mutable std::mutex Mutex;
 
-  /// \brief Stores the latest snapshots for all active files.
-  llvm::StringMap<std::shared_ptr<SymbolSlab>> FileToSlabs;
+  /// Stores the latest symbol snapshots for all active files.
+  llvm::StringMap<std::shared_ptr<SymbolSlab>> FileToSymbols;
+  /// Stores the latest ref snapshots for all active files.
+  llvm::StringMap<std::shared_ptr<RefSlab>> FileToRefs;
 };
 
-/// \brief This manages symbls from files and an in-memory index on all symbols.
-class FileIndex : public SymbolIndex {
+/// This manages symbols from files and an in-memory index on all symbols.
+/// FIXME: Expose an interface to remove files that are closed.
+class FileIndex {
 public:
   /// If URISchemes is empty, the default schemes in SymbolCollector will be
   /// used.
   FileIndex(std::vector<std::string> URISchemes = {});
 
-  /// \brief Update symbols in \p Path with symbols in \p AST. If \p AST is
-  /// nullptr, this removes all symbols in the file.
-  /// If \p AST is not null, \p PP cannot be null and it should be the
-  /// preprocessor that was used to build \p AST.
-  void update(PathRef Path, ASTContext *AST, std::shared_ptr<Preprocessor> PP);
+  // Presents a merged view of the supplied main-file and preamble ASTs.
+  const SymbolIndex &index() const { return *MergedIndex; }
 
-  bool
-  fuzzyFind(const FuzzyFindRequest &Req,
-            llvm::function_ref<void(const Symbol &)> Callback) const override;
+  /// Update preamble symbols of file \p Path with all declarations in \p AST
+  /// and macros in \p PP.
+  void updatePreamble(PathRef Path, ASTContext &AST,
+                      std::shared_ptr<Preprocessor> PP);
 
-  void lookup(const LookupRequest &Req,
-              llvm::function_ref<void(const Symbol &)> Callback) const override;
+  /// Update symbols and references from main file \p Path with
+  /// `indexMainDecls`.
+  void updateMain(PathRef Path, ParsedAST &AST);
 
-
-  void findOccurrences(const OccurrencesRequest &Req,
-                       llvm::function_ref<void(const SymbolOccurrence &)>
-                           Callback) const override;
 private:
-  FileSymbols FSymbols;
-  MemIndex Index;
   std::vector<std::string> URISchemes;
+
+  // Contains information from each file's preamble only.
+  // These are large, but update fairly infrequently (preambles are stable).
+  // Missing information:
+  //  - symbol refs (these are always "from the main file")
+  //  - definition locations in the main file
+  //
+  // FIXME: Because the preambles for different TUs have large overlap and
+  // FileIndex doesn't deduplicate, this uses lots of extra RAM.
+  // The biggest obstacle in fixing this: the obvious approach of partitioning
+  // by declaring file (rather than main file) fails if headers provide
+  // different symbols based on preprocessor state.
+  FileSymbols PreambleSymbols;
+  SwapIndex PreambleIndex;
+
+  // Contains information from each file's main AST.
+  // These are updated frequently (on file change), but are relatively small.
+  // Mostly contains:
+  //  - refs to symbols declared in the preamble and referenced from main
+  //  - symbols declared both in the main file and the preamble
+  // (Note that symbols *only* in the main file are not indexed).
+  FileSymbols MainFileSymbols;
+  SwapIndex MainFileIndex;
+
+  std::unique_ptr<SymbolIndex> MergedIndex;  // Merge preamble and main index.
 };
 
-/// Retrieves namespace and class level symbols in \p AST.
+/// Retrieves symbols and refs of local top level decls in \p AST (i.e.
+/// `AST.getLocalTopLevelDecls()`).
 /// Exposed to assist in unit tests.
 /// If URISchemes is empty, the default schemes in SymbolCollector will be used.
-SymbolSlab indexAST(ASTContext &AST, std::shared_ptr<Preprocessor> PP,
-                    llvm::ArrayRef<std::string> URISchemes = {});
+std::pair<SymbolSlab, RefSlab>
+indexMainDecls(ParsedAST &AST, llvm::ArrayRef<std::string> URISchemes = {});
+
+/// Idex declarations from \p AST and macros from \p PP that are declared in
+/// included headers.
+/// If URISchemes is empty, the default schemes in SymbolCollector will be used.
+SymbolSlab indexHeaderSymbols(ASTContext &AST, std::shared_ptr<Preprocessor> PP,
+                              llvm::ArrayRef<std::string> URISchemes = {});
 
 } // namespace clangd
 } // namespace clang

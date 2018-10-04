@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Trigram.h"
-#include "../../FuzzyMatch.h"
+#include "FuzzyMatch.h"
 #include "Token.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
@@ -67,10 +67,6 @@ std::vector<Token> generateIdentifierTrigrams(llvm::StringRef Identifier) {
     UniqueTrigrams.insert(Token(Token::Kind::Trigram, Chars));
   };
 
-  // FIXME(kbobyrev): Instead of producing empty trigram for each identifier,
-  // just use True Iterator on the query side when the query string is empty.
-  add({{END_MARKER, END_MARKER, END_MARKER}});
-
   if (TwoHeads.size() == 2)
     add({{TwoHeads.front(), TwoHeads.back(), END_MARKER}});
 
@@ -91,10 +87,10 @@ std::vector<Token> generateIdentifierTrigrams(llvm::StringRef Identifier) {
     if (Roles[I] != Head && Roles[I] != Tail)
       continue;
     for (const unsigned J : Next[I]) {
-      if (!J)
+      if (J == 0)
         continue;
       for (const unsigned K : Next[J]) {
-        if (!K)
+        if (K == 0)
           continue;
         add({{LowercaseIdentifier[I], LowercaseIdentifier[J],
               LowercaseIdentifier[K]}});
@@ -117,8 +113,8 @@ std::vector<Token> generateQueryTrigrams(llvm::StringRef Query) {
   // Additional pass is necessary to count valid identifier characters.
   // Depending on that, this function might return incomplete trigram.
   unsigned ValidSymbolsCount = 0;
-  for (size_t I = 0; I < Roles.size(); ++I)
-    if (Roles[I] == Head || Roles[I] == Tail)
+  for (const auto Role : Roles)
+    if (Role == Head || Role == Tail)
       ++ValidSymbolsCount;
 
   std::string LowercaseQuery = Query.lower();
