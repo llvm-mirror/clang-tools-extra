@@ -17,6 +17,7 @@
 #include "NoAssignmentToReferenceParameterCheck.h"
 #include "OptionalParameterInVirtualMethodCheck.h"
 #include "SingletonCheck.h"
+#include "CABExceptionCheck.h"
 
 using namespace clang::ast_matchers;
 
@@ -42,6 +43,8 @@ public:
         "btc-optional-parameter-in-virtual-method");
     CheckFactories.registerCheck<SingletonCheck>(
         "btc-singleton");
+    CheckFactories.registerCheck<btc::CABExceptionCheck>(
+        "btc-use-of-cab-exception");
   }
 };
 

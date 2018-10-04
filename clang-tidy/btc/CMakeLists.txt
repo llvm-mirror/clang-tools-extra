@@ -9,6 +9,7 @@ add_clang_library(clangTidyBtcModule
   NoAssignmentToReferenceParameterCheck.cpp
   OptionalParameterInVirtualMethodCheck.cpp
   SingletonCheck.cpp
+  CABExceptionCheck.cpp
 
   LINK_LIBS
   clangAST
