@@ -24,11 +24,11 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
 
 namespace {
-using namespace llvm;
 using ::testing::AllOf;
 using ::testing::Contains;
 using ::testing::Each;
@@ -151,7 +151,7 @@ Symbol sym(StringRef QName, index::SymbolKind Kind, StringRef USRFormat) {
   Symbol Sym;
   std::string USR = "c:"; // We synthesize a few simple cases of USRs by hand!
   size_t Pos = QName.rfind("::");
-  if (Pos == llvm::StringRef::npos) {
+  if (Pos == StringRef::npos) {
     Sym.Name = QName;
     Sym.Scope = "";
   } else {
@@ -381,10 +381,13 @@ TEST(CompletionTest, Qualifiers) {
       void test() { Bar().^ }
   )cpp");
   EXPECT_THAT(Results.Completions,
-              HasSubsequence(AllOf(Qualifier(""), Named("bar")),
-                             AllOf(Qualifier("Foo::"), Named("foo"))));
+              Contains(AllOf(Qualifier(""), Named("bar"))));
+  // Hidden members are not shown.
   EXPECT_THAT(Results.Completions,
-              Not(Contains(AllOf(Qualifier(""), Named("foo"))))); // private
+              Not(Contains(AllOf(Qualifier("Foo::"), Named("foo")))));
+  // Private members are not shown.
+  EXPECT_THAT(Results.Completions,
+              Not(Contains(AllOf(Qualifier(""), Named("foo")))));
 }
 
 TEST(CompletionTest, InjectedTypename) {
@@ -567,7 +570,7 @@ TEST(CompletionTest, IncludeInsertionPreprocessorIntegrationTests) {
   MockFSProvider FS;
   MockCompilationDatabase CDB;
   std::string Subdir = testPath("sub");
-  std::string SearchDirArg = (llvm::Twine("-I") + Subdir).str();
+  std::string SearchDirArg = (Twine("-I") + Subdir).str();
   CDB.ExtraClangFlags = {SearchDirArg.c_str()};
   std::string BarHeader = testPath("sub/bar.h");
   FS.Files[BarHeader] = "";
@@ -985,19 +988,18 @@ TEST(SignatureHelpTest, OpeningParen) {
 
 class IndexRequestCollector : public SymbolIndex {
 public:
-  bool
-  fuzzyFind(const FuzzyFindRequest &Req,
-            llvm::function_ref<void(const Symbol &)> Callback) const override {
+  bool fuzzyFind(const FuzzyFindRequest &Req,
+                 function_ref<void(const Symbol &)> Callback) const override {
     std::lock_guard<std::mutex> Lock(Mut);
     Requests.push_back(Req);
     return true;
   }
 
   void lookup(const LookupRequest &,
-              llvm::function_ref<void(const Symbol &)>) const override {}
+              function_ref<void(const Symbol &)>) const override {}
 
   void refs(const RefsRequest &,
-            llvm::function_ref<void(const Ref &)>) const override {}
+            function_ref<void(const Ref &)>) const override {}
 
   // This is incorrect, but IndexRequestCollector is not an actual index and it
   // isn't used in production code.
@@ -1016,7 +1018,7 @@ private:
   mutable std::vector<FuzzyFindRequest> Requests;
 };
 
-std::vector<FuzzyFindRequest> captureIndexRequests(llvm::StringRef Code) {
+std::vector<FuzzyFindRequest> captureIndexRequests(StringRef Code) {
   clangd::CodeCompleteOptions Opts;
   IndexRequestCollector Requests;
   Opts.Index = &Requests;
@@ -1038,6 +1040,28 @@ TEST(CompletionTest, UnqualifiedIdQuery) {
   EXPECT_THAT(Requests,
               ElementsAre(Field(&FuzzyFindRequest::Scopes,
                                 UnorderedElementsAre("", "ns::", "std::"))));
+}
+
+TEST(CompletionTest, EnclosingScopeComesFirst) {
+  auto Requests = captureIndexRequests(R"cpp(
+      namespace std {}
+      using namespace std;
+      namespace nx {
+      namespace ns {
+      namespace {
+      void f() {
+        vec^
+      }
+      }
+      }
+      }
+  )cpp");
+
+  EXPECT_THAT(Requests,
+              ElementsAre(Field(
+                  &FuzzyFindRequest::Scopes,
+                  UnorderedElementsAre("", "std::", "nx::ns::", "nx::"))));
+  EXPECT_EQ(Requests[0].Scopes[0], "nx::ns::");
 }
 
 TEST(CompletionTest, ResolvedQualifiedIdQuery) {
@@ -2077,7 +2101,7 @@ TEST(CompletionTest, IncludedCompletionKinds) {
   MockFSProvider FS;
   MockCompilationDatabase CDB;
   std::string Subdir = testPath("sub");
-  std::string SearchDirArg = (llvm::Twine("-I") + Subdir).str();
+  std::string SearchDirArg = (Twine("-I") + Subdir).str();
   CDB.ExtraClangFlags = {SearchDirArg.c_str()};
   std::string BarHeader = testPath("sub/bar.h");
   FS.Files[BarHeader] = "";
@@ -2154,6 +2178,15 @@ TEST(CompletionTest, NoQualifierIfShadowed) {
                                    AllOf(Qualifier("nx::"), Named("Clangd2"))));
 }
 
+TEST(CompletionTest, NoCompletionsForNewNames) {
+  clangd::CodeCompleteOptions Opts;
+  Opts.AllScopes = true;
+  auto Results = completions(R"cpp(
+      void f() { int n^ }
+    )cpp",
+                             {cls("naber"), cls("nx::naber")}, Opts);
+  EXPECT_THAT(Results.Completions, UnorderedElementsAre());
+}
 } // namespace
 } // namespace clangd
 } // namespace clang

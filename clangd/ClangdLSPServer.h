@@ -16,7 +16,7 @@
 #include "GlobalCompilationDatabase.h"
 #include "Path.h"
 #include "Protocol.h"
-#include "ProtocolHandlers.h"
+#include "Transport.h"
 #include "clang/Tooling/Core/Replacement.h"
 #include "llvm/ADT/Optional.h"
 #include <memory>
@@ -24,62 +24,70 @@
 namespace clang {
 namespace clangd {
 
-class JSONOutput;
 class SymbolIndex;
 
 /// This class exposes ClangdServer's capabilities via Language Server Protocol.
 ///
-/// JSONRPCDispatcher binds the implemented ProtocolCallbacks methods
-/// (e.g. onInitialize) to corresponding JSON-RPC methods ("initialize").
-/// The server also supports $/cancelRequest (JSONRPCDispatcher provides this).
-class ClangdLSPServer : private DiagnosticsConsumer, private ProtocolCallbacks {
+/// MessageHandler binds the implemented LSP methods (e.g. onInitialize) to
+/// corresponding JSON-RPC methods ("initialize").
+/// The server also supports $/cancelRequest (MessageHandler provides this).
+class ClangdLSPServer : private DiagnosticsConsumer {
 public:
   /// If \p CompileCommandsDir has a value, compile_commands.json will be
   /// loaded only from \p CompileCommandsDir. Otherwise, clangd will look
   /// for compile_commands.json in all parent directories of each file.
-  ClangdLSPServer(JSONOutput &Out, const clangd::CodeCompleteOptions &CCOpts,
-                  llvm::Optional<Path> CompileCommandsDir,
-                  bool ShouldUseInMemoryCDB, const ClangdServer::Options &Opts);
+  /// If UseDirBasedCDB is false, compile commands are not read from disk.
+  // FIXME: Clean up signature around CDBs.
+  ClangdLSPServer(Transport &Transp, const clangd::CodeCompleteOptions &CCOpts,
+                  llvm::Optional<Path> CompileCommandsDir, bool UseDirBasedCDB,
+                  const ClangdServer::Options &Opts);
+  ~ClangdLSPServer();
 
-  /// Run LSP server loop, receiving input for it from \p In. \p In must be
-  /// opened in binary mode. Output will be written using Out variable passed to
-  /// class constructor. This method must not be executed more than once for
-  /// each instance of ClangdLSPServer.
+  /// Run LSP server loop, communicating with the Transport provided in the
+  /// constructor. This method must not be executed more than once.
   ///
-  /// \return Whether we received a 'shutdown' request before an 'exit' request.
-  bool run(std::FILE *In,
-           JSONStreamStyle InputStyle = JSONStreamStyle::Standard);
+  /// \return Whether we shut down cleanly with a 'shutdown' -> 'exit' sequence.
+  bool run();
 
 private:
   // Implement DiagnosticsConsumer.
   void onDiagnosticsReady(PathRef File, std::vector<Diag> Diagnostics) override;
 
-  // Implement ProtocolCallbacks.
-  void onInitialize(InitializeParams &Params) override;
-  void onShutdown(ShutdownParams &Params) override;
-  void onExit(ExitParams &Params) override;
-  void onDocumentDidOpen(DidOpenTextDocumentParams &Params) override;
-  void onDocumentDidChange(DidChangeTextDocumentParams &Params) override;
-  void onDocumentDidClose(DidCloseTextDocumentParams &Params) override;
-  void
-  onDocumentOnTypeFormatting(DocumentOnTypeFormattingParams &Params) override;
-  void
-  onDocumentRangeFormatting(DocumentRangeFormattingParams &Params) override;
-  void onDocumentFormatting(DocumentFormattingParams &Params) override;
-  void onDocumentSymbol(DocumentSymbolParams &Params) override;
-  void onCodeAction(CodeActionParams &Params) override;
-  void onCompletion(TextDocumentPositionParams &Params) override;
-  void onSignatureHelp(TextDocumentPositionParams &Params) override;
-  void onGoToDefinition(TextDocumentPositionParams &Params) override;
-  void onReference(ReferenceParams &Params) override;
-  void onSwitchSourceHeader(TextDocumentIdentifier &Params) override;
-  void onDocumentHighlight(TextDocumentPositionParams &Params) override;
-  void onFileEvent(DidChangeWatchedFilesParams &Params) override;
-  void onCommand(ExecuteCommandParams &Params) override;
-  void onWorkspaceSymbol(WorkspaceSymbolParams &Params) override;
-  void onRename(RenameParams &Parames) override;
-  void onHover(TextDocumentPositionParams &Params) override;
-  void onChangeConfiguration(DidChangeConfigurationParams &Params) override;
+  // LSP methods. Notifications have signature void(const Params&).
+  // Calls have signature void(const Params&, Callback<Response>).
+  void onInitialize(const InitializeParams &, Callback<llvm::json::Value>);
+  void onShutdown(const ShutdownParams &, Callback<std::nullptr_t>);
+  void onDocumentDidOpen(const DidOpenTextDocumentParams &);
+  void onDocumentDidChange(const DidChangeTextDocumentParams &);
+  void onDocumentDidClose(const DidCloseTextDocumentParams &);
+  void onDocumentOnTypeFormatting(const DocumentOnTypeFormattingParams &,
+                                  Callback<std::vector<TextEdit>>);
+  void onDocumentRangeFormatting(const DocumentRangeFormattingParams &,
+                                 Callback<std::vector<TextEdit>>);
+  void onDocumentFormatting(const DocumentFormattingParams &,
+                            Callback<std::vector<TextEdit>>);
+  void onDocumentSymbol(const DocumentSymbolParams &,
+                        Callback<std::vector<SymbolInformation>>);
+  void onCodeAction(const CodeActionParams &, Callback<llvm::json::Value>);
+  void onCompletion(const TextDocumentPositionParams &,
+                    Callback<CompletionList>);
+  void onSignatureHelp(const TextDocumentPositionParams &,
+                       Callback<SignatureHelp>);
+  void onGoToDefinition(const TextDocumentPositionParams &,
+                        Callback<std::vector<Location>>);
+  void onReference(const ReferenceParams &, Callback<std::vector<Location>>);
+  void onSwitchSourceHeader(const TextDocumentIdentifier &,
+                            Callback<std::string>);
+  void onDocumentHighlight(const TextDocumentPositionParams &,
+                           Callback<std::vector<DocumentHighlight>>);
+  void onFileEvent(const DidChangeWatchedFilesParams &);
+  void onCommand(const ExecuteCommandParams &, Callback<llvm::json::Value>);
+  void onWorkspaceSymbol(const WorkspaceSymbolParams &,
+                         Callback<std::vector<SymbolInformation>>);
+  void onRename(const RenameParams &, Callback<WorkspaceEdit>);
+  void onHover(const TextDocumentPositionParams &,
+               Callback<llvm::Optional<Hover>>);
+  void onChangeConfiguration(const DidChangeConfigurationParams &);
 
   std::vector<Fix> getFixes(StringRef File, const clangd::Diagnostic &D);
 
@@ -87,17 +95,11 @@ private:
   /// may be very expensive.  This method is normally called when the
   /// compilation database is changed.
   void reparseOpenedFiles();
-  void applyConfiguration(const ClangdConfigurationParamsChange &Settings);
+  void applyConfiguration(const ConfigurationSettings &Settings);
 
-  JSONOutput &Out;
   /// Used to indicate that the 'shutdown' request was received from the
   /// Language Server client.
   bool ShutdownRequestReceived = false;
-
-  /// Used to indicate that the 'exit' notification was received from the
-  /// Language Server client.
-  /// It's used to break out of the LSP parsing loop.
-  bool IsDone = false;
 
   std::mutex FixItsMutex;
   typedef std::map<clangd::Diagnostic, std::vector<Fix>, LSPDiagnosticCompare>
@@ -105,57 +107,15 @@ private:
   /// Caches FixIts per file and diagnostics
   llvm::StringMap<DiagnosticToReplacementMap> FixItsMap;
 
-  /// Encapsulates the directory-based or the in-memory compilation database
-  /// that's used by the LSP server.
-  class CompilationDB {
-  public:
-    static CompilationDB makeInMemory();
-    static CompilationDB
-    makeDirectoryBased(llvm::Optional<Path> CompileCommandsDir);
-
-    void invalidate(PathRef File);
-
-    /// Sets the compilation command for a particular file.
-    /// Only valid for in-memory CDB, no-op and error log on DirectoryBasedCDB.
-    ///
-    /// \returns True if the File had no compilation command before.
-    bool
-    setCompilationCommandForFile(PathRef File,
-                                 tooling::CompileCommand CompilationCommand);
-
-    /// Adds extra compilation flags to the compilation command for a particular
-    /// file. Only valid for directory-based CDB, no-op and error log on
-    /// InMemoryCDB;
-    void setExtraFlagsForFile(PathRef File,
-                              std::vector<std::string> ExtraFlags);
-
-    /// Set the compile commands directory to \p P.
-    /// Only valid for directory-based CDB, no-op and error log on InMemoryCDB;
-    void setCompileCommandsDir(Path P);
-
-    /// Returns a CDB that should be used to get compile commands for the
-    /// current instance of ClangdLSPServer.
-    GlobalCompilationDatabase &getCDB();
-
-  private:
-    CompilationDB(std::unique_ptr<GlobalCompilationDatabase> CDB,
-                  std::unique_ptr<CachingCompilationDb> CachingCDB,
-                  bool IsDirectoryBased)
-        : CDB(std::move(CDB)), CachingCDB(std::move(CachingCDB)),
-          IsDirectoryBased(IsDirectoryBased) {}
-
-    // if IsDirectoryBased is true, an instance of InMemoryCDB.
-    // If IsDirectoryBased is false, an instance of DirectoryBasedCDB.
-    // unique_ptr<GlobalCompilationDatabase> CDB;
-    std::unique_ptr<GlobalCompilationDatabase> CDB;
-    // Non-null only for directory-based CDB
-    std::unique_ptr<CachingCompilationDb> CachingCDB;
-    bool IsDirectoryBased;
-  };
-
-  // Various ClangdServer parameters go here. It's important they're created
-  // before ClangdServer.
-  CompilationDB CDB;
+  // Most code should not deal with Transport directly.
+  // MessageHandler deals with incoming messages, use call() etc for outgoing.
+  clangd::Transport &Transp;
+  class MessageHandler;
+  std::unique_ptr<MessageHandler> MsgHandler;
+  std::atomic<int> NextCallID = {0};
+  std::mutex TranspWriter;
+  void call(StringRef Method, llvm::json::Value Params);
+  void notify(StringRef Method, llvm::json::Value Params);
 
   RealFileSystemProvider FSProvider;
   /// Options used for code completion
@@ -166,16 +126,22 @@ private:
   SymbolKindBitset SupportedSymbolKinds;
   /// The supported completion item kinds of the client.
   CompletionItemKindBitset SupportedCompletionItemKinds;
+  // Whether the client supports CodeAction response objects.
+  bool SupportsCodeAction = false;
 
   // Store of the current versions of the open documents.
   DraftStore DraftMgr;
 
-  // Server must be the last member of the class to allow its destructor to exit
-  // the worker thread that may otherwise run an async callback on partially
-  // destructed instance of ClangdLSPServer.
-  // Set in construtor and destroyed when run() finishes. To ensure all worker
-  // threads exit before run() returns.
-  std::unique_ptr<ClangdServer> Server;
+  // The CDB is created by the "initialize" LSP method.
+  bool UseDirBasedCDB;                     // FIXME: make this a capability.
+  llvm::Optional<Path> CompileCommandsDir; // FIXME: merge with capability?
+  std::unique_ptr<GlobalCompilationDatabase> BaseCDB;
+  // CDB is BaseCDB plus any comands overridden via LSP extensions.
+  llvm::Optional<OverlayCDB> CDB;
+  // The ClangdServer is created by the "initialize" LSP method.
+  // It is destroyed before run() returns, to ensure worker threads exit.
+  ClangdServer::Options ClangdServerOpts;
+  llvm::Optional<ClangdServer> Server;
 };
 } // namespace clangd
 } // namespace clang

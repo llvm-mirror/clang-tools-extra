@@ -199,10 +199,6 @@ DiagnosticBuilder ClangTidyContext::diag(
   return DiagEngine->Report(Loc, ID);
 }
 
-void ClangTidyContext::setDiagnosticsEngine(DiagnosticsEngine *Engine) {
-  DiagEngine = Engine;
-}
-
 void ClangTidyContext::setSourceManager(SourceManager *SourceMgr) {
   DiagEngine->setSourceManager(SourceMgr);
 }
@@ -259,11 +255,6 @@ bool ClangTidyContext::treatAsError(StringRef CheckName) const {
   return WarningAsErrorFilter->contains(CheckName);
 }
 
-/// \brief Store a \c ClangTidyError.
-void ClangTidyContext::storeError(const ClangTidyError &Error) {
-  Errors.push_back(Error);
-}
-
 StringRef ClangTidyContext::getCheckName(unsigned DiagnosticID) const {
   llvm::DenseMap<unsigned, std::string>::const_iterator I =
       CheckNamesByDiagnosticID.find(DiagnosticID);
@@ -281,7 +272,7 @@ ClangTidyDiagnosticConsumer::ClangTidyDiagnosticConsumer(
   Diags = llvm::make_unique<DiagnosticsEngine>(
       IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs), &*DiagOpts, this,
       /*ShouldOwnClient=*/false);
-  Context.setDiagnosticsEngine(Diags.get());
+  Context.DiagEngine = Diags.get();
 }
 
 void ClangTidyDiagnosticConsumer::finalizeLastError() {
@@ -534,8 +525,7 @@ llvm::Regex *ClangTidyDiagnosticConsumer::getHeaderFilter() {
   return HeaderFilter.get();
 }
 
-void ClangTidyDiagnosticConsumer::removeIncompatibleErrors(
-    SmallVectorImpl<ClangTidyError> &Errors) const {
+void ClangTidyDiagnosticConsumer::removeIncompatibleErrors() {
   // Each error is modelled as the set of intervals in which it applies
   // replacements. To detect overlapping replacements, we use a sweep line
   // algorithm over these sets of intervals.
@@ -673,18 +663,13 @@ struct EqualClangTidyError {
 };
 } // end anonymous namespace
 
-// Flushes the internal diagnostics buffer to the ClangTidyContext.
-void ClangTidyDiagnosticConsumer::finish() {
+std::vector<ClangTidyError> ClangTidyDiagnosticConsumer::take() {
   finalizeLastError();
 
   std::sort(Errors.begin(), Errors.end(), LessClangTidyError());
   Errors.erase(std::unique(Errors.begin(), Errors.end(), EqualClangTidyError()),
                Errors.end());
-
   if (RemoveIncompatibleErrors)
-    removeIncompatibleErrors(Errors);
-
-  for (const ClangTidyError &Error : Errors)
-    Context.storeError(Error);
-  Errors.clear();
+    removeIncompatibleErrors();
+  return std::move(Errors);
 }

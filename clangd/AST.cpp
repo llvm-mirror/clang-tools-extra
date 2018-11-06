@@ -11,37 +11,47 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Index/USRGeneration.h"
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
-using namespace llvm;
 
-SourceLocation findNameLoc(const clang::Decl* D) {
-  const auto& SM = D->getASTContext().getSourceManager();
+// Returns true if the complete name of decl \p D is spelled in the source code.
+// This is not the case for
+//   * symbols formed via macro concatenation, the spelling location will
+//     be "<scratch space>"
+//   * symbols controlled and defined by a compile command-line option
+//     `-DName=foo`, the spelling location will be "<command line>".
+bool isSpelledInSourceCode(const Decl *D) {
+  const auto &SM = D->getASTContext().getSourceManager();
+  auto Loc = D->getLocation();
   // FIXME: Revisit the strategy, the heuristic is limitted when handling
   // macros, we should use the location where the whole definition occurs.
-  SourceLocation SpellingLoc = SM.getSpellingLoc(D->getLocation());
-  if (D->getLocation().isMacroID()) {
-    std::string PrintLoc = SpellingLoc.printToString(SM);
-    if (llvm::StringRef(PrintLoc).startswith("<scratch") ||
-        llvm::StringRef(PrintLoc).startswith("<command line>")) {
-      // We use the expansion location for the following symbols, as spelling
-      // locations of these symbols are not interesting to us:
-      //   * symbols formed via macro concatenation, the spelling location will
-      //     be "<scratch space>"
-      //   * symbols controlled and defined by a compile command-line option
-      //     `-DName=foo`, the spelling location will be "<command line>".
-      SpellingLoc = SM.getExpansionRange(D->getLocation()).getBegin();
-    }
+  if (Loc.isMacroID()) {
+    std::string PrintLoc = SM.getSpellingLoc(Loc).printToString(SM);
+    if (StringRef(PrintLoc).startswith("<scratch") ||
+        StringRef(PrintLoc).startswith("<command line>"))
+      return false;
   }
-  return SpellingLoc;
+  return true;
+}
+
+bool isImplementationDetail(const Decl *D) { return !isSpelledInSourceCode(D); }
+
+SourceLocation findNameLoc(const clang::Decl* D) {
+  const auto &SM = D->getASTContext().getSourceManager();
+  if (!isSpelledInSourceCode(D))
+    // Use the expansion location as spelling location is not interesting.
+    return SM.getExpansionRange(D->getLocation()).getBegin();
+  return SM.getSpellingLoc(D->getLocation());
 }
 
 std::string printQualifiedName(const NamedDecl &ND) {
   std::string QName;
-  llvm::raw_string_ostream OS(QName);
+  raw_string_ostream OS(QName);
   PrintingPolicy Policy(ND.getASTContext().getLangOpts());
   // Note that inline namespaces are treated as transparent scopes. This
   // reflects the way they're most commonly used for lookup. Ideally we'd
@@ -54,19 +64,26 @@ std::string printQualifiedName(const NamedDecl &ND) {
   return QName;
 }
 
-llvm::Optional<SymbolID> getSymbolID(const Decl *D) {
-  llvm::SmallString<128> USR;
+std::string printNamespaceScope(const DeclContext &DC) {
+  for (const auto *Ctx = &DC; Ctx != nullptr; Ctx = Ctx->getParent())
+    if (const auto *NS = dyn_cast<NamespaceDecl>(Ctx))
+      if (!NS->isAnonymousNamespace() && !NS->isInlineNamespace())
+        return printQualifiedName(*NS) + "::";
+  return "";
+}
+
+Optional<SymbolID> getSymbolID(const Decl *D) {
+  SmallString<128> USR;
   if (index::generateUSRForDecl(D, USR))
     return None;
   return SymbolID(USR);
 }
 
-llvm::Optional<SymbolID> getSymbolID(const IdentifierInfo &II,
-                                     const MacroInfo *MI,
-                                     const SourceManager &SM) {
+Optional<SymbolID> getSymbolID(const IdentifierInfo &II, const MacroInfo *MI,
+                               const SourceManager &SM) {
   if (MI == nullptr)
     return None;
-  llvm::SmallString<128> USR;
+  SmallString<128> USR;
   if (index::generateUSRForMacro(II.getName(), MI->getDefinitionLoc(), SM, USR))
     return None;
   return SymbolID(USR);

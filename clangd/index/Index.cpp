@@ -8,31 +8,52 @@
 //===----------------------------------------------------------------------===//
 
 #include "Index.h"
+#include "Logger.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/SHA1.h"
 #include "llvm/Support/raw_ostream.h"
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
-using namespace llvm;
+
+constexpr uint32_t SymbolLocation::Position::MaxLine;
+constexpr uint32_t SymbolLocation::Position::MaxColumn;
+void SymbolLocation::Position::setLine(uint32_t L) {
+  if (L > MaxLine) {
+    Line = MaxLine;
+    return;
+  }
+  Line = L;
+}
+void SymbolLocation::Position::setColumn(uint32_t Col) {
+  if (Col > MaxColumn) {
+    Column = MaxColumn;
+    return;
+  }
+  Column = Col;
+}
 
 raw_ostream &operator<<(raw_ostream &OS, const SymbolLocation &L) {
   if (!L)
     return OS << "(none)";
-  return OS << L.FileURI << "[" << L.Start.Line << ":" << L.Start.Column << "-"
-            << L.End.Line << ":" << L.End.Column << ")";
+  return OS << L.FileURI << "[" << L.Start.line() << ":" << L.Start.column()
+            << "-" << L.End.line() << ":" << L.End.column() << ")";
 }
 
-SymbolID::SymbolID(StringRef USR)
-    : HashValue(SHA1::hash(arrayRefFromStringRef(USR))) {}
+SymbolID::SymbolID(StringRef USR) {
+  auto Hash = SHA1::hash(arrayRefFromStringRef(USR));
+  static_assert(sizeof(Hash) >= RawSize, "RawSize larger than SHA1");
+  memcpy(HashValue.data(), Hash.data(), RawSize);
+}
 
 raw_ostream &operator<<(raw_ostream &OS, const SymbolID &ID) {
   return OS << toHex(ID.raw());
 }
 
-SymbolID SymbolID::fromRaw(llvm::StringRef Raw) {
+SymbolID SymbolID::fromRaw(StringRef Raw) {
   SymbolID ID;
   assert(Raw.size() == RawSize);
   memcpy(ID.HashValue.data(), Raw.data(), RawSize);
@@ -41,12 +62,12 @@ SymbolID SymbolID::fromRaw(llvm::StringRef Raw) {
 
 std::string SymbolID::str() const { return toHex(raw()); }
 
-llvm::Expected<SymbolID> SymbolID::fromStr(llvm::StringRef Str) {
+Expected<SymbolID> SymbolID::fromStr(StringRef Str) {
   if (Str.size() != RawSize * 2)
-    return createStringError(llvm::inconvertibleErrorCode(), "Bad ID length");
+    return createStringError(inconvertibleErrorCode(), "Bad ID length");
   for (char C : Str)
     if (!isHexDigit(C))
-      return createStringError(llvm::inconvertibleErrorCode(), "Bad hex ID");
+      return createStringError(inconvertibleErrorCode(), "Bad hex ID");
   return fromRaw(fromHex(Str));
 }
 
@@ -93,7 +114,7 @@ SymbolSlab::const_iterator SymbolSlab::find(const SymbolID &ID) const {
 }
 
 // Copy the underlying data of the symbol into the owned arena.
-static void own(Symbol &S, llvm::UniqueStringSaver &Strings) {
+static void own(Symbol &S, UniqueStringSaver &Strings) {
   visitStrings(S, [&](StringRef &V) { V = Strings.save(V); });
 }
 
@@ -115,7 +136,7 @@ SymbolSlab SymbolSlab::Builder::build() && {
              [](const Symbol &L, const Symbol &R) { return L.ID < R.ID; });
   // We may have unused strings from overwritten symbols. Build a new arena.
   BumpPtrAllocator NewArena;
-  llvm::UniqueStringSaver Strings(NewArena);
+  UniqueStringSaver Strings(NewArena);
   for (auto &S : Symbols)
     own(S, Strings);
   return SymbolSlab(std::move(NewArena), std::move(Symbols));
@@ -137,7 +158,7 @@ raw_ostream &operator<<(raw_ostream &OS, RefKind K) {
   return OS;
 }
 
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Ref &R) {
+raw_ostream &operator<<(raw_ostream &OS, const Ref &R) {
   return OS << R.Location << ":" << R.Kind;
 }
 
@@ -152,17 +173,19 @@ RefSlab RefSlab::Builder::build() && {
   // Reallocate refs on the arena to reduce waste and indirections when reading.
   std::vector<std::pair<SymbolID, ArrayRef<Ref>>> Result;
   Result.reserve(Refs.size());
+  size_t NumRefs = 0;
   for (auto &Sym : Refs) {
     auto &SymRefs = Sym.second;
     llvm::sort(SymRefs);
     // FIXME: do we really need to dedup?
     SymRefs.erase(std::unique(SymRefs.begin(), SymRefs.end()), SymRefs.end());
 
+    NumRefs += SymRefs.size();
     auto *Array = Arena.Allocate<Ref>(SymRefs.size());
     std::uninitialized_copy(SymRefs.begin(), SymRefs.end(), Array);
     Result.emplace_back(Sym.first, ArrayRef<Ref>(Array, SymRefs.size()));
   }
-  return RefSlab(std::move(Result), std::move(Arena));
+  return RefSlab(std::move(Result), std::move(Arena), NumRefs);
 }
 
 void SwapIndex::reset(std::unique_ptr<SymbolIndex> Index) {
@@ -179,7 +202,7 @@ std::shared_ptr<SymbolIndex> SwapIndex::snapshot() const {
   return Index;
 }
 
-bool fromJSON(const llvm::json::Value &Parameters, FuzzyFindRequest &Request) {
+bool fromJSON(const json::Value &Parameters, FuzzyFindRequest &Request) {
   json::ObjectMapper O(Parameters);
   int64_t Limit;
   bool OK =
@@ -192,7 +215,7 @@ bool fromJSON(const llvm::json::Value &Parameters, FuzzyFindRequest &Request) {
   return OK;
 }
 
-llvm::json::Value toJSON(const FuzzyFindRequest &Request) {
+json::Value toJSON(const FuzzyFindRequest &Request) {
   return json::Object{
       {"Query", Request.Query},
       {"Scopes", json::Array{Request.Scopes}},
@@ -203,15 +226,15 @@ llvm::json::Value toJSON(const FuzzyFindRequest &Request) {
 }
 
 bool SwapIndex::fuzzyFind(const FuzzyFindRequest &R,
-                          llvm::function_ref<void(const Symbol &)> CB) const {
+                          function_ref<void(const Symbol &)> CB) const {
   return snapshot()->fuzzyFind(R, CB);
 }
 void SwapIndex::lookup(const LookupRequest &R,
-                       llvm::function_ref<void(const Symbol &)> CB) const {
+                       function_ref<void(const Symbol &)> CB) const {
   return snapshot()->lookup(R, CB);
 }
 void SwapIndex::refs(const RefsRequest &R,
-                     llvm::function_ref<void(const Ref &)> CB) const {
+                     function_ref<void(const Ref &)> CB) const {
   return snapshot()->refs(R, CB);
 }
 size_t SwapIndex::estimateMemoryUsage() const {

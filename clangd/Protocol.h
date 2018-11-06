@@ -48,6 +48,23 @@ enum class ErrorCode {
   // Defined by the protocol.
   RequestCancelled = -32800,
 };
+// Models an LSP error as an llvm::Error.
+class LSPError : public llvm::ErrorInfo<LSPError> {
+public:
+  std::string Message;
+  ErrorCode Code;
+  static char ID;
+
+  LSPError(std::string Message, ErrorCode Code)
+      : Message(std::move(Message)), Code(Code) {}
+
+  void log(llvm::raw_ostream &OS) const override {
+    OS << int(Code) << ": " << Message;
+  }
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+};
 
 struct URIForFile {
   URIForFile() = default;
@@ -158,11 +175,6 @@ struct Location {
 llvm::json::Value toJSON(const Location &);
 llvm::raw_ostream &operator<<(llvm::raw_ostream &, const Location &);
 
-struct Metadata {
-  std::vector<std::string> extraFlags;
-};
-bool fromJSON(const llvm::json::Value &, Metadata &);
-
 struct TextEdit {
   /// The range of the text document to be manipulated. To insert
   /// text into a document create a range where start === end.
@@ -221,18 +233,6 @@ enum class TextDocumentSyncKind {
   Incremental = 2,
 };
 
-struct CompletionItemClientCapabilities {
-  /// Client supports snippets as insert text.
-  bool snippetSupport = false;
-  /// Client supports commit characters on a completion item.
-  bool commitCharacterSupport = false;
-  // Client supports the follow content formats for the documentation property.
-  // The order describes the preferred format of the client.
-  // NOTE: not used by clangd at the moment.
-  // std::vector<MarkupKind> documentationFormat;
-};
-bool fromJSON(const llvm::json::Value &, CompletionItemClientCapabilities &);
-
 /// The kind of a completion entry.
 enum class CompletionItemKind {
   Missing = 0,
@@ -263,57 +263,15 @@ enum class CompletionItemKind {
   TypeParameter = 25,
 };
 bool fromJSON(const llvm::json::Value &, CompletionItemKind &);
-
-struct CompletionItemKindCapabilities {
-  /// The CompletionItemKinds that the client supports. If not set, the client
-  /// only supports <= CompletionItemKind::Reference and will not fall back to a
-  /// valid default value.
-  llvm::Optional<std::vector<CompletionItemKind>> valueSet;
-};
-// Discards unknown CompletionItemKinds.
-bool fromJSON(const llvm::json::Value &, std::vector<CompletionItemKind> &);
-bool fromJSON(const llvm::json::Value &, CompletionItemKindCapabilities &);
-
 constexpr auto CompletionItemKindMin =
     static_cast<size_t>(CompletionItemKind::Text);
 constexpr auto CompletionItemKindMax =
     static_cast<size_t>(CompletionItemKind::TypeParameter);
 using CompletionItemKindBitset = std::bitset<CompletionItemKindMax + 1>;
+bool fromJSON(const llvm::json::Value &, CompletionItemKindBitset &);
 CompletionItemKind
 adjustKindToCapability(CompletionItemKind Kind,
                        CompletionItemKindBitset &supportedCompletionItemKinds);
-
-struct CompletionClientCapabilities {
-  /// Whether completion supports dynamic registration.
-  bool dynamicRegistration = false;
-  /// The client supports the following `CompletionItem` specific capabilities.
-  CompletionItemClientCapabilities completionItem;
-  /// The CompletionItemKinds that the client supports. If not set, the client
-  /// only supports <= CompletionItemKind::Reference and will not fall back to a
-  /// valid default value.
-  llvm::Optional<CompletionItemKindCapabilities> completionItemKind;
-
-  /// The client supports to send additional context information for a
-  /// `textDocument/completion` request.
-  bool contextSupport = false;
-};
-bool fromJSON(const llvm::json::Value &, CompletionClientCapabilities &);
-
-struct PublishDiagnosticsClientCapabilities {
-  // Whether the client accepts diagnostics with related information.
-  // NOTE: not used by clangd at the moment.
-  // bool relatedInformation;
-
-  /// Whether the client accepts diagnostics with fixes attached using the
-  /// "clangd_fixes" extension.
-  bool clangdFixSupport = false;
-
-  /// Whether the client accepts diagnostics with category attached to it
-  /// using the "category" extension.
-  bool categorySupport = false;
-};
-bool fromJSON(const llvm::json::Value &,
-              PublishDiagnosticsClientCapabilities &);
 
 /// A symbol kind.
 enum class SymbolKind {
@@ -344,58 +302,43 @@ enum class SymbolKind {
   Operator = 25,
   TypeParameter = 26
 };
-
+bool fromJSON(const llvm::json::Value &, SymbolKind &);
 constexpr auto SymbolKindMin = static_cast<size_t>(SymbolKind::File);
 constexpr auto SymbolKindMax = static_cast<size_t>(SymbolKind::TypeParameter);
 using SymbolKindBitset = std::bitset<SymbolKindMax + 1>;
-
-bool fromJSON(const llvm::json::Value &, SymbolKind &);
-
-struct SymbolKindCapabilities {
-  /// The SymbolKinds that the client supports. If not set, the client only
-  /// supports <= SymbolKind::Array and will not fall back to a valid default
-  /// value.
-  llvm::Optional<std::vector<SymbolKind>> valueSet;
-};
-// Discards unknown SymbolKinds.
-bool fromJSON(const llvm::json::Value &, std::vector<SymbolKind> &);
-bool fromJSON(const llvm::json::Value &, SymbolKindCapabilities &);
+bool fromJSON(const llvm::json::Value &, SymbolKindBitset &);
 SymbolKind adjustKindToCapability(SymbolKind Kind,
                                   SymbolKindBitset &supportedSymbolKinds);
 
-struct WorkspaceSymbolCapabilities {
-  /// Capabilities SymbolKind.
-  llvm::Optional<SymbolKindCapabilities> symbolKind;
-};
-bool fromJSON(const llvm::json::Value &, WorkspaceSymbolCapabilities &);
-
-// FIXME: most of the capabilities are missing from this struct. Only the ones
-// used by clangd are currently there.
-struct WorkspaceClientCapabilities {
-  /// Capabilities specific to `workspace/symbol`.
-  llvm::Optional<WorkspaceSymbolCapabilities> symbol;
-};
-bool fromJSON(const llvm::json::Value &, WorkspaceClientCapabilities &);
-
-// FIXME: most of the capabilities are missing from this struct. Only the ones
-// used by clangd are currently there.
-struct TextDocumentClientCapabilities {
-  /// Capabilities specific to the `textDocument/completion`
-  CompletionClientCapabilities completion;
-
-  /// Capabilities specific to the 'textDocument/publishDiagnostics'
-  PublishDiagnosticsClientCapabilities publishDiagnostics;
-};
-bool fromJSON(const llvm::json::Value &, TextDocumentClientCapabilities &);
-
+// This struct doesn't mirror LSP!
+// The protocol defines deeply nested structures for client capabilities.
+// Instead of mapping them all, this just parses out the bits we care about.
 struct ClientCapabilities {
-  // Workspace specific client capabilities.
-  llvm::Optional<WorkspaceClientCapabilities> workspace;
+  /// The supported set of SymbolKinds for workspace/symbol.
+  /// workspace.symbol.symbolKind.valueSet
+  llvm::Optional<SymbolKindBitset> WorkspaceSymbolKinds;
 
-  // Text document specific client capabilities.
-  TextDocumentClientCapabilities textDocument;
+  /// Whether the client accepts diagnostics with codeActions attached inline.
+  /// textDocument.publishDiagnostics.codeActionsInline.
+  bool DiagnosticFixes = false;
+
+  /// Whether the client accepts diagnostics with category attached to it
+  /// using the "category" extension.
+  /// textDocument.publishDiagnostics.categorySupport
+  bool DiagnosticCategory = false;
+
+  /// Client supports snippets as insert text.
+  /// textDocument.completion.completionItem.snippetSupport
+  bool CompletionSnippets = false;
+
+  /// The supported set of CompletionItemKinds for textDocument/completion.
+  /// textDocument.completion.completionItemKind.valueSet
+  llvm::Optional<CompletionItemKindBitset> CompletionItemKinds;
+
+  /// Client supports CodeAction return value for textDocument/codeAction.
+  /// textDocument.codeAction.codeActionLiteralSupport.
+  bool CodeActionStructure = false;
 };
-
 bool fromJSON(const llvm::json::Value &, ClientCapabilities &);
 
 /// Clangd extension that's used in the 'compilationDatabaseChanges' in
@@ -407,20 +350,30 @@ struct ClangdCompileCommand {
 };
 bool fromJSON(const llvm::json::Value &, ClangdCompileCommand &);
 
-/// Clangd extension to set clangd-specific "initializationOptions" in the
-/// "initialize" request and for the "workspace/didChangeConfiguration"
-/// notification since the data received is described as 'any' type in LSP.
-struct ClangdConfigurationParamsChange {
-  llvm::Optional<std::string> compilationDatabasePath;
-
-  // The changes that happened to the compilation database.
+/// Clangd extension: parameters configurable at any time, via the
+/// `workspace/didChangeConfiguration` notification.
+/// LSP defines this type as `any`.
+struct ConfigurationSettings {
+  // Changes to the in-memory compilation database.
   // The key of the map is a file name.
-  llvm::Optional<std::map<std::string, ClangdCompileCommand>>
-      compilationDatabaseChanges;
+  std::map<std::string, ClangdCompileCommand> compilationDatabaseChanges;
 };
-bool fromJSON(const llvm::json::Value &, ClangdConfigurationParamsChange &);
+bool fromJSON(const llvm::json::Value &, ConfigurationSettings &);
 
-struct ClangdInitializationOptions : public ClangdConfigurationParamsChange {};
+/// Clangd extension: parameters configurable at `initialize` time.
+/// LSP defines this type as `any`.
+struct InitializationOptions {
+  // What we can change throught the didChangeConfiguration request, we can
+  // also set through the initialize request (initializationOptions field).
+  ConfigurationSettings ConfigSettings;
+
+  llvm::Optional<std::string> compilationDatabasePath;
+  // Additional flags to be included in the "fallback command" used when
+  // the compilation database doesn't describe an opened file.
+  // The command used will be approximately `clang $FILE $fallbackFlags`.
+  std::vector<std::string> fallbackFlags;
+};
+bool fromJSON(const llvm::json::Value &, InitializationOptions &);
 
 struct InitializeParams {
   /// The process Id of the parent process that started
@@ -449,18 +402,14 @@ struct InitializeParams {
   /// The initial trace setting. If omitted trace is disabled ('off').
   llvm::Optional<TraceLevel> trace;
 
-  // We use this predefined struct because it is easier to use
-  // than the protocol specified type of 'any'.
-  llvm::Optional<ClangdInitializationOptions> initializationOptions;
+  /// User-provided initialization options.
+  InitializationOptions initializationOptions;
 };
 bool fromJSON(const llvm::json::Value &, InitializeParams &);
 
 struct DidOpenTextDocumentParams {
   /// The document that was opened.
   TextDocumentItem textDocument;
-
-  /// Extension storing per-file metadata, such as compilation flags.
-  llvm::Optional<Metadata> metadata;
 };
 bool fromJSON(const llvm::json::Value &, DidOpenTextDocumentParams &);
 
@@ -524,9 +473,7 @@ struct DidChangeWatchedFilesParams {
 bool fromJSON(const llvm::json::Value &, DidChangeWatchedFilesParams &);
 
 struct DidChangeConfigurationParams {
-  // We use this predefined struct because it is easier to use
-  // than the protocol specified type of 'any'.
-  ClangdConfigurationParamsChange settings;
+  ConfigurationSettings settings;
 };
 bool fromJSON(const llvm::json::Value &, DidChangeConfigurationParams &);
 
@@ -582,6 +529,7 @@ struct DocumentSymbolParams {
 };
 bool fromJSON(const llvm::json::Value &, DocumentSymbolParams &);
 
+struct CodeAction;
 struct Diagnostic {
   /// The range at which the message applies.
   Range range;
@@ -606,8 +554,14 @@ struct Diagnostic {
   /// An LSP extension that's used to send the name of the category over to the
   /// client. The category typically describes the compilation stage during
   /// which the issue was produced, e.g. "Semantic Issue" or "Parse Issue".
-  std::string category;
+  llvm::Optional<std::string> category;
+
+  /// Clangd extension: code actions related to this diagnostic.
+  /// Only with capability textDocument.publishDiagnostics.codeActionsInline.
+  /// (These actions can also be obtained using textDocument/codeAction).
+  llvm::Optional<std::vector<CodeAction>> codeActions;
 };
+llvm::json::Value toJSON(const Diagnostic &);
 
 /// A LSP-specific comparator used to find diagnostic in a container like
 /// std:map.
@@ -674,6 +628,32 @@ struct Command : public ExecuteCommandParams {
   std::string title;
 };
 llvm::json::Value toJSON(const Command &C);
+
+/// A code action represents a change that can be performed in code, e.g. to fix
+/// a problem or to refactor code.
+///
+/// A CodeAction must set either `edit` and/or a `command`. If both are
+/// supplied, the `edit` is applied first, then the `command` is executed.
+struct CodeAction {
+  /// A short, human-readable, title for this code action.
+  std::string title;
+
+  /// The kind of the code action.
+  /// Used to filter code actions.
+  llvm::Optional<std::string> kind;
+  const static llvm::StringLiteral QUICKFIX_KIND;
+
+  /// The diagnostics that this code action resolves.
+  llvm::Optional<std::vector<Diagnostic>> diagnostics;
+
+  /// The workspace edit this code action performs.
+  llvm::Optional<WorkspaceEdit> edit;
+
+  /// A command this code action executes. If a code action provides an edit
+  /// and a command, first the edit is executed and then the command.
+  llvm::Optional<Command> command;
+};
+llvm::json::Value toJSON(const CodeAction &);
 
 /// Represents information about programming constructs like variables, classes,
 /// interfaces etc.

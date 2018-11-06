@@ -3,6 +3,8 @@
 #include "clang/Index/IndexDataConsumer.h"
 #include "clang/Index/IndexingAction.h"
 #include "clang/Tooling/Tooling.h"
+
+using namespace llvm;
 namespace clang {
 namespace clangd {
 namespace {
@@ -38,7 +40,7 @@ public:
     const auto &CI = getCompilerInstance();
     if (CI.hasDiagnostics() &&
         CI.getDiagnostics().hasUncompilableErrorOccurred()) {
-      llvm::errs() << "Skipping TU due to uncompilable errors\n";
+      errs() << "Skipping TU due to uncompilable errors\n";
       return;
     }
     SymbolsCallback(Collector->takeSymbols());
@@ -66,8 +68,10 @@ createStaticIndexingAction(SymbolCollector::Options Opts,
   Opts.CollectIncludePath = true;
   Opts.CountReferences = true;
   Opts.Origin = SymbolOrigin::Static;
-  if (RefsCallback != nullptr)
+  if (RefsCallback != nullptr) {
     Opts.RefFilter = RefKind::All;
+    Opts.RefsInHeaders = true;
+  }
   auto Includes = llvm::make_unique<CanonicalIncludes>();
   addSystemHeadersMapping(Includes.get());
   Opts.Includes = Includes.get();

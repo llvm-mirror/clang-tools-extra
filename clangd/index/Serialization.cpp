@@ -232,8 +232,8 @@ void writeLocation(const SymbolLocation &Loc, const StringTableOut &Strings,
                    raw_ostream &OS) {
   writeVar(Strings.index(Loc.FileURI), OS);
   for (const auto &Endpoint : {Loc.Start, Loc.End}) {
-    writeVar(Endpoint.Line, OS);
-    writeVar(Endpoint.Column, OS);
+    writeVar(Endpoint.line(), OS);
+    writeVar(Endpoint.column(), OS);
   }
 }
 
@@ -241,8 +241,8 @@ SymbolLocation readLocation(Reader &Data, ArrayRef<StringRef> Strings) {
   SymbolLocation Loc;
   Loc.FileURI = Data.consumeString(Strings);
   for (auto *Endpoint : {&Loc.Start, &Loc.End}) {
-    Endpoint->Line = Data.consumeVar();
-    Endpoint->Column = Data.consumeVar();
+    Endpoint->setLine(Data.consumeVar());
+    Endpoint->setColumn(Data.consumeVar());
   }
   return Loc;
 }
@@ -300,7 +300,7 @@ Symbol readSymbol(Reader &Data, ArrayRef<StringRef> Strings) {
 
 // REFS ENCODING
 // A refs section has data grouped by Symbol. Each symbol has:
-//  - SymbolID: 20 bytes
+//  - SymbolID: 16 bytes
 //  - NumRefs: varint
 //  - Ref[NumRefs]
 // Fields of Ref are encoded in turn, see implementation.
@@ -338,7 +338,7 @@ std::pair<SymbolID, std::vector<Ref>> readRefs(Reader &Data,
 // The current versioning scheme is simple - non-current versions are rejected.
 // If you make a breaking change, bump this version number to invalidate stored
 // data. Later we may want to support some backward compatibility.
-constexpr static uint32_t Version = 5;
+constexpr static uint32_t Version = 6;
 
 Expected<IndexFileIn> readRIFF(StringRef Data) {
   auto RIFF = riff::readFile(Data);
@@ -448,7 +448,7 @@ void writeRIFF(const IndexFileOut &Data, raw_ostream &OS) {
 void writeYAML(const IndexFileOut &, raw_ostream &);
 Expected<IndexFileIn> readYAML(StringRef);
 
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const IndexFileOut &O) {
+raw_ostream &operator<<(raw_ostream &OS, const IndexFileOut &O) {
   switch (O.Format) {
   case IndexFileFormat::RIFF:
     writeRIFF(O, OS);
@@ -467,17 +467,17 @@ Expected<IndexFileIn> readIndexFile(StringRef Data) {
     return std::move(*YAMLContents);
   } else {
     return makeError("Not a RIFF file and failed to parse as YAML: " +
-                     llvm::toString(YAMLContents.takeError()));
+                     toString(YAMLContents.takeError()));
   }
 }
 
-std::unique_ptr<SymbolIndex> loadIndex(llvm::StringRef SymbolFilename,
-                                       llvm::ArrayRef<std::string> URISchemes,
+std::unique_ptr<SymbolIndex> loadIndex(StringRef SymbolFilename,
+                                       ArrayRef<std::string> URISchemes,
                                        bool UseDex) {
   trace::Span OverallTracer("LoadIndex");
   auto Buffer = MemoryBuffer::getFile(SymbolFilename);
   if (!Buffer) {
-    llvm::errs() << "Can't open " << SymbolFilename << "\n";
+    errs() << "Can't open " << SymbolFilename << "\n";
     return nullptr;
   }
 
@@ -491,18 +491,23 @@ std::unique_ptr<SymbolIndex> loadIndex(llvm::StringRef SymbolFilename,
       if (I->Refs)
         Refs = std::move(*I->Refs);
     } else {
-      llvm::errs() << "Bad Index: " << llvm::toString(I.takeError()) << "\n";
+      errs() << "Bad Index: " << toString(I.takeError()) << "\n";
       return nullptr;
     }
   }
+
+  size_t NumSym = Symbols.size();
+  size_t NumRefs = Refs.numRefs();
 
   trace::Span Tracer("BuildIndex");
   auto Index =
       UseDex ? dex::Dex::build(std::move(Symbols), std::move(Refs), URISchemes)
              : MemIndex::build(std::move(Symbols), std::move(Refs));
-  vlog("Loaded {0} from {1} with estimated memory usage {2}",
+  vlog("Loaded {0} from {1} with estimated memory usage {2} bytes\n"
+       "  - number of symbols: {3}\n"
+       "  - number of refs: {4}\n",
        UseDex ? "Dex" : "MemIndex", SymbolFilename,
-       Index->estimateMemoryUsage());
+       Index->estimateMemoryUsage(), NumSym, NumRefs);
   return Index;
 }
 

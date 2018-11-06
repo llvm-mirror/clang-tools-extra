@@ -5,6 +5,7 @@ Clang-Tidy Checks
 
 .. toctree::
    abseil-duration-division
+   abseil-duration-factory-float
    abseil-faster-strsplit-delimiter
    abseil-no-internal-dependencies
    abseil-no-namespace
@@ -65,6 +66,7 @@ Clang-Tidy Checks
    bugprone-use-after-move
    bugprone-virtual-near-miss
    cert-dcl03-c (redirects to misc-static-assert) <cert-dcl03-c>
+   cert-dcl16-c (redirects to readability-uppercase-literal-suffix) <cert-dcl16-c>
    cert-dcl21-cpp
    cert-dcl50-cpp
    cert-dcl54-cpp (redirects to misc-new-delete-overloads) <cert-dcl54-cpp>
@@ -88,8 +90,10 @@ Clang-Tidy Checks
    cppcoreguidelines-avoid-magic-numbers (redirects to readability-magic-numbers) <cppcoreguidelines-avoid-magic-numbers>
    cppcoreguidelines-c-copy-assignment-signature (redirects to misc-unconventional-assign-operator) <cppcoreguidelines-c-copy-assignment-signature>
    cppcoreguidelines-interfaces-global-init
+   cppcoreguidelines-macro-usage
    cppcoreguidelines-narrowing-conversions
    cppcoreguidelines-no-malloc
+   cppcoreguidelines-non-private-member-variables-in-classes (redirects to misc-non-private-member-variables-in-classes) <cppcoreguidelines-non-private-member-variables-in-classes>
    cppcoreguidelines-owning-memory
    cppcoreguidelines-pro-bounds-array-to-pointer-decay
    cppcoreguidelines-pro-bounds-constant-array-index
@@ -155,6 +159,7 @@ Clang-Tidy Checks
    hicpp-use-nullptr (redirects to modernize-use-nullptr) <hicpp-use-nullptr>
    hicpp-use-override (redirects to modernize-use-override) <hicpp-use-override>
    hicpp-vararg (redirects to cppcoreguidelines-pro-type-vararg) <hicpp-vararg>
+   hicpp-uppercase-literal-suffix (redirects to readability-uppercase-literal-suffix) <hicpp-uppercase-literal-suffix>
    llvm-header-guard
    llvm-include-order
    llvm-namespace-comment
@@ -163,6 +168,7 @@ Clang-Tidy Checks
    misc-misplaced-const
    misc-new-delete-overloads
    misc-non-copyable-objects
+   misc-non-private-member-variables-in-classes
    misc-redundant-expression
    misc-static-assert
    misc-throw-by-value-catch-by-reference
@@ -219,6 +225,7 @@ Clang-Tidy Checks
    portability-simd-intrinsics
    readability-avoid-const-params-in-decls
    readability-braces-around-statements
+   readability-const-return-type
    readability-container-size-empty
    readability-delete-null-pointer
    readability-deleted-default
@@ -227,6 +234,7 @@ Clang-Tidy Checks
    readability-identifier-naming
    readability-implicit-bool-conversion
    readability-inconsistent-declaration-parameter-name
+   readability-isolate-declaration
    readability-magic-numbers
    readability-misleading-indentation
    readability-misplaced-array-index
@@ -245,4 +253,5 @@ Clang-Tidy Checks
    readability-static-definition-in-anonymous-namespace
    readability-string-compare
    readability-uniqueptr-delete-release
+   readability-uppercase-literal-suffix
    zircon-temporary-objects

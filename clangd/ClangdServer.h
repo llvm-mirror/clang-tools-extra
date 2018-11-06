@@ -75,6 +75,9 @@ public:
     /// If true, ClangdServer builds a dynamic in-memory index for symbols in
     /// opened files and uses the index to augment code completion results.
     bool BuildDynamicSymbolIndex = false;
+    /// Use a heavier and faster in-memory index implementation.
+    /// FIXME: we should make this true if it isn't too slow to build!.
+    bool HeavyweightDynamicSymbolIndex = false;
 
     /// URI schemes to use when building the dynamic index.
     /// If empty, the default schemes in SymbolCollector will be used.
@@ -83,11 +86,16 @@ public:
     /// If set, use this index to augment code completion results.
     SymbolIndex *StaticIndex = nullptr;
 
+    /// Clangd's workspace root. Relevant for "workspace" operations not bound
+    /// to a particular file.
+    /// FIXME: If not set, should use the current working directory.
+    llvm::Optional<std::string> WorkspaceRoot;
+
     /// The resource directory is used to find internal headers, overriding
     /// defaults and -resource-dir compiler flag).
     /// If None, ClangdServer calls CompilerInvocation::GetResourcePath() to
     /// obtain the standard resource directory.
-    llvm::Optional<StringRef> ResourceDir = llvm::None;
+    llvm::Optional<std::string> ResourceDir = llvm::None;
 
     /// Time to wait after a new file version before computing diagnostics.
     std::chrono::steady_clock::duration UpdateDebounce =
@@ -112,9 +120,6 @@ public:
   ClangdServer(const GlobalCompilationDatabase &CDB,
                const FileSystemProvider &FSProvider,
                DiagnosticsConsumer &DiagConsumer, const Options &Opts);
-
-  /// Set the root path of the workspace.
-  void setRootPath(PathRef RootPath);
 
   /// Add a \p File to the list of tracked C++ files or update the contents if
   /// \p File is already tracked. Also schedules parsing of the AST for it on a
@@ -252,8 +257,7 @@ private:
       CachedCompletionFuzzyFindRequestByFile;
   mutable std::mutex CachedCompletionFuzzyFindRequestMutex;
 
-  // If set, this represents the workspace path.
-  llvm::Optional<std::string> RootPath;
+  llvm::Optional<std::string> WorkspaceRoot;
   std::shared_ptr<PCHContainerOperations> PCHs;
   /// Used to serialize diagnostic callbacks.
   /// FIXME(ibiryukov): get rid of an extra map and put all version counters

@@ -14,11 +14,13 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
 
 void IgnoreDiagnostics::log(DiagnosticsEngine::Level DiagLevel,
                             const clang::Diagnostic &Info) {
+  // FIXME: format lazily, in case vlog is off.
   SmallString<64> Message;
   Info.FormatDiagnostic(Message);
 
@@ -26,12 +28,12 @@ void IgnoreDiagnostics::log(DiagnosticsEngine::Level DiagLevel,
   if (Info.hasSourceManager() && Info.getLocation().isValid()) {
     auto &SourceMgr = Info.getSourceManager();
     auto Loc = SourceMgr.getFileLoc(Info.getLocation());
-    llvm::raw_svector_ostream OS(Location);
+    raw_svector_ostream OS(Location);
     Loc.print(OS, SourceMgr);
     OS << ":";
   }
 
-  clangd::log("Ignored diagnostic. {0}{1}", Location, Message);
+  clangd::vlog("Ignored diagnostic. {0}{1}", Location, Message);
 }
 
 void IgnoreDiagnostics::HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
@@ -39,13 +41,11 @@ void IgnoreDiagnostics::HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
   IgnoreDiagnostics::log(DiagLevel, Info);
 }
 
-std::unique_ptr<CompilerInstance>
-prepareCompilerInstance(std::unique_ptr<clang::CompilerInvocation> CI,
-                        const PrecompiledPreamble *Preamble,
-                        std::unique_ptr<llvm::MemoryBuffer> Buffer,
-                        std::shared_ptr<PCHContainerOperations> PCHs,
-                        IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS,
-                        DiagnosticConsumer &DiagsClient) {
+std::unique_ptr<CompilerInstance> prepareCompilerInstance(
+    std::unique_ptr<clang::CompilerInvocation> CI,
+    const PrecompiledPreamble *Preamble, std::unique_ptr<MemoryBuffer> Buffer,
+    std::shared_ptr<PCHContainerOperations> PCHs,
+    IntrusiveRefCntPtr<vfs::FileSystem> VFS, DiagnosticConsumer &DiagsClient) {
   assert(VFS && "VFS is null");
   assert(!CI->getPreprocessorOpts().RetainRemappedFileBuffers &&
          "Setting RetainRemappedFileBuffers to true will cause a memory leak "

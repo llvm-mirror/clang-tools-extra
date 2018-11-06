@@ -18,9 +18,9 @@
 #include "clang/Index/USRGeneration.h"
 #include "llvm/Support/Path.h"
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
-using namespace llvm;
 namespace {
 
 // Get the definition from a given declaration `D`.
@@ -37,30 +37,36 @@ const Decl *getDefinition(const Decl *D) {
   return nullptr;
 }
 
+void logIfOverflow(const SymbolLocation &Loc) {
+  if (Loc.Start.hasOverflow() || Loc.End.hasOverflow())
+    log("Possible overflow in symbol location: {0}", Loc);
+}
+
 // Convert a SymbolLocation to LSP's Location.
 // HintPath is used to resolve the path of URI.
 // FIXME: figure out a good home for it, and share the implementation with
 // FindSymbols.
-llvm::Optional<Location> toLSPLocation(const SymbolLocation &Loc,
-                                       llvm::StringRef HintPath) {
+Optional<Location> toLSPLocation(const SymbolLocation &Loc,
+                                 StringRef HintPath) {
   if (!Loc)
-    return llvm::None;
+    return None;
   auto Uri = URI::parse(Loc.FileURI);
   if (!Uri) {
     log("Could not parse URI: {0}", Loc.FileURI);
-    return llvm::None;
+    return None;
   }
   auto Path = URI::resolve(*Uri, HintPath);
   if (!Path) {
     log("Could not resolve URI: {0}", Loc.FileURI);
-    return llvm::None;
+    return None;
   }
   Location LSPLoc;
   LSPLoc.uri = URIForFile(*Path);
-  LSPLoc.range.start.line = Loc.Start.Line;
-  LSPLoc.range.start.character = Loc.Start.Column;
-  LSPLoc.range.end.line = Loc.End.Line;
-  LSPLoc.range.end.character = Loc.End.Column;
+  LSPLoc.range.start.line = Loc.Start.line();
+  LSPLoc.range.start.character = Loc.Start.column();
+  LSPLoc.range.end.line = Loc.End.line();
+  LSPLoc.range.end.character = Loc.End.column();
+  logIfOverflow(Loc);
   return LSPLoc;
 }
 
@@ -82,7 +88,7 @@ class DeclarationAndMacrosFinder : public index::IndexDataConsumer {
   // explicitly in the code.
   // True means the declaration is explicitly referenced at least once; false
   // otherwise.
-  llvm::DenseMap<const Decl *, bool> Decls;
+  DenseMap<const Decl *, bool> Decls;
   const SourceLocation &SearchedLocation;
   const ASTContext &AST;
   Preprocessor &PP;
@@ -140,10 +146,10 @@ public:
         // expression returned by handleDeclOccurence contains exactly one
         // child expression.
         const auto *FirstChild = *E->child_begin();
-        return llvm::isa<ExprWithCleanups>(FirstChild) ||
-               llvm::isa<MaterializeTemporaryExpr>(FirstChild) ||
-               llvm::isa<CXXBindTemporaryExpr>(FirstChild) ||
-               llvm::isa<ImplicitCastExpr>(FirstChild);
+        return isa<ExprWithCleanups>(FirstChild) ||
+               isa<MaterializeTemporaryExpr>(FirstChild) ||
+               isa<CXXBindTemporaryExpr>(FirstChild) ||
+               isa<ImplicitCastExpr>(FirstChild);
       };
 
       bool IsExplicit = !hasImplicitExpr(ASTNode.OrigE);
@@ -218,15 +224,15 @@ Range getTokenRange(ParsedAST &AST, SourceLocation TokLoc) {
           sourceLocToPosition(SourceMgr, LocEnd)};
 }
 
-llvm::Optional<Location> makeLocation(ParsedAST &AST, SourceLocation TokLoc) {
+Optional<Location> makeLocation(ParsedAST &AST, SourceLocation TokLoc) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *F = SourceMgr.getFileEntryForID(SourceMgr.getFileID(TokLoc));
   if (!F)
-    return llvm::None;
+    return None;
   auto FilePath = getRealPath(F, SourceMgr);
   if (!FilePath) {
     log("failed to get path!");
-    return llvm::None;
+    return None;
   }
   Location L;
   L.uri = URIForFile(*FilePath);
@@ -282,12 +288,12 @@ std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,
   //   4. Return all populated locations for all symbols, definition first (
   //      which  we think is the users wants most often).
   struct CandidateLocation {
-    llvm::Optional<Location> Def;
-    llvm::Optional<Location> Decl;
+    Optional<Location> Def;
+    Optional<Location> Decl;
   };
   // We respect the order in Symbols.Decls.
-  llvm::SmallVector<CandidateLocation, 8> ResultCandidates;
-  llvm::DenseMap<SymbolID, size_t> CandidatesIndex;
+  SmallVector<CandidateLocation, 8> ResultCandidates;
+  DenseMap<SymbolID, size_t> CandidatesIndex;
 
   // Emit all symbol locations (declaration or definition) from AST.
   for (const DeclInfo &DI : Symbols.Decls) {
@@ -401,7 +407,7 @@ public:
   }
 
 private:
-  llvm::SmallSet<const Decl *, 4> CanonicalTargets;
+  SmallSet<const Decl *, 4> CanonicalTargets;
   std::vector<Reference> References;
   const ASTContext &AST;
 };
@@ -467,7 +473,7 @@ static std::string typeDeclToString(const TypeDecl *TD) {
       printingPolicyForDecls(TD->getASTContext().getPrintingPolicy());
 
   std::string Name;
-  llvm::raw_string_ostream Stream(Name);
+  raw_string_ostream Stream(Name);
   Type.print(Stream, Policy);
 
   return Stream.str();
@@ -481,7 +487,7 @@ static std::string namedDeclQualifiedName(const NamedDecl *ND,
       printingPolicyForDecls(ND->getASTContext().getPrintingPolicy());
 
   std::string Name;
-  llvm::raw_string_ostream Stream(Name);
+  raw_string_ostream Stream(Name);
   Stream << Prefix << ' ';
   ND->printQualifiedName(Stream, Policy);
 
@@ -491,7 +497,7 @@ static std::string namedDeclQualifiedName(const NamedDecl *ND,
 /// Given a declaration \p D, return a human-readable string representing the
 /// scope in which it is declared.  If the declaration is in the global scope,
 /// return the string "global namespace".
-static llvm::Optional<std::string> getScopeName(const Decl *D) {
+static Optional<std::string> getScopeName(const Decl *D) {
   const DeclContext *DC = D->getDeclContext();
 
   if (isa<TranslationUnitDecl>(DC))
@@ -503,13 +509,13 @@ static llvm::Optional<std::string> getScopeName(const Decl *D) {
   else if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(DC))
     return namedDeclQualifiedName(FD, "function");
 
-  return llvm::None;
+  return None;
 }
 
 /// Generate a \p Hover object given the declaration \p D.
 static Hover getHoverContents(const Decl *D) {
   Hover H;
-  llvm::Optional<std::string> NamedScope = getScopeName(D);
+  Optional<std::string> NamedScope = getScopeName(D);
 
   // Generate the "Declared in" section.
   if (NamedScope) {
@@ -525,7 +531,7 @@ static Hover getHoverContents(const Decl *D) {
     D = TD;
 
   std::string DeclText;
-  llvm::raw_string_ostream OS(DeclText);
+  raw_string_ostream OS(DeclText);
 
   PrintingPolicy Policy =
       printingPolicyForDecls(D->getASTContext().getPrintingPolicy());
@@ -542,7 +548,7 @@ static Hover getHoverContents(const Decl *D) {
 static Hover getHoverContents(QualType T, ASTContext &ASTCtx) {
   Hover H;
   std::string TypeText;
-  llvm::raw_string_ostream OS(TypeText);
+  raw_string_ostream OS(TypeText);
   PrintingPolicy Policy = printingPolicyForDecls(ASTCtx.getPrintingPolicy());
   T.print(OS, Policy);
   OS.flush();
@@ -571,24 +577,13 @@ namespace {
 /// a deduced type set. The AST should be improved to simplify this scenario.
 class DeducedTypeVisitor : public RecursiveASTVisitor<DeducedTypeVisitor> {
   SourceLocation SearchedLocation;
-  llvm::Optional<QualType> DeducedType;
+  Optional<QualType> DeducedType;
 
 public:
   DeducedTypeVisitor(SourceLocation SearchedLocation)
       : SearchedLocation(SearchedLocation) {}
 
-  llvm::Optional<QualType> getDeducedType() { return DeducedType; }
-
-  // Remove the surrounding Reference or Pointer type of the given type T.
-  QualType UnwrapReferenceOrPointer(QualType T) {
-    // "auto &" is represented as a ReferenceType containing an AutoType
-    if (const ReferenceType *RT = dyn_cast<ReferenceType>(T.getTypePtr()))
-      return RT->getPointeeType();
-    // "auto *" is represented as a PointerType containing an AutoType
-    if (const PointerType *PT = dyn_cast<PointerType>(T.getTypePtr()))
-      return PT->getPointeeType();
-    return T;
-  }
+  Optional<QualType> getDeducedType() { return DeducedType; }
 
   // Handle auto initializers:
   //- auto i = 1;
@@ -600,17 +595,9 @@ public:
         D->getTypeSourceInfo()->getTypeLoc().getBeginLoc() != SearchedLocation)
       return true;
 
-    auto DeclT = UnwrapReferenceOrPointer(D->getType());
-    const AutoType *AT = dyn_cast<AutoType>(DeclT.getTypePtr());
-    if (AT && !AT->getDeducedType().isNull()) {
-      // For auto, use the underlying type because the const& would be
-      // represented twice: written in the code and in the hover.
-      // Example: "const auto I = 1", we only want "int" when hovering on auto,
-      // not "const int".
-      //
-      // For decltype(auto), take the type as is because it cannot be written
-      // with qualifiers or references but its decuded type can be const-ref.
-      DeducedType = AT->isDecltypeAuto() ? DeclT : DeclT.getUnqualifiedType();
+    if (auto *AT = D->getType()->getContainedAutoType()) {
+      if (!AT->getDeducedType().isNull())
+        DeducedType = AT->getDeducedType();
     }
     return true;
   }
@@ -634,12 +621,13 @@ public:
     if (CurLoc != SearchedLocation)
       return true;
 
-    auto T = UnwrapReferenceOrPointer(D->getReturnType());
-    const AutoType *AT = dyn_cast<AutoType>(T.getTypePtr());
+    const AutoType *AT = D->getReturnType()->getContainedAutoType();
     if (AT && !AT->getDeducedType().isNull()) {
-      DeducedType = T.getUnqualifiedType();
-    } else { // auto in a trailing return type just points to a DecltypeType.
-      const DecltypeType *DT = dyn_cast<DecltypeType>(T.getTypePtr());
+      DeducedType = AT->getDeducedType();
+    } else {
+      // auto in a trailing return type just points to a DecltypeType and
+      // getContainedAutoType does not unwrap it.
+      const DecltypeType *DT = dyn_cast<DecltypeType>(D->getReturnType());
       if (!DT->getUnderlyingType().isNull())
         DeducedType = DT->getUnderlyingType();
     }
@@ -668,8 +656,8 @@ public:
 } // namespace
 
 /// Retrieves the deduced type at a given location (auto, decltype).
-llvm::Optional<QualType> getDeducedType(ParsedAST &AST,
-                                        SourceLocation SourceLocationBeg) {
+Optional<QualType> getDeducedType(ParsedAST &AST,
+                                  SourceLocation SourceLocationBeg) {
   Token Tok;
   auto &ASTCtx = AST.getASTContext();
   // Only try to find a deduced type if the token is auto or decltype.

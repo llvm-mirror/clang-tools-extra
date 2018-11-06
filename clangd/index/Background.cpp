@@ -11,6 +11,7 @@
 #include "ClangdUnit.h"
 #include "Compiler.h"
 #include "Logger.h"
+#include "Threading.h"
 #include "Trace.h"
 #include "index/IndexAction.h"
 #include "index/MemIndex.h"
@@ -24,14 +25,27 @@ namespace clangd {
 
 BackgroundIndex::BackgroundIndex(Context BackgroundContext,
                                  StringRef ResourceDir,
-                                 const FileSystemProvider &FSProvider)
-    : SwapIndex(llvm::make_unique<MemIndex>()), ResourceDir(ResourceDir),
+                                 const FileSystemProvider &FSProvider,
+                                 ArrayRef<std::string> URISchemes,
+                                 size_t ThreadPoolSize)
+    : SwapIndex(make_unique<MemIndex>()), ResourceDir(ResourceDir),
       FSProvider(FSProvider), BackgroundContext(std::move(BackgroundContext)),
-      Thread([this] { run(); }) {}
+      URISchemes(URISchemes) {
+  assert(ThreadPoolSize > 0 && "Thread pool size can't be zero.");
+  while (ThreadPoolSize--) {
+    ThreadPool.emplace_back([this] { run(); });
+    // Set priority to low, since background indexing is a long running task we
+    // do not want to eat up cpu when there are any other high priority threads.
+    // FIXME: In the future we might want a more general way of handling this to
+    // support a tasks with various priorities.
+    setThreadPriority(ThreadPool.back(), ThreadPriority::Low);
+  }
+}
 
 BackgroundIndex::~BackgroundIndex() {
   stop();
-  Thread.join();
+  for (auto &Thread : ThreadPool)
+    Thread.join();
 }
 
 void BackgroundIndex::stop() {
@@ -43,9 +57,9 @@ void BackgroundIndex::stop() {
 }
 
 void BackgroundIndex::run() {
-  WithContext Background(std::move(BackgroundContext));
+  WithContext Background(BackgroundContext.clone());
   while (true) {
-    llvm::Optional<Task> Task;
+    Optional<Task> Task;
     {
       std::unique_lock<std::mutex> Lock(QueueMu);
       QueueCV.wait(Lock, [&] { return ShouldStop || !Queue.empty(); });
@@ -75,8 +89,11 @@ void BackgroundIndex::blockUntilIdleForTest() {
 
 void BackgroundIndex::enqueue(StringRef Directory,
                               tooling::CompileCommand Cmd) {
-  std::lock_guard<std::mutex> Lock(QueueMu);
-  enqueueLocked(std::move(Cmd));
+  {
+    std::lock_guard<std::mutex> Lock(QueueMu);
+    enqueueLocked(std::move(Cmd));
+  }
+  QueueCV.notify_all();
 }
 
 void BackgroundIndex::enqueueAll(StringRef Directory,
@@ -108,15 +125,15 @@ void BackgroundIndex::enqueueLocked(tooling::CompileCommand Cmd) {
       std::move(Cmd)));
 }
 
-llvm::Error BackgroundIndex::index(tooling::CompileCommand Cmd) {
+Error BackgroundIndex::index(tooling::CompileCommand Cmd) {
   trace::Span Tracer("BackgroundIndex");
   SPAN_ATTACH(Tracer, "file", Cmd.Filename);
   SmallString<128> AbsolutePath;
-  if (llvm::sys::path::is_absolute(Cmd.Filename)) {
+  if (sys::path::is_absolute(Cmd.Filename)) {
     AbsolutePath = Cmd.Filename;
   } else {
     AbsolutePath = Cmd.Directory;
-    llvm::sys::path::append(AbsolutePath, Cmd.Filename);
+    sys::path::append(AbsolutePath, Cmd.Filename);
   }
 
   auto FS = FSProvider.getFileSystem();
@@ -138,14 +155,14 @@ llvm::Error BackgroundIndex::index(tooling::CompileCommand Cmd) {
   Inputs.CompileCommand = std::move(Cmd);
   auto CI = buildCompilerInvocation(Inputs);
   if (!CI)
-    return createStringError(llvm::inconvertibleErrorCode(),
+    return createStringError(inconvertibleErrorCode(),
                              "Couldn't build compiler invocation");
   IgnoreDiagnostics IgnoreDiags;
   auto Clang = prepareCompilerInstance(
       std::move(CI), /*Preamble=*/nullptr, std::move(*Buf),
       std::make_shared<PCHContainerOperations>(), Inputs.FS, IgnoreDiags);
   if (!Clang)
-    return createStringError(llvm::inconvertibleErrorCode(),
+    return createStringError(inconvertibleErrorCode(),
                              "Couldn't build compiler instance");
 
   SymbolCollector::Options IndexOpts;
@@ -163,17 +180,16 @@ llvm::Error BackgroundIndex::index(tooling::CompileCommand Cmd) {
 
   const FrontendInputFile &Input = Clang->getFrontendOpts().Inputs.front();
   if (!Action->BeginSourceFile(*Clang, Input))
-    return createStringError(llvm::inconvertibleErrorCode(),
+    return createStringError(inconvertibleErrorCode(),
                              "BeginSourceFile() failed");
   if (!Action->Execute())
-    return createStringError(llvm::inconvertibleErrorCode(),
-                             "Execute() failed");
+    return createStringError(inconvertibleErrorCode(), "Execute() failed");
   Action->EndSourceFile();
 
   log("Indexed {0} ({1} symbols, {2} refs)", Inputs.CompileCommand.Filename,
-      Symbols.size(), Refs.size());
+      Symbols.size(), Refs.numRefs());
   SPAN_ATTACH(Tracer, "symbols", int(Symbols.size()));
-  SPAN_ATTACH(Tracer, "refs", int(Refs.size()));
+  SPAN_ATTACH(Tracer, "refs", int(Refs.numRefs()));
   // FIXME: partition the symbols by file rather than TU, to avoid duplication.
   IndexedSymbols.update(AbsolutePath,
                         llvm::make_unique<SymbolSlab>(std::move(Symbols)),
@@ -183,7 +199,7 @@ llvm::Error BackgroundIndex::index(tooling::CompileCommand Cmd) {
   // FIXME: this should rebuild once-in-a-while, not after every file.
   //       At that point we should use Dex, too.
   vlog("Rebuilding automatic index");
-  reset(IndexedSymbols.buildMemIndex());
+  reset(IndexedSymbols.buildIndex(IndexType::Light, URISchemes));
   return Error::success();
 }
 
