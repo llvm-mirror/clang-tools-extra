@@ -67,6 +67,11 @@ The improvements are...
 Improvements to clang-tidy
 --------------------------
 
+- New :doc:`abseil-make-unique
+  <clang-tidy/checks/abseil-make-unique>` check.
+
+  FIXME: add release notes.
+
 - New :doc:`abseil-duration-division
   <clang-tidy/checks/abseil-duration-division>` check.
 

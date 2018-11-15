@@ -5,6 +5,7 @@ add_clang_library(clangTidyAbseilModule
   DurationDivisionCheck.cpp
   DurationFactoryFloatCheck.cpp
   FasterStrsplitDelimiterCheck.cpp
+  MakeUniqueCheck.cpp
   NoInternalDependenciesCheck.cpp
   NoNamespaceCheck.cpp
   RedundantStrcatCallsCheck.cpp

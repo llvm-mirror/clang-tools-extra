@@ -7,11 +7,12 @@ Clang-Tidy Checks
    abseil-duration-division
    abseil-duration-factory-float
    abseil-faster-strsplit-delimiter
+   abseil-make-unique
    abseil-no-internal-dependencies
    abseil-no-namespace
    abseil-redundant-strcat-calls
-   abseil-string-find-startswith
    abseil-str-cat-append
+   abseil-string-find-startswith
    android-cloexec-accept
    android-cloexec-accept4
    android-cloexec-creat
@@ -151,6 +152,7 @@ Clang-Tidy Checks
    hicpp-special-member-functions (redirects to cppcoreguidelines-special-member-functions) <hicpp-special-member-functions>
    hicpp-static-assert (redirects to misc-static-assert) <hicpp-static-assert>
    hicpp-undelegated-constructor (redirects to bugprone-undelegated-constructor) <hicpp-undelegated-constructor>
+   hicpp-uppercase-literal-suffix (redirects to readability-uppercase-literal-suffix) <hicpp-uppercase-literal-suffix>
    hicpp-use-auto (redirects to modernize-use-auto) <hicpp-use-auto>
    hicpp-use-emplace (redirects to modernize-use-emplace) <hicpp-use-emplace>
    hicpp-use-equals-default (redirects to modernize-use-equals-default) <hicpp-use-equals-default>
@@ -159,7 +161,6 @@ Clang-Tidy Checks
    hicpp-use-nullptr (redirects to modernize-use-nullptr) <hicpp-use-nullptr>
    hicpp-use-override (redirects to modernize-use-override) <hicpp-use-override>
    hicpp-vararg (redirects to cppcoreguidelines-pro-type-vararg) <hicpp-vararg>
-   hicpp-uppercase-literal-suffix (redirects to readability-uppercase-literal-suffix) <hicpp-uppercase-literal-suffix>
    llvm-header-guard
    llvm-include-order
    llvm-namespace-comment
