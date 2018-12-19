@@ -8,46 +8,38 @@
 //===----------------------------------------------------------------------===//
 
 #include "Index.h"
+#include "Logger.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/SHA1.h"
 #include "llvm/Support/raw_ostream.h"
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
-using namespace llvm;
+
+constexpr uint32_t SymbolLocation::Position::MaxLine;
+constexpr uint32_t SymbolLocation::Position::MaxColumn;
+void SymbolLocation::Position::setLine(uint32_t L) {
+  if (L > MaxLine) {
+    Line = MaxLine;
+    return;
+  }
+  Line = L;
+}
+void SymbolLocation::Position::setColumn(uint32_t Col) {
+  if (Col > MaxColumn) {
+    Column = MaxColumn;
+    return;
+  }
+  Column = Col;
+}
 
 raw_ostream &operator<<(raw_ostream &OS, const SymbolLocation &L) {
   if (!L)
     return OS << "(none)";
-  return OS << L.FileURI << "[" << L.Start.Line << ":" << L.Start.Column << "-"
-            << L.End.Line << ":" << L.End.Column << ")";
-}
-
-SymbolID::SymbolID(StringRef USR)
-    : HashValue(SHA1::hash(arrayRefFromStringRef(USR))) {}
-
-raw_ostream &operator<<(raw_ostream &OS, const SymbolID &ID) {
-  return OS << toHex(ID.raw());
-}
-
-SymbolID SymbolID::fromRaw(llvm::StringRef Raw) {
-  SymbolID ID;
-  assert(Raw.size() == RawSize);
-  memcpy(ID.HashValue.data(), Raw.data(), RawSize);
-  return ID;
-}
-
-std::string SymbolID::str() const { return toHex(raw()); }
-
-llvm::Expected<SymbolID> SymbolID::fromStr(llvm::StringRef Str) {
-  if (Str.size() != RawSize * 2)
-    return createStringError(llvm::inconvertibleErrorCode(), "Bad ID length");
-  for (char C : Str)
-    if (!isHexDigit(C))
-      return createStringError(llvm::inconvertibleErrorCode(), "Bad hex ID");
-  return fromRaw(fromHex(Str));
+  return OS << L.FileURI << "[" << L.Start.line() << ":" << L.Start.column()
+            << "-" << L.End.line() << ":" << L.End.column() << ")";
 }
 
 raw_ostream &operator<<(raw_ostream &OS, SymbolOrigin O) {
@@ -84,17 +76,16 @@ float quality(const Symbol &S) {
 }
 
 SymbolSlab::const_iterator SymbolSlab::find(const SymbolID &ID) const {
-  auto It = std::lower_bound(Symbols.begin(), Symbols.end(), ID,
-                             [](const Symbol &S, const SymbolID &I) {
-                               return S.ID < I;
-                             });
+  auto It = std::lower_bound(
+      Symbols.begin(), Symbols.end(), ID,
+      [](const Symbol &S, const SymbolID &I) { return S.ID < I; });
   if (It != Symbols.end() && It->ID == ID)
     return It;
   return Symbols.end();
 }
 
 // Copy the underlying data of the symbol into the owned arena.
-static void own(Symbol &S, llvm::UniqueStringSaver &Strings) {
+static void own(Symbol &S, UniqueStringSaver &Strings) {
   visitStrings(S, [&](StringRef &V) { V = Strings.save(V); });
 }
 
@@ -112,11 +103,11 @@ void SymbolSlab::Builder::insert(const Symbol &S) {
 SymbolSlab SymbolSlab::Builder::build() && {
   Symbols = {Symbols.begin(), Symbols.end()}; // Force shrink-to-fit.
   // Sort symbols so the slab can binary search over them.
-  std::sort(Symbols.begin(), Symbols.end(),
-            [](const Symbol &L, const Symbol &R) { return L.ID < R.ID; });
+  llvm::sort(Symbols,
+             [](const Symbol &L, const Symbol &R) { return L.ID < R.ID; });
   // We may have unused strings from overwritten symbols. Build a new arena.
   BumpPtrAllocator NewArena;
-  llvm::UniqueStringSaver Strings(NewArena);
+  UniqueStringSaver Strings(NewArena);
   for (auto &S : Symbols)
     own(S, Strings);
   return SymbolSlab(std::move(NewArena), std::move(Symbols));
@@ -138,14 +129,15 @@ raw_ostream &operator<<(raw_ostream &OS, RefKind K) {
   return OS;
 }
 
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const Ref &R) {
+raw_ostream &operator<<(raw_ostream &OS, const Ref &R) {
   return OS << R.Location << ":" << R.Kind;
 }
 
 void RefSlab::Builder::insert(const SymbolID &ID, const Ref &S) {
   auto &M = Refs[ID];
   M.push_back(S);
-  M.back().Location.FileURI = UniqueStrings.save(M.back().Location.FileURI);
+  M.back().Location.FileURI =
+      UniqueStrings.save(M.back().Location.FileURI).data();
 }
 
 RefSlab RefSlab::Builder::build() && {
@@ -153,17 +145,19 @@ RefSlab RefSlab::Builder::build() && {
   // Reallocate refs on the arena to reduce waste and indirections when reading.
   std::vector<std::pair<SymbolID, ArrayRef<Ref>>> Result;
   Result.reserve(Refs.size());
+  size_t NumRefs = 0;
   for (auto &Sym : Refs) {
     auto &SymRefs = Sym.second;
-    std::sort(SymRefs.begin(), SymRefs.end());
-    // TODO: do we really need to dedup?
+    llvm::sort(SymRefs);
+    // FIXME: do we really need to dedup?
     SymRefs.erase(std::unique(SymRefs.begin(), SymRefs.end()), SymRefs.end());
 
+    NumRefs += SymRefs.size();
     auto *Array = Arena.Allocate<Ref>(SymRefs.size());
     std::uninitialized_copy(SymRefs.begin(), SymRefs.end(), Array);
     Result.emplace_back(Sym.first, ArrayRef<Ref>(Array, SymRefs.size()));
   }
-  return RefSlab(std::move(Result), std::move(Arena));
+  return RefSlab(std::move(Result), std::move(Arena), NumRefs);
 }
 
 void SwapIndex::reset(std::unique_ptr<SymbolIndex> Index) {
@@ -180,12 +174,12 @@ std::shared_ptr<SymbolIndex> SwapIndex::snapshot() const {
   return Index;
 }
 
-bool fromJSON(const llvm::json::Value &Parameters, FuzzyFindRequest &Request) {
+bool fromJSON(const json::Value &Parameters, FuzzyFindRequest &Request) {
   json::ObjectMapper O(Parameters);
   int64_t Limit;
   bool OK =
       O && O.map("Query", Request.Query) && O.map("Scopes", Request.Scopes) &&
-      O.map("Limit", Limit) &&
+      O.map("AnyScope", Request.AnyScope) && O.map("Limit", Limit) &&
       O.map("RestrictForCodeCompletion", Request.RestrictForCodeCompletion) &&
       O.map("ProximityPaths", Request.ProximityPaths);
   if (OK && Limit <= std::numeric_limits<uint32_t>::max())
@@ -193,10 +187,11 @@ bool fromJSON(const llvm::json::Value &Parameters, FuzzyFindRequest &Request) {
   return OK;
 }
 
-llvm::json::Value toJSON(const FuzzyFindRequest &Request) {
+json::Value toJSON(const FuzzyFindRequest &Request) {
   return json::Object{
       {"Query", Request.Query},
       {"Scopes", json::Array{Request.Scopes}},
+      {"AnyScope", Request.AnyScope},
       {"Limit", Request.Limit},
       {"RestrictForCodeCompletion", Request.RestrictForCodeCompletion},
       {"ProximityPaths", json::Array{Request.ProximityPaths}},
@@ -204,15 +199,15 @@ llvm::json::Value toJSON(const FuzzyFindRequest &Request) {
 }
 
 bool SwapIndex::fuzzyFind(const FuzzyFindRequest &R,
-                          llvm::function_ref<void(const Symbol &)> CB) const {
+                          function_ref<void(const Symbol &)> CB) const {
   return snapshot()->fuzzyFind(R, CB);
 }
 void SwapIndex::lookup(const LookupRequest &R,
-                       llvm::function_ref<void(const Symbol &)> CB) const {
+                       function_ref<void(const Symbol &)> CB) const {
   return snapshot()->lookup(R, CB);
 }
 void SwapIndex::refs(const RefsRequest &R,
-                     llvm::function_ref<void(const Ref &)> CB) const {
+                     function_ref<void(const Ref &)> CB) const {
   return snapshot()->refs(R, CB);
 }
 size_t SwapIndex::estimateMemoryUsage() const {

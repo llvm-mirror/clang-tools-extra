@@ -101,7 +101,7 @@ void AvoidCStyleCastsCheck::check(const MatchFinder::MatchResult &Result) {
 
   // The rest of this check is only relevant to C++.
   // We also disable it for Objective-C++.
-  if (!getLangOpts().CPlusPlus || getLangOpts().ObjC1 || getLangOpts().ObjC2)
+  if (!getLangOpts().CPlusPlus || getLangOpts().ObjC)
     return;
   // Ignore code inside extern "C" {} blocks.
   if (!match(expr(hasAncestor(linkageSpecDecl())), *CastExpr, *Result.Context)
@@ -187,7 +187,7 @@ void AvoidCStyleCastsCheck::check(const MatchFinder::MatchResult &Result) {
       }
       break;
     }
-  // FALLTHROUGH
+    LLVM_FALLTHROUGH;
   case clang::CK_IntegralCast:
     // Convert integral and no-op casts between builtin types and enums to
     // static_cast. A cast from enum to integer may be unnecessary, but it's

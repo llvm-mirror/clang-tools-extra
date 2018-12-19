@@ -8,14 +8,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "Iterator.h"
+#include "llvm/Support/Casting.h"
 #include <algorithm>
 #include <cassert>
 #include <numeric>
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
 namespace dex {
-
 namespace {
 
 /// Implements Iterator over the intersection of other iterators.
@@ -26,9 +27,11 @@ namespace {
 class AndIterator : public Iterator {
 public:
   explicit AndIterator(std::vector<std::unique_ptr<Iterator>> AllChildren)
-      : Children(std::move(AllChildren)) {
+      : Iterator(Kind::And), Children(std::move(AllChildren)) {
     assert(!Children.empty() && "AND iterator should have at least one child.");
     // Establish invariants.
+    for (const auto &Child : Children)
+      ReachedEnd |= Child->reachedEnd();
     sync();
     // When children are sorted by the estimateSize(), sync() calls are more
     // effective. Each sync() starts with the first child and makes sure all
@@ -37,11 +40,10 @@ public:
     // highest element starting from the front. When child iterators in the
     // beginning have smaller estimated size, the sync() will have less restarts
     // and become more effective.
-    std::sort(begin(Children), end(Children),
-              [](const std::unique_ptr<Iterator> &LHS,
-                 const std::unique_ptr<Iterator> &RHS) {
-                return LHS->estimateSize() < RHS->estimateSize();
-              });
+    llvm::sort(Children, [](const std::unique_ptr<Iterator> &LHS,
+                            const std::unique_ptr<Iterator> &RHS) {
+      return LHS->estimateSize() < RHS->estimateSize();
+    });
   }
 
   bool reachedEnd() const override { return ReachedEnd; }
@@ -64,7 +66,7 @@ public:
 
   float consume() override {
     assert(!reachedEnd() && "AND iterator can't consume() at the end.");
-    float Boost = DEFAULT_BOOST_SCORE;
+    float Boost = 1;
     for (const auto &Child : Children)
       Boost *= Child->consume();
     return Boost;
@@ -75,7 +77,7 @@ public:
   }
 
 private:
-  llvm::raw_ostream &dump(llvm::raw_ostream &OS) const override {
+  raw_ostream &dump(raw_ostream &OS) const override {
     OS << "(& ";
     auto Separator = "";
     for (const auto &Child : Children) {
@@ -122,6 +124,7 @@ private:
   /// update the field, rather than traversing the whole subtree in each
   /// reachedEnd() call.
   bool ReachedEnd = false;
+  friend Corpus; // For optimizations.
 };
 
 /// Implements Iterator over the union of other iterators.
@@ -133,7 +136,7 @@ private:
 class OrIterator : public Iterator {
 public:
   explicit OrIterator(std::vector<std::unique_ptr<Iterator>> AllChildren)
-      : Children(std::move(AllChildren)) {
+      : Iterator(Kind::Or), Children(std::move(AllChildren)) {
     assert(!Children.empty() && "OR iterator should have at least one child.");
   }
 
@@ -175,12 +178,12 @@ public:
     return Result;
   }
 
-  // Returns the maximum boosting score among all Children when iterator is not
-  // exhausted and points to the given ID, DEFAULT_BOOST_SCORE otherwise.
+  // Returns the maximum boosting score among all Children when iterator
+  // points to the current ID.
   float consume() override {
     assert(!reachedEnd() && "OR iterator can't consume() at the end.");
     const DocID ID = peek();
-    float Boost = DEFAULT_BOOST_SCORE;
+    float Boost = 1;
     for (const auto &Child : Children)
       if (!Child->reachedEnd() && Child->peek() == ID)
         Boost = std::max(Boost, Child->consume());
@@ -195,7 +198,7 @@ public:
   }
 
 private:
-  llvm::raw_ostream &dump(llvm::raw_ostream &OS) const override {
+  raw_ostream &dump(raw_ostream &OS) const override {
     OS << "(| ";
     auto Separator = "";
     for (const auto &Child : Children) {
@@ -208,6 +211,7 @@ private:
 
   // FIXME(kbobyrev): Would storing Children in min-heap be faster?
   std::vector<std::unique_ptr<Iterator>> Children;
+  friend Corpus; // For optimizations.
 };
 
 /// TrueIterator handles PostingLists which contain all items of the index. It
@@ -215,7 +219,7 @@ private:
 /// in O(1).
 class TrueIterator : public Iterator {
 public:
-  explicit TrueIterator(DocID Size) : Size(Size) {}
+  explicit TrueIterator(DocID Size) : Iterator(Kind::True), Size(Size) {}
 
   bool reachedEnd() const override { return Index >= Size; }
 
@@ -236,20 +240,38 @@ public:
 
   float consume() override {
     assert(!reachedEnd() && "TRUE iterator can't consume() at the end.");
-    return DEFAULT_BOOST_SCORE;
+    return 1;
   }
 
   size_t estimateSize() const override { return Size; }
 
 private:
-  llvm::raw_ostream &dump(llvm::raw_ostream &OS) const override {
-    OS << "(TRUE {" << Index << "} out of " << Size << ")";
-    return OS;
-  }
+  raw_ostream &dump(raw_ostream &OS) const override { return OS << "true"; }
 
   DocID Index = 0;
   /// Size of the underlying virtual PostingList.
   DocID Size;
+};
+
+/// FalseIterator yields no results.
+class FalseIterator : public Iterator {
+public:
+  FalseIterator() : Iterator(Kind::False) {}
+  bool reachedEnd() const override { return true; }
+  void advance() override { assert(false); }
+  void advanceTo(DocID ID) override { assert(false); }
+  DocID peek() const override {
+    assert(false);
+    return 0;
+  }
+  float consume() override {
+    assert(false);
+    return 1;
+  }
+  size_t estimateSize() const override { return 0; }
+
+private:
+  raw_ostream &dump(raw_ostream &OS) const override { return OS << "false"; }
 };
 
 /// Boost iterator is a wrapper around its child which multiplies scores of
@@ -257,7 +279,7 @@ private:
 class BoostIterator : public Iterator {
 public:
   BoostIterator(std::unique_ptr<Iterator> Child, float Factor)
-      : Child(move(Child)), Factor(Factor) {}
+      : Child(std::move(Child)), Factor(Factor) {}
 
   bool reachedEnd() const override { return Child->reachedEnd(); }
 
@@ -272,9 +294,8 @@ public:
   size_t estimateSize() const override { return Child->estimateSize(); }
 
 private:
-  llvm::raw_ostream &dump(llvm::raw_ostream &OS) const override {
-    OS << "(BOOST " << Factor << ' ' << *Child << ')';
-    return OS;
+  raw_ostream &dump(raw_ostream &OS) const override {
+    return OS << "(* " << Factor << ' ' << *Child << ')';
   }
 
   std::unique_ptr<Iterator> Child;
@@ -288,7 +309,7 @@ private:
 class LimitIterator : public Iterator {
 public:
   LimitIterator(std::unique_ptr<Iterator> Child, size_t Limit)
-      : Child(move(Child)), Limit(Limit), ItemsLeft(Limit) {}
+      : Child(std::move(Child)), Limit(Limit), ItemsLeft(Limit) {}
 
   bool reachedEnd() const override {
     return ItemsLeft == 0 || Child->reachedEnd();
@@ -313,9 +334,8 @@ public:
   }
 
 private:
-  llvm::raw_ostream &dump(llvm::raw_ostream &OS) const override {
-    OS << "(LIMIT " << Limit << '(' << ItemsLeft << ") " << *Child << ')';
-    return OS;
+  raw_ostream &dump(raw_ostream &OS) const override {
+    return OS << "(LIMIT " << Limit << " " << *Child << ')';
   }
 
   std::unique_ptr<Iterator> Child;
@@ -333,31 +353,87 @@ std::vector<std::pair<DocID, float>> consume(Iterator &It) {
 }
 
 std::unique_ptr<Iterator>
-createAnd(std::vector<std::unique_ptr<Iterator>> Children) {
-  // If there is exactly one child, pull it one level up: AND(Child) -> Child.
-  return Children.size() == 1 ? std::move(Children.front())
-                              : llvm::make_unique<AndIterator>(move(Children));
+Corpus::intersect(std::vector<std::unique_ptr<Iterator>> Children) const {
+  std::vector<std::unique_ptr<Iterator>> RealChildren;
+  for (auto &Child : Children) {
+    switch (Child->kind()) {
+    case Iterator::Kind::True:
+      break; // No effect, drop the iterator.
+    case Iterator::Kind::False:
+      return std::move(Child); // Intersection is empty.
+    case Iterator::Kind::And: {
+      // Inline nested AND into parent AND.
+      auto &NewChildren = static_cast<AndIterator *>(Child.get())->Children;
+      std::move(NewChildren.begin(), NewChildren.end(),
+                std::back_inserter(RealChildren));
+      break;
+    }
+    default:
+      RealChildren.push_back(std::move(Child));
+    }
+  }
+  switch (RealChildren.size()) {
+  case 0:
+    return all();
+  case 1:
+    return std::move(RealChildren.front());
+  default:
+    return llvm::make_unique<AndIterator>(std::move(RealChildren));
+  }
 }
 
 std::unique_ptr<Iterator>
-createOr(std::vector<std::unique_ptr<Iterator>> Children) {
-  // If there is exactly one child, pull it one level up: OR(Child) -> Child.
-  return Children.size() == 1 ? std::move(Children.front())
-                              : llvm::make_unique<OrIterator>(move(Children));
+Corpus::unionOf(std::vector<std::unique_ptr<Iterator>> Children) const {
+  std::vector<std::unique_ptr<Iterator>> RealChildren;
+  for (auto &Child : Children) {
+    switch (Child->kind()) {
+    case Iterator::Kind::False:
+      break; // No effect, drop the iterator.
+    case Iterator::Kind::Or: {
+      // Inline nested OR into parent OR.
+      auto &NewChildren = static_cast<OrIterator *>(Child.get())->Children;
+      std::move(NewChildren.begin(), NewChildren.end(),
+                std::back_inserter(RealChildren));
+      break;
+    }
+    case Iterator::Kind::True:
+      // Don't return all(), which would discard sibling boosts.
+    default:
+      RealChildren.push_back(std::move(Child));
+    }
+  }
+  switch (RealChildren.size()) {
+  case 0:
+    return none();
+  case 1:
+    return std::move(RealChildren.front());
+  default:
+    return llvm::make_unique<OrIterator>(std::move(RealChildren));
+  }
 }
 
-std::unique_ptr<Iterator> createTrue(DocID Size) {
+std::unique_ptr<Iterator> Corpus::all() const {
   return llvm::make_unique<TrueIterator>(Size);
 }
 
-std::unique_ptr<Iterator> createBoost(std::unique_ptr<Iterator> Child,
-                                      float Factor) {
-  return llvm::make_unique<BoostIterator>(move(Child), Factor);
+std::unique_ptr<Iterator> Corpus::none() const {
+  return llvm::make_unique<FalseIterator>();
 }
 
-std::unique_ptr<Iterator> createLimit(std::unique_ptr<Iterator> Child,
-                                      size_t Limit) {
-  return llvm::make_unique<LimitIterator>(move(Child), Limit);
+std::unique_ptr<Iterator> Corpus::boost(std::unique_ptr<Iterator> Child,
+                                        float Factor) const {
+  if (Factor == 1)
+    return Child;
+  if (Child->kind() == Iterator::Kind::False)
+    return Child;
+  return llvm::make_unique<BoostIterator>(std::move(Child), Factor);
+}
+
+std::unique_ptr<Iterator> Corpus::limit(std::unique_ptr<Iterator> Child,
+                                        size_t Limit) const {
+  if (Child->kind() == Iterator::Kind::False)
+    return Child;
+  return llvm::make_unique<LimitIterator>(std::move(Child), Limit);
 }
 
 } // namespace dex

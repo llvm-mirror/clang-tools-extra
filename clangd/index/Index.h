@@ -10,11 +10,12 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_H
 
+#include "ExpectedTypes.h"
+#include "SymbolID.h"
 #include "clang/Index/IndexSymbol.h"
 #include "clang/Lex/Lexer.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -33,83 +34,66 @@ namespace clangd {
 struct SymbolLocation {
   // Specify a position (Line, Column) of symbol. Using Line/Column allows us to
   // build LSP responses without reading the file content.
+  //
+  // Position is encoded into 32 bits to save space.
+  // If Line/Column overflow, the value will be their maximum value.
   struct Position {
-    uint32_t Line = 0; // 0-based
-    // Using UTF-16 code units.
-    uint32_t Column = 0; // 0-based
-  };
+    Position() : Line(0), Column(0) {}
+    void setLine(uint32_t Line);
+    uint32_t line() const { return Line; }
+    void setColumn(uint32_t Column);
+    uint32_t column() const { return Column; }
 
-  // The URI of the source file where a symbol occurs.
-  llvm::StringRef FileURI;
+    bool hasOverflow() const {
+      return Line >= MaxLine || Column >= MaxColumn;
+    }
+
+    static constexpr uint32_t MaxLine = (1 << 20) - 1;
+    static constexpr uint32_t MaxColumn = (1 << 12) - 1;
+
+  private:
+    uint32_t Line : 20; // 0-based
+    // Using UTF-16 code units.
+    uint32_t Column : 12; // 0-based
+  };
 
   /// The symbol range, using half-open range [Start, End).
   Position Start;
   Position End;
 
-  explicit operator bool() const { return !FileURI.empty(); }
+  explicit operator bool() const { return !StringRef(FileURI).empty(); }
+
+  // The URI of the source file where a symbol occurs.
+  // The string must be null-terminated.
+  //
+  // We avoid using llvm::StringRef here to save memory.
+  // WARNING: unless you know what you are doing, it is recommended to use it
+  // via llvm::StringRef.
+  const char *FileURI = "";
 };
 inline bool operator==(const SymbolLocation::Position &L,
                        const SymbolLocation::Position &R) {
-  return std::tie(L.Line, L.Column) == std::tie(R.Line, R.Column);
+  return std::make_tuple(L.line(), L.column()) ==
+         std::make_tuple(R.line(), R.column());
 }
 inline bool operator<(const SymbolLocation::Position &L,
                       const SymbolLocation::Position &R) {
-  return std::tie(L.Line, L.Column) < std::tie(R.Line, R.Column);
+  return std::make_tuple(L.line(), L.column()) <
+         std::make_tuple(R.line(), R.column());
 }
 inline bool operator==(const SymbolLocation &L, const SymbolLocation &R) {
-  return std::tie(L.FileURI, L.Start, L.End) ==
-         std::tie(R.FileURI, R.Start, R.End);
+  assert(L.FileURI && R.FileURI);
+  return !std::strcmp(L.FileURI, R.FileURI) &&
+         std::tie(L.Start, L.End) == std::tie(R.Start, R.End);
 }
 inline bool operator<(const SymbolLocation &L, const SymbolLocation &R) {
-  return std::tie(L.FileURI, L.Start, L.End) <
-         std::tie(R.FileURI, R.Start, R.End);
+  assert(L.FileURI && R.FileURI);
+  int Cmp = std::strcmp(L.FileURI, R.FileURI);
+  if (Cmp != 0)
+    return Cmp < 0;
+  return std::tie(L.Start, L.End) < std::tie(R.Start, R.End);
 }
 llvm::raw_ostream &operator<<(llvm::raw_ostream &, const SymbolLocation &);
-
-// The class identifies a particular C++ symbol (class, function, method, etc).
-//
-// As USRs (Unified Symbol Resolution) could be large, especially for functions
-// with long type arguments, SymbolID is using 160-bits SHA1(USR) values to
-// guarantee the uniqueness of symbols while using a relatively small amount of
-// memory (vs storing USRs directly).
-//
-// SymbolID can be used as key in the symbol indexes to lookup the symbol.
-class SymbolID {
-public:
-  SymbolID() = default;
-  explicit SymbolID(llvm::StringRef USR);
-
-  bool operator==(const SymbolID &Sym) const {
-    return HashValue == Sym.HashValue;
-  }
-  bool operator<(const SymbolID &Sym) const {
-    return HashValue < Sym.HashValue;
-  }
-
-  constexpr static size_t RawSize = 20;
-  llvm::StringRef raw() const {
-    return StringRef(reinterpret_cast<const char *>(HashValue.data()), RawSize);
-  }
-  static SymbolID fromRaw(llvm::StringRef);
-
-  // Returns a 40-bytes hex encoded string.
-  std::string str() const;
-  static llvm::Expected<SymbolID> fromStr(llvm::StringRef);
-
-private:
-  std::array<uint8_t, RawSize> HashValue;
-};
-
-inline llvm::hash_code hash_value(const SymbolID &ID) {
-  // We already have a good hash, just return the first bytes.
-  assert(sizeof(size_t) <= SymbolID::RawSize && "size_t longer than SHA1!");
-  size_t Result;
-  memcpy(&Result, ID.raw().data(), sizeof(size_t));
-  return llvm::hash_code(Result);
-}
-
-// Write SymbolID into the given stream. SymbolID is encoded as ID.str().
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const SymbolID &ID);
 
 } // namespace clangd
 } // namespace clang
@@ -212,6 +196,10 @@ struct Symbol {
   /// e.g. return type of a function, or type of a variable.
   llvm::StringRef ReturnType;
 
+  /// Raw representation of the OpaqueType of the symbol, used for scoring
+  /// purposes.
+  llvm::StringRef Type;
+
   struct IncludeHeaderWithReferences {
     IncludeHeaderWithReferences() = default;
 
@@ -244,6 +232,8 @@ struct Symbol {
     IndexedForCodeCompletion = 1 << 0,
     /// Indicates if the symbol is deprecated.
     Deprecated = 1 << 1,
+    // Symbol is an implementation detail.
+    ImplementationDetail = 1 << 2,
   };
 
   SymbolFlag Flags = SymbolFlag::None;
@@ -264,12 +254,20 @@ raw_ostream &operator<<(raw_ostream &, Symbol::SymbolFlag);
 template <typename Callback> void visitStrings(Symbol &S, const Callback &CB) {
   CB(S.Name);
   CB(S.Scope);
-  CB(S.CanonicalDeclaration.FileURI);
-  CB(S.Definition.FileURI);
   CB(S.Signature);
   CB(S.CompletionSnippetSuffix);
   CB(S.Documentation);
   CB(S.ReturnType);
+  CB(S.Type);
+  auto RawCharPointerCB = [&CB](const char *&P) {
+    llvm::StringRef S(P);
+    CB(S);
+    assert(!S.data()[S.size()] && "Visited StringRef must be null-terminated");
+    P = S.data();
+  };
+  RawCharPointerCB(S.CanonicalDeclaration.FileURI);
+  RawCharPointerCB(S.Definition.FileURI);
+
   for (auto &Include : S.IncludeHeaders)
     CB(Include.IncludeHeader);
 }
@@ -286,6 +284,7 @@ class SymbolSlab {
 public:
   using const_iterator = std::vector<Symbol>::const_iterator;
   using iterator = const_iterator;
+  using value_type = Symbol;
 
   SymbolSlab() = default;
 
@@ -294,6 +293,7 @@ public:
   const_iterator find(const SymbolID &SymID) const;
 
   size_t size() const { return Symbols.size(); }
+  bool empty() const { return Symbols.empty(); }
   // Estimates the total memory usage.
   size_t bytes() const {
     return sizeof(*this) + Arena.getTotalMemory() +
@@ -388,7 +388,10 @@ public:
 
   const_iterator begin() const { return Refs.begin(); }
   const_iterator end() const { return Refs.end(); }
+  /// Gets the number of symbols.
   size_t size() const { return Refs.size(); }
+  size_t numRefs() const { return NumRefs; }
+  bool empty() const { return Refs.empty(); }
 
   size_t bytes() const {
     return sizeof(*this) + Arena.getTotalMemory() +
@@ -411,11 +414,14 @@ public:
   };
 
 private:
-  RefSlab(std::vector<value_type> Refs, llvm::BumpPtrAllocator Arena)
-      : Arena(std::move(Arena)), Refs(std::move(Refs)) {}
+  RefSlab(std::vector<value_type> Refs, llvm::BumpPtrAllocator Arena,
+          size_t NumRefs)
+      : Arena(std::move(Arena)), Refs(std::move(Refs)), NumRefs(NumRefs) {}
 
   llvm::BumpPtrAllocator Arena;
   std::vector<value_type> Refs;
+  // Number of all references.
+  size_t NumRefs = 0;
 };
 
 struct FuzzyFindRequest {
@@ -428,9 +434,6 @@ struct FuzzyFindRequest {
   /// namespace xyz::abc.
   ///
   /// The global scope is "", a top level scope is "foo::", etc.
-  /// FIXME: drop the special case for empty list, which is the same as
-  /// `AnyScope = true`.
-  /// FIXME: support scope proximity.
   std::vector<std::string> Scopes;
   /// If set to true, allow symbols from any scope. Scopes explicitly listed
   /// above will be ranked higher.
@@ -443,6 +446,8 @@ struct FuzzyFindRequest {
   /// Contextually relevant files (e.g. the file we're code-completing in).
   /// Paths should be absolute.
   std::vector<std::string> ProximityPaths;
+
+  // FIXME(ibiryukov): add expected type to the request.
 
   bool operator==(const FuzzyFindRequest &Req) const {
     return std::tie(Query, Scopes, Limit, RestrictForCodeCompletion,

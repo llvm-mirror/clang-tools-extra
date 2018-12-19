@@ -52,6 +52,36 @@ struct ASTRetentionPolicy {
   unsigned MaxRetainedASTs = 3;
 };
 
+struct TUAction {
+  enum State {
+    Queued,           // The TU is pending in the thread task queue to be built.
+    RunningAction,    // Starting running actions on the TU.
+    BuildingPreamble, // The preamble of the TU is being built.
+    BuildingFile,     // The TU is being built. It is only emitted when building
+                      // the AST for diagnostics in write action (update).
+    Idle, // Indicates the worker thread is idle, and ready to run any upcoming
+          // actions.
+  };
+  TUAction(State S, llvm::StringRef Name) : S(S), Name(Name){};
+  State S;
+  /// The name of the action currently running, e.g. Update, GoToDef, Hover.
+  /// Empty if we are in the idle state.
+  std::string Name;
+};
+
+// Internal status of the TU in TUScheduler.
+struct TUStatus {
+  struct BuildDetails {
+    /// Indicates whether clang failed to build the TU.
+    bool BuildFailed = false;
+    /// Indicates whether we reused the prebuilt AST.
+    bool ReuseAST = false;
+  };
+
+  TUAction Action;
+  BuildDetails Details;
+};
+
 class ParsingCallbacks {
 public:
   virtual ~ParsingCallbacks() = default;
@@ -72,6 +102,12 @@ public:
   /// in this callback (obtained via ParsedAST::getLocalTopLevelDecls) to obtain
   /// optimal performance.
   virtual void onMainAST(PathRef Path, ParsedAST &AST) {}
+
+  /// Called whenever the diagnostics for \p File are produced.
+  virtual void onDiagnostics(PathRef File, std::vector<Diag> Diags) {}
+
+  /// Called whenever the TU status is updated.
+  virtual void onFileUpdated(PathRef File, const TUStatus &Status) {}
 };
 
 /// Handles running tasks for ClangdServer and managing the resources (e.g.,
@@ -100,13 +136,18 @@ public:
 
   /// Schedule an update for \p File. Adds \p File to a list of tracked files if
   /// \p File was not part of it before.
-  /// FIXME(ibiryukov): remove the callback from this function.
-  void update(PathRef File, ParseInputs Inputs, WantDiagnostics WD,
-              llvm::unique_function<void(std::vector<Diag>)> OnUpdated);
+  /// If diagnostics are requested (Yes), and the context is cancelled before
+  /// they are prepared, they may be skipped if eventual-consistency permits it
+  /// (i.e. WantDiagnostics is downgraded to Auto).
+  void update(PathRef File, ParseInputs Inputs, WantDiagnostics WD);
 
   /// Remove \p File from the list of tracked files and schedule removal of its
-  /// resources.
+  /// resources. Pending diagnostics for closed files may not be delivered, even
+  /// if requested with WantDiags::Auto or WantDiags::Yes.
   void remove(PathRef File);
+
+  /// Schedule an async task with no dependencies.
+  void run(llvm::StringRef Name, llvm::unique_function<void()> Action);
 
   /// Schedule an async read of the AST. \p Action will be called when AST is
   /// ready. The AST passed to \p Action refers to the version of \p File
@@ -114,6 +155,8 @@ public:
   /// \p Action is executed.
   /// If an error occurs during processing, it is forwarded to the \p Action
   /// callback.
+  /// If the context is cancelled before the AST is ready, the callback will
+  /// receive a CancelledError.
   void runWithAST(llvm::StringRef Name, PathRef File,
                   Callback<InputsAndAST> Action);
 
@@ -137,6 +180,8 @@ public:
   /// If there's no preamble yet (because the file was just opened), we'll wait
   /// for it to build. The result may be null if it fails to build or is empty.
   /// If an error occurs, it is forwarded to the \p Action callback.
+  /// Context cancellation is ignored and should be handled by the Action.
+  /// (In practice, the Action is almost always executed immediately).
   void runWithPreamble(llvm::StringRef Name, PathRef File,
                        PreambleConsistency Consistency,
                        Callback<InputsAndPreamble> Action);

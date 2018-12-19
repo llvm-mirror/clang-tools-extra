@@ -9,6 +9,7 @@
 
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_ACTION_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_INDEX_ACTION_H
+#include "Headers.h"
 #include "SymbolCollector.h"
 #include "clang/Frontend/FrontendActions.h"
 
@@ -21,10 +22,13 @@ namespace clangd {
 // Only a subset of SymbolCollector::Options are respected:
 //   - include paths are always collected, and canonicalized appropriately
 //   - references are always counted
+//   - all references are collected (if RefsCallback is non-null)
 //   - the symbol origin is always Static
-std::unique_ptr<FrontendAction>
-createStaticIndexingAction(SymbolCollector::Options Opts,
-                           std::function<void(SymbolSlab)> SymbolsCallback);
+std::unique_ptr<FrontendAction> createStaticIndexingAction(
+    SymbolCollector::Options Opts,
+    std::function<void(SymbolSlab)> SymbolsCallback,
+    std::function<void(RefSlab)> RefsCallback,
+    std::function<void(IncludeGraph)> IncludeGraphCallback);
 
 } // namespace clangd
 } // namespace clang

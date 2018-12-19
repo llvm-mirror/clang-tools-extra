@@ -13,23 +13,23 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANGD_TESTFS_H
 #define LLVM_CLANG_TOOLS_EXTRA_UNITTESTS_CLANGD_TESTFS_H
 #include "ClangdServer.h"
-#include "clang/Basic/VirtualFileSystem.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/VirtualFileSystem.h"
 
 namespace clang {
 namespace clangd {
 
 // Builds a VFS that provides access to the provided files, plus temporary
 // directories.
-llvm::IntrusiveRefCntPtr<vfs::FileSystem>
+llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem>
 buildTestFS(llvm::StringMap<std::string> const &Files,
             llvm::StringMap<time_t> const &Timestamps = {});
 
 // A VFS provider that returns TestFSes containing a provided set of files.
 class MockFSProvider : public FileSystemProvider {
 public:
-  IntrusiveRefCntPtr<vfs::FileSystem> getFileSystem() override {
+  IntrusiveRefCntPtr<llvm::vfs::FileSystem> getFileSystem() const override {
     return buildTestFS(Files);
   }
 
@@ -41,7 +41,7 @@ public:
 class MockCompilationDatabase : public GlobalCompilationDatabase {
 public:
   /// If \p Directory is not empty, use that as the Directory field of the
-  /// CompileCommand.
+  /// CompileCommand, and as project SourceRoot.
   ///
   /// If \p RelPathPrefix is not empty, use that as a prefix in front of the
   /// source file name, instead of using an absolute path.
@@ -49,7 +49,7 @@ public:
                           StringRef RelPathPrefix = StringRef());
 
   llvm::Optional<tooling::CompileCommand>
-  getCompileCommand(PathRef File) const override;
+  getCompileCommand(PathRef File, ProjectInfo * = nullptr) const override;
 
   std::vector<std::string> ExtraClangFlags;
 

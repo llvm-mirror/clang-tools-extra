@@ -19,11 +19,28 @@
 #include "ClangdUnit.h"
 #include "Index.h"
 #include "MemIndex.h"
+#include "Merge.h"
 #include "clang/Lex/Preprocessor.h"
 #include <memory>
 
 namespace clang {
 namespace clangd {
+
+/// Select between in-memory index implementations, which have tradeoffs.
+enum class IndexType {
+  // MemIndex is trivially cheap to build, but has poor query performance.
+  Light,
+  // Dex is relatively expensive to build and uses more memory, but is fast.
+  Heavy,
+};
+
+/// How to handle duplicated symbols across multiple files.
+enum class DuplicateHandling {
+  // Pick a random symbol. Less accurate but faster.
+  PickOne,
+  // Merge symbols. More accurate but slower.
+  Merge,
+};
 
 /// A container of Symbols from several source files. It can be updated
 /// at source-file granularity, replacing all symbols from one file with a new
@@ -46,7 +63,9 @@ public:
               std::unique_ptr<RefSlab> Refs);
 
   // The index keeps the symbols alive.
-  std::unique_ptr<SymbolIndex> buildMemIndex();
+  std::unique_ptr<SymbolIndex>
+  buildIndex(IndexType,
+             DuplicateHandling DuplicateHandle = DuplicateHandling::PickOne);
 
 private:
   mutable std::mutex Mutex;
@@ -59,14 +78,9 @@ private:
 
 /// This manages symbols from files and an in-memory index on all symbols.
 /// FIXME: Expose an interface to remove files that are closed.
-class FileIndex {
+class FileIndex : public MergedIndex {
 public:
-  /// If URISchemes is empty, the default schemes in SymbolCollector will be
-  /// used.
-  FileIndex(std::vector<std::string> URISchemes = {});
-
-  // Presents a merged view of the supplied main-file and preamble ASTs.
-  const SymbolIndex &index() const { return *MergedIndex; }
+  FileIndex(bool UseDex = true);
 
   /// Update preamble symbols of file \p Path with all declarations in \p AST
   /// and macros in \p PP.
@@ -78,7 +92,7 @@ public:
   void updateMain(PathRef Path, ParsedAST &AST);
 
 private:
-  std::vector<std::string> URISchemes;
+  bool UseDex; // FIXME: this should be always on.
 
   // Contains information from each file's preamble only.
   // These are large, but update fairly infrequently (preambles are stable).
@@ -102,22 +116,17 @@ private:
   // (Note that symbols *only* in the main file are not indexed).
   FileSymbols MainFileSymbols;
   SwapIndex MainFileIndex;
-
-  std::unique_ptr<SymbolIndex> MergedIndex;  // Merge preamble and main index.
 };
 
 /// Retrieves symbols and refs of local top level decls in \p AST (i.e.
 /// `AST.getLocalTopLevelDecls()`).
 /// Exposed to assist in unit tests.
-/// If URISchemes is empty, the default schemes in SymbolCollector will be used.
-std::pair<SymbolSlab, RefSlab>
-indexMainDecls(ParsedAST &AST, llvm::ArrayRef<std::string> URISchemes = {});
+std::pair<SymbolSlab, RefSlab> indexMainDecls(ParsedAST &AST);
 
 /// Idex declarations from \p AST and macros from \p PP that are declared in
 /// included headers.
-/// If URISchemes is empty, the default schemes in SymbolCollector will be used.
-SymbolSlab indexHeaderSymbols(ASTContext &AST, std::shared_ptr<Preprocessor> PP,
-                              llvm::ArrayRef<std::string> URISchemes = {});
+SymbolSlab indexHeaderSymbols(ASTContext &AST,
+                              std::shared_ptr<Preprocessor> PP);
 
 } // namespace clangd
 } // namespace clang

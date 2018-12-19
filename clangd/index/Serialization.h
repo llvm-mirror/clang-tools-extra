@@ -24,14 +24,10 @@
 
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_RIFF_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_RIFF_H
+#include "Headers.h"
 #include "Index.h"
 #include "llvm/Support/Error.h"
 
-namespace llvm {
-namespace yaml {
-class Input;
-}
-} // namespace llvm
 namespace clang {
 namespace clangd {
 
@@ -43,33 +39,37 @@ enum class IndexFileFormat {
 // Holds the contents of an index file that was read.
 struct IndexFileIn {
   llvm::Optional<SymbolSlab> Symbols;
+  llvm::Optional<RefSlab> Refs;
+  // Keys are URIs of the source files.
+  llvm::Optional<IncludeGraph> Sources;
 };
-// Parse an index file. The input must be a RIFF container chunk.
+// Parse an index file. The input must be a RIFF or YAML file.
 llvm::Expected<IndexFileIn> readIndexFile(llvm::StringRef);
 
 // Specifies the contents of an index file to be written.
 struct IndexFileOut {
-  const SymbolSlab *Symbols;
-  // TODO: Support serializing symbol occurrences.
+  const SymbolSlab *Symbols = nullptr;
+  const RefSlab *Refs = nullptr;
+  // Keys are URIs of the source files.
+  const IncludeGraph *Sources = nullptr;
   // TODO: Support serializing Dex posting lists.
   IndexFileFormat Format = IndexFileFormat::RIFF;
 
   IndexFileOut() = default;
   IndexFileOut(const IndexFileIn &I)
-      : Symbols(I.Symbols ? I.Symbols.getPointer() : nullptr) {}
+      : Symbols(I.Symbols ? I.Symbols.getPointer() : nullptr),
+        Refs(I.Refs ? I.Refs.getPointer() : nullptr) {}
 };
 // Serializes an index file.
 llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, const IndexFileOut &O);
 
+// Convert a single symbol to YAML, a nice debug representation.
 std::string toYAML(const Symbol &);
-// Returned symbol is backed by the YAML input.
-// FIXME: this is only needed for IndexerMain, find a better solution.
-llvm::Expected<Symbol> symbolFromYAML(llvm::yaml::Input &);
+std::string toYAML(const std::pair<SymbolID, ArrayRef<Ref>> &);
 
 // Build an in-memory static index from an index file.
 // The size should be relatively small, so data can be managed in memory.
 std::unique_ptr<SymbolIndex> loadIndex(llvm::StringRef Filename,
-                                       llvm::ArrayRef<std::string> URISchemes,
                                        bool UseDex = true);
 
 } // namespace clangd

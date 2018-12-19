@@ -6,6 +6,7 @@ add_clang_library(clangTidyMiscModule
   MisplacedConstCheck.cpp
   NewDeleteOverloadsCheck.cpp
   NonCopyableObjects.cpp
+  NonPrivateMemberVariablesInClassesCheck.cpp
   RedundantExpressionCheck.cpp
   StaticAssertCheck.cpp
   ThrowByValueCatchByReferenceCheck.cpp
@@ -21,6 +22,7 @@ add_clang_library(clangTidyMiscModule
   clangASTMatchers
   clangBasic
   clangLex
+  clangSerialization
   clangTidy
   clangTidyUtils
   clangTooling

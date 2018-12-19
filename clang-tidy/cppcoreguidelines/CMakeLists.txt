@@ -4,6 +4,7 @@ add_clang_library(clangTidyCppCoreGuidelinesModule
   AvoidGotoCheck.cpp
   CppCoreGuidelinesTidyModule.cpp
   InterfacesGlobalInitCheck.cpp
+  MacroUsageCheck.cpp
   NarrowingConversionsCheck.cpp
   NoMallocCheck.cpp
   OwningMemoryCheck.cpp
@@ -25,8 +26,10 @@ add_clang_library(clangTidyCppCoreGuidelinesModule
   clangASTMatchers
   clangBasic
   clangLex
+  clangSerialization
   clangTidy
   clangTidyMiscModule
+  clangTidyModernizeModule
   clangTidyReadabilityModule
   clangTidyUtils
   clangTooling

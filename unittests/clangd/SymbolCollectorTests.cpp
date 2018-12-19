@@ -13,7 +13,6 @@
 #include "index/SymbolCollector.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/FileSystemOptions.h"
-#include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Index/IndexingAction.h"
 #include "clang/Tooling/Tooling.h"
@@ -21,15 +20,16 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
 #include <memory>
 #include <string>
 
+using namespace llvm;
 namespace clang {
 namespace clangd {
-
 namespace {
 
 using testing::_;
@@ -53,8 +53,10 @@ MATCHER_P(Snippet, S, "") {
   return (arg.Name + arg.CompletionSnippetSuffix).str() == S;
 }
 MATCHER_P(QName, Name, "") { return (arg.Scope + arg.Name).str() == Name; }
-MATCHER_P(DeclURI, P, "") { return arg.CanonicalDeclaration.FileURI == P; }
-MATCHER_P(DefURI, P, "") { return arg.Definition.FileURI == P; }
+MATCHER_P(DeclURI, P, "") {
+  return StringRef(arg.CanonicalDeclaration.FileURI) == P;
+}
+MATCHER_P(DefURI, P, "") { return StringRef(arg.Definition.FileURI) == P; }
 MATCHER_P(IncludeHeader, P, "") {
   return (arg.IncludeHeaders.size() == 1) &&
          (arg.IncludeHeaders.begin()->IncludeHeader == P);
@@ -63,19 +65,19 @@ MATCHER_P2(IncludeHeaderWithRef, IncludeHeader, References,  "") {
   return (arg.IncludeHeader == IncludeHeader) && (arg.References == References);
 }
 MATCHER_P(DeclRange, Pos, "") {
-  return std::tie(arg.CanonicalDeclaration.Start.Line,
-                  arg.CanonicalDeclaration.Start.Column,
-                  arg.CanonicalDeclaration.End.Line,
-                  arg.CanonicalDeclaration.End.Column) ==
-         std::tie(Pos.start.line, Pos.start.character, Pos.end.line,
-                  Pos.end.character);
+  return std::make_tuple(arg.CanonicalDeclaration.Start.line(),
+                         arg.CanonicalDeclaration.Start.column(),
+                         arg.CanonicalDeclaration.End.line(),
+                         arg.CanonicalDeclaration.End.column()) ==
+         std::make_tuple(Pos.start.line, Pos.start.character, Pos.end.line,
+                         Pos.end.character);
 }
 MATCHER_P(DefRange, Pos, "") {
-  return std::tie(arg.Definition.Start.Line,
-                  arg.Definition.Start.Column, arg.Definition.End.Line,
-                  arg.Definition.End.Column) ==
-         std::tie(Pos.start.line, Pos.start.character, Pos.end.line,
-                  Pos.end.character);
+  return std::make_tuple(
+             arg.Definition.Start.line(), arg.Definition.Start.column(),
+             arg.Definition.End.line(), arg.Definition.End.column()) ==
+         std::make_tuple(Pos.start.line, Pos.start.character, Pos.end.line,
+                         Pos.end.character);
 }
 MATCHER_P(RefCount, R, "") { return int(arg.References) == R; }
 MATCHER_P(ForCodeCompletion, IsIndexedForCodeCompletion, "") {
@@ -83,13 +85,16 @@ MATCHER_P(ForCodeCompletion, IsIndexedForCodeCompletion, "") {
          IsIndexedForCodeCompletion;
 }
 MATCHER(Deprecated, "") { return arg.Flags & Symbol::Deprecated; }
+MATCHER(ImplementationDetail, "") {
+  return arg.Flags & Symbol::ImplementationDetail;
+}
 MATCHER(RefRange, "") {
   const Ref &Pos = testing::get<0>(arg);
   const Range &Range = testing::get<1>(arg);
-  return std::tie(Pos.Location.Start.Line, Pos.Location.Start.Column,
-                  Pos.Location.End.Line, Pos.Location.End.Column) ==
-         std::tie(Range.start.line, Range.start.character, Range.end.line,
-                  Range.end.character);
+  return std::make_tuple(Pos.Location.Start.line(), Pos.Location.Start.column(),
+                         Pos.Location.End.line(), Pos.Location.End.column()) ==
+         std::make_tuple(Range.start.line, Range.start.character,
+                         Range.end.line, Range.end.character);
 }
 testing::Matcher<const std::vector<Ref> &>
 HaveRanges(const std::vector<Range> Ranges) {
@@ -110,7 +115,7 @@ public:
   bool shouldCollect(StringRef Name, bool Qualified = true) {
     assert(AST.hasValue());
     return SymbolCollector::shouldCollectSymbol(
-        Qualified ? findDecl(*AST, Name) : findAnyDecl(*AST, Name),
+        Qualified ? findDecl(*AST, Name) : findUnqualifiedDecl(*AST, Name),
         AST->getASTContext(), SymbolCollector::Options());
   }
 
@@ -124,8 +129,8 @@ protected:
 TEST_F(ShouldCollectSymbolTest, ShouldCollectSymbol) {
   build(R"(
     namespace nx {
-    class X{}
-    void f() { int Local; }
+    class X{};
+    auto f() { int Local; } // auto ensures function body is parsed.
     struct { int x } var;
     namespace { class InAnonymous {}; }
     }
@@ -222,13 +227,13 @@ public:
       : InMemoryFileSystem(new vfs::InMemoryFileSystem),
         TestHeaderName(testPath("symbol.h")),
         TestFileName(testPath("symbol.cc")) {
-    TestHeaderURI = URI::createFile(TestHeaderName).toString();
-    TestFileURI = URI::createFile(TestFileName).toString();
+    TestHeaderURI = URI::create(TestHeaderName).toString();
+    TestFileURI = URI::create(TestFileName).toString();
   }
 
   bool runSymbolCollector(StringRef HeaderCode, StringRef MainCode,
                           const std::vector<std::string> &ExtraArgs = {}) {
-    llvm::IntrusiveRefCntPtr<FileManager> Files(
+    IntrusiveRefCntPtr<FileManager> Files(
         new FileManager(FileSystemOptions(), InMemoryFileSystem));
 
     auto Factory = llvm::make_unique<SymbolIndexActionFactory>(
@@ -248,9 +253,9 @@ public:
         std::make_shared<PCHContainerOperations>());
 
     InMemoryFileSystem->addFile(TestHeaderName, 0,
-                                llvm::MemoryBuffer::getMemBuffer(HeaderCode));
+                                MemoryBuffer::getMemBuffer(HeaderCode));
     InMemoryFileSystem->addFile(TestFileName, 0,
-                                llvm::MemoryBuffer::getMemBuffer(MainCode));
+                                MemoryBuffer::getMemBuffer(MainCode));
     Invocation.run();
     Symbols = Factory->Collector->takeSymbols();
     Refs = Factory->Collector->takeRefs();
@@ -258,7 +263,7 @@ public:
   }
 
 protected:
-  llvm::IntrusiveRefCntPtr<vfs::InMemoryFileSystem> InMemoryFileSystem;
+  IntrusiveRefCntPtr<vfs::InMemoryFileSystem> InMemoryFileSystem;
   std::string TestHeaderName;
   std::string TestHeaderURI;
   std::string TestFileName;
@@ -386,7 +391,7 @@ TEST_F(SymbolCollectorTest, ObjCSymbols) {
     - (void)someMethodName3:(void*)name3;
     @end
   )";
-  TestFileName = "test.m";
+  TestFileName = testPath("test.m");
   runSymbolCollector(Header, /*Main=*/"", {"-fblocks", "-xobjective-c++"});
   EXPECT_THAT(Symbols,
               UnorderedElementsAre(
@@ -440,6 +445,8 @@ TEST_F(SymbolCollectorTest, Refs) {
   };
   class $bar[[Bar]];
   void $func[[func]]();
+
+  namespace $ns[[NS]] {} // namespace ref is ignored
   )");
   Annotations Main(R"(
   class $bar[[Bar]] {};
@@ -471,12 +478,24 @@ TEST_F(SymbolCollectorTest, Refs) {
                                   HaveRanges(Main.ranges("bar")))));
   EXPECT_THAT(Refs, Contains(Pair(findSymbol(Symbols, "func").ID,
                                   HaveRanges(Main.ranges("func")))));
+  EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(Symbols, "NS").ID, _))));
   // Symbols *only* in the main file (a, b, c) had no refs collected.
   auto MainSymbols =
       TestTU::withHeaderCode(SymbolsOnlyInMainCode.code()).headerSymbols();
   EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(MainSymbols, "a").ID, _))));
   EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(MainSymbols, "b").ID, _))));
   EXPECT_THAT(Refs, Not(Contains(Pair(findSymbol(MainSymbols, "c").ID, _))));
+}
+
+TEST_F(SymbolCollectorTest, RefsInHeaders) {
+  CollectorOpts.RefFilter = RefKind::All;
+  CollectorOpts.RefsInHeaders = true;
+  Annotations Header(R"(
+  class [[Foo]] {};
+  )");
+  runSymbolCollector(Header.code(), "");
+  EXPECT_THAT(Refs, Contains(Pair(findSymbol(Symbols, "Foo").ID,
+                                  HaveRanges(Header.ranges()))));
 }
 
 TEST_F(SymbolCollectorTest, References) {
@@ -515,36 +534,20 @@ TEST_F(SymbolCollectorTest, SymbolRelativeNoFallback) {
 TEST_F(SymbolCollectorTest, SymbolRelativeWithFallback) {
   TestHeaderName = "x.h";
   TestFileName = "x.cpp";
-  TestHeaderURI = URI::createFile(testPath(TestHeaderName)).toString();
+  TestHeaderURI = URI::create(testPath(TestHeaderName)).toString();
   CollectorOpts.FallbackDir = testRoot();
   runSymbolCollector("class Foo {};", /*Main=*/"");
   EXPECT_THAT(Symbols,
               UnorderedElementsAre(AllOf(QName("Foo"), DeclURI(TestHeaderURI))));
 }
 
-TEST_F(SymbolCollectorTest, CustomURIScheme) {
+TEST_F(SymbolCollectorTest, UnittestURIScheme) {
   // Use test URI scheme from URITests.cpp
-  CollectorOpts.URISchemes.insert(CollectorOpts.URISchemes.begin(), "unittest");
   TestHeaderName = testPath("x.h");
   TestFileName = testPath("x.cpp");
   runSymbolCollector("class Foo {};", /*Main=*/"");
   EXPECT_THAT(Symbols, UnorderedElementsAre(
                            AllOf(QName("Foo"), DeclURI("unittest:///x.h"))));
-}
-
-TEST_F(SymbolCollectorTest, InvalidURIScheme) {
-  // Use test URI scheme from URITests.cpp
-  CollectorOpts.URISchemes = {"invalid"};
-  runSymbolCollector("class Foo {};", /*Main=*/"");
-  EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("Foo"), DeclURI(""))));
-}
-
-TEST_F(SymbolCollectorTest, FallbackToFileURI) {
-  // Use test URI scheme from URITests.cpp
-  CollectorOpts.URISchemes = {"invalid", "file"};
-  runSymbolCollector("class Foo {};", /*Main=*/"");
-  EXPECT_THAT(Symbols, UnorderedElementsAre(
-                           AllOf(QName("Foo"), DeclURI(TestHeaderURI))));
 }
 
 TEST_F(SymbolCollectorTest, IncludeEnums) {
@@ -587,7 +590,7 @@ TEST_F(SymbolCollectorTest, NamelessSymbols) {
                                             QName("(anonymous struct)::a")));
 }
 
-TEST_F(SymbolCollectorTest, SymbolFormedFromMacro) {
+TEST_F(SymbolCollectorTest, SymbolFormedFromRegisteredSchemeFromMacro) {
 
   Annotations Header(R"(
     #define FF(name) \
@@ -617,14 +620,10 @@ TEST_F(SymbolCollectorTest, SymbolFormedByCLI) {
     class $expansion[[NAME]] {};
     #endif
   )");
-
-  runSymbolCollector(Header.code(), /*Main=*/"",
-                     /*ExtraArgs=*/{"-DNAME=name"});
-  EXPECT_THAT(Symbols,
-              UnorderedElementsAre(AllOf(
-                  QName("name"),
-                  DeclRange(Header.range("expansion")),
-                  DeclURI(TestHeaderURI))));
+  runSymbolCollector(Header.code(), /*Main=*/"", /*ExtraArgs=*/{"-DNAME=name"});
+  EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(
+                           QName("name"), DeclRange(Header.range("expansion")),
+                           DeclURI(TestHeaderURI))));
 }
 
 TEST_F(SymbolCollectorTest, IgnoreSymbolsInMainFile) {
@@ -762,7 +761,7 @@ TEST_F(SymbolCollectorTest, CanonicalSTLHeader) {
   // bits/basic_string.h$ should be mapped to <string>
   TestHeaderName = "/nasty/bits/basic_string.h";
   TestFileName = "/nasty/bits/basic_string.cpp";
-  TestHeaderURI = URI::createFile(TestHeaderName).toString();
+  TestHeaderURI = URI::create(TestHeaderName).toString();
   runSymbolCollector("class string {};", /*Main=*/"");
   EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("string"),
                                                   DeclURI(TestHeaderURI),
@@ -832,9 +831,9 @@ TEST_F(SymbolCollectorTest, SkipIncFileWhenCanonicalizeHeaders) {
   Includes.addMapping(TestHeaderName, "<canonical>");
   CollectorOpts.Includes = &Includes;
   auto IncFile = testPath("test.inc");
-  auto IncURI = URI::createFile(IncFile).toString();
+  auto IncURI = URI::create(IncFile).toString();
   InMemoryFileSystem->addFile(IncFile, 0,
-                              llvm::MemoryBuffer::getMemBuffer("class X {};"));
+                              MemoryBuffer::getMemBuffer("class X {};"));
   runSymbolCollector("#include \"test.inc\"\nclass Y {};", /*Main=*/"",
                      /*ExtraArgs=*/{"-I", testRoot()});
   EXPECT_THAT(Symbols,
@@ -849,11 +848,11 @@ TEST_F(SymbolCollectorTest, MainFileIsHeaderWhenSkipIncFile) {
   CanonicalIncludes Includes;
   CollectorOpts.Includes = &Includes;
   TestFileName = testPath("main.h");
-  TestFileURI = URI::createFile(TestFileName).toString();
+  TestFileURI = URI::create(TestFileName).toString();
   auto IncFile = testPath("test.inc");
-  auto IncURI = URI::createFile(IncFile).toString();
+  auto IncURI = URI::create(IncFile).toString();
   InMemoryFileSystem->addFile(IncFile, 0,
-                              llvm::MemoryBuffer::getMemBuffer("class X {};"));
+                              MemoryBuffer::getMemBuffer("class X {};"));
   runSymbolCollector("", /*Main=*/"#include \"test.inc\"",
                      /*ExtraArgs=*/{"-I", testRoot()});
   EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("X"), DeclURI(IncURI),
@@ -865,11 +864,11 @@ TEST_F(SymbolCollectorTest, MainFileIsHeaderWithoutExtensionWhenSkipIncFile) {
   CanonicalIncludes Includes;
   CollectorOpts.Includes = &Includes;
   TestFileName = testPath("no_ext_main");
-  TestFileURI = URI::createFile(TestFileName).toString();
+  TestFileURI = URI::create(TestFileName).toString();
   auto IncFile = testPath("test.inc");
-  auto IncURI = URI::createFile(IncFile).toString();
+  auto IncURI = URI::create(IncFile).toString();
   InMemoryFileSystem->addFile(IncFile, 0,
-                              llvm::MemoryBuffer::getMemBuffer("class X {};"));
+                              MemoryBuffer::getMemBuffer("class X {};"));
   runSymbolCollector("", /*Main=*/"#include \"test.inc\"",
                      /*ExtraArgs=*/{"-I", testRoot()});
   EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("X"), DeclURI(IncURI),
@@ -881,9 +880,9 @@ TEST_F(SymbolCollectorTest, FallbackToIncFileWhenIncludingFileIsCC) {
   CanonicalIncludes Includes;
   CollectorOpts.Includes = &Includes;
   auto IncFile = testPath("test.inc");
-  auto IncURI = URI::createFile(IncFile).toString();
+  auto IncURI = URI::create(IncFile).toString();
   InMemoryFileSystem->addFile(IncFile, 0,
-                              llvm::MemoryBuffer::getMemBuffer("class X {};"));
+                              MemoryBuffer::getMemBuffer("class X {};"));
   runSymbolCollector("", /*Main=*/"#include \"test.inc\"",
                      /*ExtraArgs=*/{"-I", testRoot()});
   EXPECT_THAT(Symbols, UnorderedElementsAre(AllOf(QName("X"), DeclURI(IncURI),
@@ -1024,6 +1023,21 @@ TEST_F(SymbolCollectorTest, DeprecatedSymbols) {
   EXPECT_THAT(Symbols, UnorderedElementsAre(
                            AllOf(QName("TestClangc"), Deprecated()),
                            AllOf(QName("TestClangd"), Not(Deprecated()))));
+}
+
+TEST_F(SymbolCollectorTest, ImplementationDetail) {
+  const std::string Header = R"(
+    #define DECL_NAME(x, y) x##_##y##_Decl
+    #define DECL(x, y) class DECL_NAME(x, y) {};
+    DECL(X, Y); // X_Y_Decl
+
+    class Public {};
+  )";
+  runSymbolCollector(Header, /**/ "");
+  EXPECT_THAT(Symbols,
+              UnorderedElementsAre(
+                  AllOf(QName("X_Y_Decl"), ImplementationDetail()),
+                  AllOf(QName("Public"), Not(ImplementationDetail()))));
 }
 
 } // namespace

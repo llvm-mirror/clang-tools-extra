@@ -13,12 +13,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-namespace clang{
+using namespace llvm;
+namespace clang {
 namespace clangd {
 namespace {
-
-using llvm::Failed;
-using llvm::HasValue;
 
 MATCHER_P2(Pos, Line, Col, "") {
   return arg.line == Line && arg.character == Col;
@@ -42,6 +40,16 @@ Range range(const std::pair<int, int> p1, const std::pair<int, int> p2) {
   range.start = position(p1.first, p1.second);
   range.end = position(p2.first, p2.second);
   return range;
+}
+
+TEST(SourceCodeTests, lspLength) {
+  EXPECT_EQ(lspLength(""), 0UL);
+  EXPECT_EQ(lspLength("ascii"), 5UL);
+  // BMP
+  EXPECT_EQ(lspLength("↓"), 1UL);
+  EXPECT_EQ(lspLength("¥"), 1UL);
+  // astral
+  EXPECT_EQ(lspLength("😂"), 2UL);
 }
 
 TEST(SourceCodeTests, PositionToOffset) {
