@@ -85,6 +85,10 @@ public:
     /// If true, ClangdServer automatically indexes files in the current project
     /// on background threads. The index is stored in the project root.
     bool BackgroundIndex = false;
+    /// If set to non-zero, the background index rebuilds the symbol index
+    /// periodically every BuildIndexPeriodMs milliseconds; otherwise, the
+    /// symbol index will be updated for each indexed file.
+    size_t BackgroundIndexRebuildPeriodMs = 0;
 
     /// If set, use this index to augment code completion results.
     SymbolIndex *StaticIndex = nullptr;
@@ -177,7 +181,7 @@ public:
                        Callback<std::vector<DocumentSymbol>> CB);
 
   /// Retrieve locations for symbol references.
-  void findReferences(PathRef File, Position Pos,
+  void findReferences(PathRef File, Position Pos, uint32_t Limit,
                       Callback<std::vector<Location>> CB);
 
   /// Run formatting for \p Rng inside \p File with content \p Code.

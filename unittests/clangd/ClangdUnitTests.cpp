@@ -15,7 +15,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-using namespace llvm;
 namespace clang {
 namespace clangd {
 namespace {
@@ -35,23 +34,24 @@ testing::Matcher<const Diag &> WithNote(testing::Matcher<Note> NoteMatcher) {
 }
 
 MATCHER_P2(Diag, Range, Message,
-           "Diag at " + to_string(Range) + " = [" + Message + "]") {
+           "Diag at " + llvm::to_string(Range) + " = [" + Message + "]") {
   return arg.Range == Range && arg.Message == Message;
 }
 
 MATCHER_P3(Fix, Range, Replacement, Message,
-           "Fix " + to_string(Range) + " => " +
+           "Fix " + llvm::to_string(Range) + " => " +
                testing::PrintToString(Replacement) + " = [" + Message + "]") {
   return arg.Message == Message && arg.Edits.size() == 1 &&
          arg.Edits[0].range == Range && arg.Edits[0].newText == Replacement;
 }
 
-MATCHER_P(EqualToLSPDiag, LSPDiag, "LSP diagnostic " + to_string(LSPDiag)) {
+MATCHER_P(EqualToLSPDiag, LSPDiag,
+          "LSP diagnostic " + llvm::to_string(LSPDiag)) {
   return std::tie(arg.range, arg.severity, arg.message) ==
          std::tie(LSPDiag.range, LSPDiag.severity, LSPDiag.message);
 }
 
-MATCHER_P(EqualToFix, Fix, "LSP fix " + to_string(Fix)) {
+MATCHER_P(EqualToFix, Fix, "LSP fix " + llvm::to_string(Fix)) {
   if (arg.Message != Fix.Message)
     return false;
   if (arg.Edits.size() != Fix.Edits.size())
@@ -255,20 +255,19 @@ main.cpp:2:3: error: something terrible happened)");
 
   // Transform dianostics and check the results.
   std::vector<std::pair<clangd::Diagnostic, std::vector<clangd::Fix>>> LSPDiags;
-  toLSPDiags(
-      D,
+  toLSPDiags(D,
 #ifdef _WIN32
-      URIForFile::canonicalize("c:\\path\\to\\foo\\bar\\main.cpp",
-                               /*TUPath=*/""),
+             URIForFile::canonicalize("c:\\path\\to\\foo\\bar\\main.cpp",
+                                      /*TUPath=*/""),
 #else
       URIForFile::canonicalize("/path/to/foo/bar/main.cpp", /*TUPath=*/""),
 #endif
-      ClangdDiagnosticOptions(),
-      [&](clangd::Diagnostic LSPDiag, ArrayRef<clangd::Fix> Fixes) {
-        LSPDiags.push_back(
-            {std::move(LSPDiag),
-             std::vector<clangd::Fix>(Fixes.begin(), Fixes.end())});
-      });
+             ClangdDiagnosticOptions(),
+             [&](clangd::Diagnostic LSPDiag, ArrayRef<clangd::Fix> Fixes) {
+               LSPDiags.push_back(
+                   {std::move(LSPDiag),
+                    std::vector<clangd::Fix>(Fixes.begin(), Fixes.end())});
+             });
 
   EXPECT_THAT(
       LSPDiags,

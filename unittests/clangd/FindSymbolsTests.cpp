@@ -14,8 +14,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-using namespace llvm;
-
 namespace clang {
 namespace clangd {
 
@@ -64,6 +62,7 @@ public:
       : Server(CDB, FSProvider, DiagConsumer, optsForTests()) {
     // Make sure the test root directory is created.
     FSProvider.Files[testPath("unused")] = "";
+    CDB.ExtraClangFlags = {"-xc++"};
   }
 
 protected:
@@ -73,14 +72,14 @@ protected:
   ClangdServer Server;
   int Limit = 0;
 
-  std::vector<SymbolInformation> getSymbols(StringRef Query) {
+  std::vector<SymbolInformation> getSymbols(llvm::StringRef Query) {
     EXPECT_TRUE(Server.blockUntilIdleForTest()) << "Waiting for preamble";
     auto SymbolInfos = runWorkspaceSymbols(Server, Query, Limit);
     EXPECT_TRUE(bool(SymbolInfos)) << "workspaceSymbols returned an error";
     return *SymbolInfos;
   }
 
-  void addFile(StringRef FileName, StringRef Contents) {
+  void addFile(llvm::StringRef FileName, llvm::StringRef Contents) {
     auto Path = testPath(FileName);
     FSProvider.Files[Path] = Contents;
     Server.addDocument(Path, Contents);
@@ -143,10 +142,11 @@ TEST_F(WorkspaceSymbolsTest, Unnamed) {
 
 TEST_F(WorkspaceSymbolsTest, InMainFile) {
   addFile("foo.cpp", R"cpp(
-      int test() {
-      }
+      int test() {}
+      static test2() {}
       )cpp");
-  EXPECT_THAT(getSymbols("test"), IsEmpty());
+  EXPECT_THAT(getSymbols("test"), 
+              ElementsAre(QName("test"), QName("test2")));
 }
 
 TEST_F(WorkspaceSymbolsTest, Namespaces) {
@@ -186,7 +186,7 @@ TEST_F(WorkspaceSymbolsTest, AnonymousNamespace) {
   addFile("foo.cpp", R"cpp(
       #include "foo.h"
       )cpp");
-  EXPECT_THAT(getSymbols("test"), IsEmpty());
+  EXPECT_THAT(getSymbols("test"), ElementsAre(QName("test")));
 }
 
 TEST_F(WorkspaceSymbolsTest, MultiFile) {
@@ -273,7 +273,7 @@ TEST_F(WorkspaceSymbolsTest, Enums) {
 TEST_F(WorkspaceSymbolsTest, Ranking) {
   addFile("foo.h", R"cpp(
       namespace ns{}
-      function func();
+      void func();
       )cpp");
   addFile("foo.cpp", R"cpp(
       #include "foo.h"
@@ -318,7 +318,7 @@ protected:
     return *SymbolInfos;
   }
 
-  void addFile(StringRef FilePath, StringRef Contents) {
+  void addFile(llvm::StringRef FilePath, llvm::StringRef Contents) {
     FSProvider.Files[FilePath] = Contents;
     Server.addDocument(FilePath, Contents);
   }
@@ -439,7 +439,7 @@ TEST_F(DocumentSymbolsTest, DeclarationDefinition) {
 TEST_F(DocumentSymbolsTest, ExternSymbol) {
   std::string FilePath = testPath("foo.cpp");
   addFile(testPath("foo.h"), R"cpp(
-      extern int var = 2;
+      extern int var;
       )cpp");
   addFile(FilePath, R"cpp(
       #include "foo.h"

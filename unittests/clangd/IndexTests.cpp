@@ -19,12 +19,12 @@
 
 using testing::_;
 using testing::AllOf;
+using testing::AnyOf;
 using testing::ElementsAre;
 using testing::Pair;
 using testing::Pointee;
 using testing::UnorderedElementsAre;
 
-using namespace llvm;
 namespace clang {
 namespace clangd {
 namespace {
@@ -219,6 +219,7 @@ TEST(MergeTest, Merge) {
   R.Documentation = "--doc--";
   L.Origin = SymbolOrigin::Dynamic;
   R.Origin = SymbolOrigin::Static;
+  R.Type = "expectedType";
 
   Symbol M = mergeSymbol(L, R);
   EXPECT_EQ(M.Name, "Foo");
@@ -227,6 +228,7 @@ TEST(MergeTest, Merge) {
   EXPECT_EQ(M.Signature, "()");
   EXPECT_EQ(M.CompletionSnippetSuffix, "{$1:0}");
   EXPECT_EQ(M.Documentation, "--doc--");
+  EXPECT_EQ(M.Type, "expectedType");
   EXPECT_EQ(M.Origin,
             SymbolOrigin::Dynamic | SymbolOrigin::Static | SymbolOrigin::Merge);
 }
@@ -291,7 +293,6 @@ TEST(MergeIndexTest, Refs) {
   Request.IDs = {Foo.ID};
   RefSlab::Builder Results;
   Merge.refs(Request, [&](const Ref &O) { Results.insert(Foo.ID, O); });
-
   EXPECT_THAT(
       std::move(Results).build(),
       ElementsAre(Pair(
@@ -299,9 +300,17 @@ TEST(MergeIndexTest, Refs) {
                                         FileURI("unittest:///test.cc")),
                                   AllOf(RefRange(Test2Code.range("Foo")),
                                         FileURI("unittest:///test2.cc"))))));
+
+  Request.Limit = 1;
+  RefSlab::Builder Results2;
+  Merge.refs(Request, [&](const Ref &O) { Results2.insert(Foo.ID, O); });
+  EXPECT_THAT(std::move(Results2).build(),
+              ElementsAre(Pair(
+                  _, ElementsAre(AnyOf(FileURI("unittest:///test.cc"),
+                                       FileURI("unittest:///test2.cc"))))));
 }
 
-MATCHER_P2(IncludeHeaderWithRef, IncludeHeader, References,  "") {
+MATCHER_P2(IncludeHeaderWithRef, IncludeHeader, References, "") {
   return (arg.IncludeHeader == IncludeHeader) && (arg.References == References);
 }
 

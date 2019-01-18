@@ -1,6 +1,19 @@
+# Configure the Features.inc file.
+llvm_canonicalize_cmake_booleans(
+  CLANGD_BUILD_XPC)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/Features.inc.in
+  ${CMAKE_CURRENT_BINARY_DIR}/Features.inc
+)
+
 set(LLVM_LINK_COMPONENTS
   Support
   )
+
+if(CLANG_BUILT_STANDALONE)
+  # needed to get HAVE_CXX_ATOMICS64_WITHOUT_LIB defined
+  include(CheckAtomic)
+endif()
 
 set(CLANGD_ATOMIC_LIB "")
 if(NOT HAVE_CXX_ATOMICS64_WITHOUT_LIB)
@@ -104,3 +117,6 @@ add_subdirectory(index/dex/dexp)
 if (LLVM_INCLUDE_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
+if ( CLANGD_BUILD_XPC )
+  add_subdirectory(xpc)
+endif ()

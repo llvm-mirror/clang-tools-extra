@@ -397,6 +397,9 @@ struct InitializationOptions {
   // the compilation database doesn't describe an opened file.
   // The command used will be approximately `clang $FILE $fallbackFlags`.
   std::vector<std::string> fallbackFlags;
+
+  /// Clients supports show file status for textDocument/clangd.fileStatus.
+  bool FileStatus = false;
 };
 bool fromJSON(const llvm::json::Value &, InitializationOptions &);
 
@@ -772,6 +775,31 @@ struct TextDocumentPositionParams {
 };
 bool fromJSON(const llvm::json::Value &, TextDocumentPositionParams &);
 
+enum class CompletionTriggerKind {
+  /// Completion was triggered by typing an identifier (24x7 code
+  /// complete), manual invocation (e.g Ctrl+Space) or via API.
+  Invoked = 1,
+  /// Completion was triggered by a trigger character specified by
+  /// the `triggerCharacters` properties of the `CompletionRegistrationOptions`.
+  TriggerCharacter = 2,
+  /// Completion was re-triggered as the current completion list is incomplete.
+  TriggerTriggerForIncompleteCompletions = 3
+};
+
+struct CompletionContext {
+  /// How the completion was triggered.
+  CompletionTriggerKind triggerKind = CompletionTriggerKind::Invoked;
+  /// The trigger character (a single character) that has trigger code complete.
+  /// Is undefined if `triggerKind !== CompletionTriggerKind.TriggerCharacter`
+  std::string triggerCharacter;
+};
+bool fromJSON(const llvm::json::Value &, CompletionContext &);
+
+struct CompletionParams : TextDocumentPositionParams {
+  CompletionContext context;
+};
+bool fromJSON(const llvm::json::Value &, CompletionParams &);
+
 enum class MarkupKind {
   PlainText,
   Markdown,
@@ -972,6 +1000,18 @@ struct ReferenceParams : public TextDocumentPositionParams {
   // For now, no options like context.includeDeclaration are supported.
 };
 bool fromJSON(const llvm::json::Value &, ReferenceParams &);
+
+/// Clangd extension: indicates the current state of the file in clangd,
+/// sent from server via the `textDocument/clangd.fileStatus` notification.
+struct FileStatus {
+  /// The text document's URI.
+  URIForFile uri;
+  /// The human-readable string presents the current state of the file, can be
+  /// shown in the UI (e.g. status bar).
+  std::string state;
+  // FIXME: add detail messages.
+};
+llvm::json::Value toJSON(const FileStatus &FStatus);
 
 } // namespace clangd
 } // namespace clang

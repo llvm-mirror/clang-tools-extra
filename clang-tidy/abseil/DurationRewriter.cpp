@@ -37,8 +37,7 @@ truncateIfIntegral(const FloatingLiteral &FloatLiteral) {
   return llvm::None;
 }
 
-/// Given a `Scale` return the inverse functions for it.
-static const std::pair<llvm::StringRef, llvm::StringRef> &
+const std::pair<llvm::StringRef, llvm::StringRef> &
 getInverseForScale(DurationScale Scale) {
   static const llvm::IndexedMap<std::pair<llvm::StringRef, llvm::StringRef>,
                                 DurationScale2IndexFunctor>
@@ -107,12 +106,28 @@ llvm::StringRef getFactoryForScale(DurationScale Scale) {
 
 /// Returns `true` if `Node` is a value which evaluates to a literal `0`.
 bool IsLiteralZero(const MatchFinder::MatchResult &Result, const Expr &Node) {
-  return selectFirst<const clang::Expr>(
-             "val",
-             match(expr(ignoringImpCasts(anyOf(integerLiteral(equals(0)),
-                                               floatLiteral(equals(0.0)))))
-                       .bind("val"),
-                   Node, *Result.Context)) != nullptr;
+  auto ZeroMatcher =
+      anyOf(integerLiteral(equals(0)), floatLiteral(equals(0.0)));
+
+  // Check to see if we're using a zero directly.
+  if (selectFirst<const clang::Expr>(
+          "val", match(expr(ignoringImpCasts(ZeroMatcher)).bind("val"), Node,
+                       *Result.Context)) != nullptr)
+    return true;
+
+  // Now check to see if we're using a functional cast with a scalar
+  // initializer expression, e.g. `int{0}`.
+  if (selectFirst<const clang::Expr>(
+          "val", match(cxxFunctionalCastExpr(
+                           hasDestinationType(
+                               anyOf(isInteger(), realFloatingPointType())),
+                           hasSourceExpression(initListExpr(
+                               hasInit(0, ignoringParenImpCasts(ZeroMatcher)))))
+                           .bind("val"),
+                       Node, *Result.Context)) != nullptr)
+    return true;
+
+  return false;
 }
 
 llvm::Optional<std::string>
@@ -183,13 +198,10 @@ llvm::Optional<DurationScale> getScaleForInverse(llvm::StringRef Name) {
   return ScaleIter->second;
 }
 
-llvm::Optional<std::string> rewriteExprFromNumberToDuration(
+std::string rewriteExprFromNumberToDuration(
     const ast_matchers::MatchFinder::MatchResult &Result, DurationScale Scale,
     const Expr *Node) {
   const Expr &RootNode = *Node->IgnoreParenImpCasts();
-
-  if (RootNode.getBeginLoc().isMacroID())
-    return llvm::None;
 
   // First check to see if we can undo a complimentary function call.
   if (llvm::Optional<std::string> MaybeRewrite =

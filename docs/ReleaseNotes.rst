@@ -57,7 +57,47 @@ The improvements are...
 Improvements to clang-query
 ---------------------------
 
-The improvements are...
+- A new command line parameter ``--preload`` was added to
+  run commands from a file and then start the interactive interpreter.
+
+- The command ``q`` can was added as an alias for ``quit`` to exit the
+  ``clang-query`` interpreter.
+
+- It is now possible to bind to named values (the result of ``let``
+  expressions). For example:
+
+  .. code-block:: none
+
+    let fn functionDecl()
+    match fn.bind("foo")
+
+- It is now possible to write comments in ``clang-query`` code. This
+  is primarily useful when using script-mode. Comments are all content
+  following the ``#`` character on a line:
+
+  .. code-block:: none
+
+    # This is a comment
+    match fn.bind("foo") # This is a trailing comment
+
+- The new ``set print-matcher true`` command now causes ``clang-query`` to
+  print the evaluated matcher together with the resulting bindings.
+
+- A new output mode ``detailed-ast`` was added to ``clang-query``. The
+  existing ``dump`` output mode is now a deprecated alias
+  for ``detailed-ast``
+
+- Output modes can now be enabled or disabled non-exclusively.  For example,
+
+  .. code-block:: none
+
+    # Enable detailed-ast without disabling other output, such as diag
+    enable output detailed-ast
+    m functionDecl()
+
+    # Disable detailed-ast only
+    disable output detailed-ast
+    m functionDecl()
 
 Improvements to clang-rename
 ----------------------------
@@ -180,6 +220,12 @@ Improvements to clang-tidy
   Detects usage of the deprecated member types of ``std::ios_base`` and replaces
   those that have a non-deprecated equivalent.
 
+- New :doc:`modernize-use-nodiscard
+  <clang-tidy/checks/modernize-use-nodiscard>` check.
+
+  Adds ``[[nodiscard]]`` attributes (introduced in C++17) to member functions
+  to highlight at compile time which return values should not be ignored.
+
 - New :doc:`readability-isolate-decl
   <clang-tidy/checks/readability-isolate-declaration>` check.
 
@@ -197,6 +243,11 @@ Improvements to clang-tidy
 
   Detects usage of magic numbers, numbers that are used as literals instead of
   introduced via constants or symbols.
+
+- New :doc:`readability-redundant-preprocessor
+  <clang-tidy/checks/readability-redundant-preprocessor>` check.
+
+  Finds potentially redundant preprocessor directives.
 
 - New :doc:`readability-uppercase-literal-suffix
   <clang-tidy/checks/readability-uppercase-literal-suffix>` check.
@@ -232,10 +283,6 @@ Improvements to clang-tidy
   <clang-tidy/checks/readability-uppercase-literal-suffix>`
   added.
 
-- The :doc:`readability-redundant-smartptr-get
-  <clang-tidy/checks/readability-redundant-smartptr-get>` check does not warn
-  about calls inside macros anymore by default.
-
 - The :doc:`cppcoreguidelines-narrowing-conversions
   <clang-tidy/checks/cppcoreguidelines-narrowing-conversions>` check now
   detects more narrowing conversions:
@@ -247,6 +294,14 @@ Improvements to clang-tidy
 - The :doc:`objc-property-declaration
   <clang-tidy/checks/objc-property-declaration>` check now ignores the
   `Acronyms` and `IncludeDefaultAcronyms` options.
+
+- The :doc:`readability-redundant-smartptr-get
+  <clang-tidy/checks/readability-redundant-smartptr-get>` check does not warn
+  about calls inside macros anymore by default.
+
+- The :doc:`readability-uppercase-literal-suffix
+  <clang-tidy/checks/readability-uppercase-literal-suffix>` check does not warn
+  about literal suffixes inside macros anymore by default.
 
 Improvements to include-fixer
 -----------------------------
