@@ -1,9 +1,8 @@
 //===--- LLVMTidyModule.cpp - clang-tidy ----------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -13,6 +12,7 @@
 #include "../readability/NamespaceCommentCheck.h"
 #include "HeaderGuardCheck.h"
 #include "IncludeOrderCheck.h"
+#include "PreferIsaOrDynCastInConditionalsCheck.h"
 #include "TwineLocalCheck.h"
 
 namespace clang {
@@ -26,6 +26,8 @@ public:
     CheckFactories.registerCheck<IncludeOrderCheck>("llvm-include-order");
     CheckFactories.registerCheck<readability::NamespaceCommentCheck>(
         "llvm-namespace-comment");
+    CheckFactories.registerCheck<PreferIsaOrDynCastInConditionalsCheck>(
+        "llvm-prefer-isa-or-dyn-cast-in-conditionals");
     CheckFactories.registerCheck<TwineLocalCheck>("llvm-twine-local");
   }
 };

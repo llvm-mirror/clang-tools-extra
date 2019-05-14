@@ -1,9 +1,8 @@
 //===--- FindSymbols.cpp ------------------------------------*- C++-*------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 #include "FindSymbols.h"
@@ -27,67 +26,8 @@
 
 namespace clang {
 namespace clangd {
+
 namespace {
-
-// Convert a index::SymbolKind to clangd::SymbolKind (LSP)
-// Note, some are not perfect matches and should be improved when this LSP
-// issue is addressed:
-// https://github.com/Microsoft/language-server-protocol/issues/344
-SymbolKind indexSymbolKindToSymbolKind(index::SymbolKind Kind) {
-  switch (Kind) {
-  case index::SymbolKind::Unknown:
-    return SymbolKind::Variable;
-  case index::SymbolKind::Module:
-    return SymbolKind::Module;
-  case index::SymbolKind::Namespace:
-    return SymbolKind::Namespace;
-  case index::SymbolKind::NamespaceAlias:
-    return SymbolKind::Namespace;
-  case index::SymbolKind::Macro:
-    return SymbolKind::String;
-  case index::SymbolKind::Enum:
-    return SymbolKind::Enum;
-  case index::SymbolKind::Struct:
-    return SymbolKind::Struct;
-  case index::SymbolKind::Class:
-    return SymbolKind::Class;
-  case index::SymbolKind::Protocol:
-    return SymbolKind::Interface;
-  case index::SymbolKind::Extension:
-    return SymbolKind::Interface;
-  case index::SymbolKind::Union:
-    return SymbolKind::Class;
-  case index::SymbolKind::TypeAlias:
-    return SymbolKind::Class;
-  case index::SymbolKind::Function:
-    return SymbolKind::Function;
-  case index::SymbolKind::Variable:
-    return SymbolKind::Variable;
-  case index::SymbolKind::Field:
-    return SymbolKind::Field;
-  case index::SymbolKind::EnumConstant:
-    return SymbolKind::EnumMember;
-  case index::SymbolKind::InstanceMethod:
-  case index::SymbolKind::ClassMethod:
-  case index::SymbolKind::StaticMethod:
-    return SymbolKind::Method;
-  case index::SymbolKind::InstanceProperty:
-  case index::SymbolKind::ClassProperty:
-  case index::SymbolKind::StaticProperty:
-    return SymbolKind::Property;
-  case index::SymbolKind::Constructor:
-  case index::SymbolKind::Destructor:
-    return SymbolKind::Method;
-  case index::SymbolKind::ConversionFunction:
-    return SymbolKind::Function;
-  case index::SymbolKind::Parameter:
-    return SymbolKind::Variable;
-  case index::SymbolKind::Using:
-    return SymbolKind::Namespace;
-  }
-  llvm_unreachable("invalid symbol kind");
-}
-
 using ScoredSymbolInfo = std::pair<float, SymbolInformation>;
 struct ScoredSymbolGreater {
   bool operator()(const ScoredSymbolInfo &L, const ScoredSymbolInfo &R) {
@@ -154,11 +94,13 @@ getWorkspaceSymbols(llvm::StringRef Query, int Limit,
     std::string Scope = Sym.Scope;
     llvm::StringRef ScopeRef = Scope;
     ScopeRef.consume_back("::");
-    SymbolInformation Info = {Sym.Name, SK, L, ScopeRef};
+    SymbolInformation Info = {(Sym.Name + Sym.TemplateSpecializationArgs).str(),
+                              SK, L, ScopeRef};
 
     SymbolQualitySignals Quality;
     Quality.merge(Sym);
     SymbolRelevanceSignals Relevance;
+    Relevance.Name = Sym.Name;
     Relevance.Query = SymbolRelevanceSignals::Generic;
     if (auto NameMatch = Filter.match(Sym.Name))
       Relevance.NameMatch = *NameMatch;

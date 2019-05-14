@@ -1,9 +1,8 @@
 //===--- FindSymbols.h --------------------------------------*- C++-*------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -22,9 +21,10 @@ class ParsedAST;
 class SymbolIndex;
 
 /// Searches for the symbols matching \p Query. The syntax of \p Query can be
-/// the non-qualified name or fully qualified of a symbol. For example, "vector"
-/// will match the symbol std::vector and "std::vector" would also match it.
-/// Direct children of scopes (namepaces, etc) can be listed with a trailing
+/// the non-qualified name or fully qualified of a symbol. For example,
+/// "vector" will match the symbol std::vector and "std::vector" would also
+/// match it. Direct children of scopes (namepaces, etc) can be listed with a
+/// trailing
 /// "::". For example, "std::" will list all children of the std namespace and
 /// "::" alone will list all children of the global namespace.
 /// \p Limit limits the number of results returned (0 means no limit).

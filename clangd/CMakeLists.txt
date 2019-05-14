@@ -1,6 +1,19 @@
 # Configure the Features.inc file.
-llvm_canonicalize_cmake_booleans(
-  CLANGD_BUILD_XPC)
+if (NOT DEFINED CLANGD_BUILD_XPC)
+  if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    set(CLANGD_BUILD_XPC_DEFAULT ON)
+  else ()
+    set(CLANGD_BUILD_XPC_DEFAULT OFF)
+  endif ()
+
+  llvm_canonicalize_cmake_booleans(CLANGD_BUILD_XPC_DEFAULT)
+
+  set(CLANGD_BUILD_XPC ${CLANGD_BUILD_XPC_DEFAULT} CACHE BOOL "Build XPC Support For Clangd." FORCE)
+  unset(CLANGD_BUILD_XPC_DEFAULT)
+endif ()
+
+llvm_canonicalize_cmake_booleans(CLANGD_BUILD_XPC)
+
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/Features.inc.in
   ${CMAKE_CURRENT_BINARY_DIR}/Features.inc
@@ -40,11 +53,13 @@ add_clang_library(clangDaemon
   FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
   Headers.cpp
+  IncludeFixer.cpp
   JSONTransport.cpp
   Logger.cpp
   Protocol.cpp
   Quality.cpp
   RIFF.cpp
+  Selection.cpp
   SourceCode.cpp
   Threading.cpp
   Trace.cpp
@@ -60,15 +75,21 @@ add_clang_library(clangDaemon
   index/IndexAction.cpp
   index/MemIndex.cpp
   index/Merge.cpp
-  index/SymbolID.cpp
+  index/Ref.cpp
   index/Serialization.cpp
+  index/Symbol.cpp
   index/SymbolCollector.cpp
+  index/SymbolID.cpp
+  index/SymbolLocation.cpp
+  index/SymbolOrigin.cpp
   index/YAMLSerialization.cpp
 
   index/dex/Dex.cpp
   index/dex/Iterator.cpp
   index/dex/PostingList.cpp
   index/dex/Trigram.cpp
+
+  refactor/Tweak.cpp
 
   LINK_LIBS
   clangAST
@@ -107,7 +128,9 @@ add_clang_library(clangDaemon
   ${CLANGD_ATOMIC_LIB}
   )
 
-if( LLVM_LIB_FUZZING_ENGINE OR LLVM_USE_SANITIZE_COVERAGE )
+add_subdirectory(refactor/tweaks)
+if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+  # FIXME: Make fuzzer not use linux-specific APIs, build it everywhere.
   add_subdirectory(fuzzer)
 endif()
 add_subdirectory(tool)
@@ -120,3 +143,8 @@ endif()
 if ( CLANGD_BUILD_XPC )
   add_subdirectory(xpc)
 endif ()
+
+if(CLANG_INCLUDE_TESTS)
+add_subdirectory(test)
+add_subdirectory(unittests)
+endif()

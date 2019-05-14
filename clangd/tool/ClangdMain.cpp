@@ -1,19 +1,23 @@
 //===--- ClangdMain.cpp - clangd server loop ------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
-#include "Features.inc"
 #include "ClangdLSPServer.h"
+#include "CodeComplete.h"
+#include "Features.inc"
 #include "Path.h"
+#include "Protocol.h"
 #include "Trace.h"
 #include "Transport.h"
+#include "index/Background.h"
 #include "index/Serialization.h"
 #include "clang/Basic/Version.h"
+#include "clang/Format/Format.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -32,7 +36,7 @@ namespace clangd {
 static llvm::cl::opt<bool>
     UseDex("use-dex-index",
            llvm::cl::desc("Use experimental Dex dynamic index."),
-           llvm::cl::init(false), llvm::cl::Hidden);
+           llvm::cl::init(true), llvm::cl::Hidden);
 
 static llvm::cl::opt<Path> CompileCommandsDir(
     "compile-commands-dir",
@@ -91,7 +95,7 @@ static llvm::cl::opt<Logger::Level> LogLevel(
 static llvm::cl::opt<bool>
     Test("lit-test",
          llvm::cl::desc("Abbreviation for -input-style=delimited -pretty "
-                        "-run-synchronously -enable-test-scheme. "
+                        "-run-synchronously -enable-test-scheme -log=verbose. "
                         "Intended to simplify lit tests."),
          llvm::cl::init(false), llvm::cl::Hidden);
 
@@ -153,6 +157,20 @@ static llvm::cl::opt<bool> ShowOrigins(
     "debug-origin", llvm::cl::desc("Show origins of completion items"),
     llvm::cl::init(CodeCompleteOptions().ShowOrigins), llvm::cl::Hidden);
 
+static llvm::cl::opt<CodeCompleteOptions::IncludeInsertion> HeaderInsertion(
+    "header-insertion",
+    llvm::cl::desc("Add #include directives when accepting code completions"),
+    llvm::cl::init(CodeCompleteOptions().InsertIncludes),
+    llvm::cl::values(
+        clEnumValN(CodeCompleteOptions::IWYU, "iwyu",
+                   "Include what you use. "
+                   "Insert the owning header for top-level symbols, unless the "
+                   "header is already directly included or the symbol is "
+                   "forward-declared."),
+        clEnumValN(
+            CodeCompleteOptions::NeverInsert, "never",
+            "Never insert #include directives as part of code completion")));
+
 static llvm::cl::opt<bool> HeaderInsertionDecorators(
     "header-insertion-decorators",
     llvm::cl::desc("Prepend a circular dot or space before the completion "
@@ -164,7 +182,7 @@ static llvm::cl::opt<Path> IndexFile(
     "index-file",
     llvm::cl::desc(
         "Index file to build the static index. The file must have been created "
-        "by a compatible clangd-index.\n"
+        "by a compatible clangd-indexer.\n"
         "WARNING: This option is experimental only, and will be removed "
         "eventually. Don't rely on it."),
     llvm::cl::init(""), llvm::cl::Hidden);
@@ -201,6 +219,48 @@ static llvm::cl::opt<bool> EnableFunctionArgSnippets(
                    "function calls. When enabled, completions also contain "
                    "placeholders for method parameters."),
     llvm::cl::init(CodeCompleteOptions().EnableFunctionArgSnippets));
+
+static llvm::cl::opt<std::string> ClangTidyChecks(
+    "clang-tidy-checks",
+    llvm::cl::desc(
+        "List of clang-tidy checks to run (this will override "
+        ".clang-tidy files). Only meaningful when -clang-tidy flag is on."),
+    llvm::cl::init(""));
+
+static llvm::cl::opt<bool> EnableClangTidy(
+    "clang-tidy",
+    llvm::cl::desc("Enable clang-tidy diagnostics."),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<std::string>
+    FallbackStyle("fallback-style",
+                  llvm::cl::desc("clang-format style to apply by default when "
+                                 "no .clang-format file is found"),
+                  llvm::cl::init(clang::format::DefaultFallbackStyle));
+
+static llvm::cl::opt<bool> SuggestMissingIncludes(
+    "suggest-missing-includes",
+    llvm::cl::desc("Attempts to fix diagnostic errors caused by missing "
+                   "includes using index."),
+    llvm::cl::init(true));
+
+static llvm::cl::opt<OffsetEncoding> ForceOffsetEncoding(
+    "offset-encoding",
+    llvm::cl::desc("Force the offsetEncoding used for character positions. "
+                   "This bypasses negotiation via client capabilities."),
+    llvm::cl::values(clEnumValN(OffsetEncoding::UTF8, "utf-8",
+                                "Offsets are in UTF-8 bytes"),
+                     clEnumValN(OffsetEncoding::UTF16, "utf-16",
+                                "Offsets are in UTF-16 code units")),
+    llvm::cl::init(OffsetEncoding::UnsupportedEncoding));
+
+static llvm::cl::opt<bool> AllowFallbackCompletion(
+    "allow-fallback-completion",
+    llvm::cl::desc(
+        "Allow falling back to code completion without compiling files (using "
+        "identifiers and symbol indexes), when file cannot be built or the "
+        "build is not ready."),
+    llvm::cl::init(false));
 
 namespace {
 
@@ -278,8 +338,10 @@ int main(int argc, char *argv[]) {
   if (Test) {
     RunSynchronously = true;
     InputStyle = JSONStreamStyle::Delimited;
+    LogLevel = Logger::Verbose;
     PrettyPrint = true;
-    preventThreadStarvationInTests(); // Ensure background index makes progress.
+    // Ensure background index makes progress.
+    BackgroundIndex::preventThreadStarvationInTests();
   }
   if (Test || EnableTestScheme) {
     static URISchemeRegistry::Add<TestScheme> X(
@@ -297,6 +359,8 @@ int main(int argc, char *argv[]) {
       llvm::errs() << "Ignoring -j because -run-synchronously is set.\n";
     WorkerThreadsCount = 0;
   }
+  if (FallbackStyle.getNumOccurrences())
+    clang::format::DefaultFallbackStyle = FallbackStyle.c_str();
 
   // Validate command line arguments.
   llvm::Optional<llvm::raw_fd_ostream> InputMirrorStream;
@@ -401,6 +465,7 @@ int main(int argc, char *argv[]) {
   CCOpts.Limit = LimitResults;
   CCOpts.BundleOverloads = CompletionStyle != Detailed;
   CCOpts.ShowOrigins = ShowOrigins;
+  CCOpts.InsertIncludes = HeaderInsertion;
   if (!HeaderInsertionDecorators) {
     CCOpts.IncludeIndicator.Insert.clear();
     CCOpts.IncludeIndicator.NoInsert.clear();
@@ -408,7 +473,9 @@ int main(int argc, char *argv[]) {
   CCOpts.SpeculativeIndexRequest = Opts.StaticIndex;
   CCOpts.EnableFunctionArgSnippets = EnableFunctionArgSnippets;
   CCOpts.AllScopes = AllScopesCompletion;
+  CCOpts.AllowFallback = AllowFallbackCompletion;
 
+  RealFileSystemProvider FSProvider;
   // Initialize and run ClangdLSPServer.
   // Change stdin to binary to not lose \r\n on windows.
   llvm::sys::ChangeStdinToBinary();
@@ -428,9 +495,25 @@ int main(int argc, char *argv[]) {
         PrettyPrint, InputStyle);
   }
 
+  // Create an empty clang-tidy option.
+  std::unique_ptr<tidy::ClangTidyOptionsProvider> ClangTidyOptProvider;
+  if (EnableClangTidy) {
+    auto OverrideClangTidyOptions = tidy::ClangTidyOptions::getDefaults();
+    OverrideClangTidyOptions.Checks = ClangTidyChecks;
+    ClangTidyOptProvider = llvm::make_unique<tidy::FileOptionsProvider>(
+        tidy::ClangTidyGlobalOptions(),
+        /* Default */ tidy::ClangTidyOptions::getDefaults(),
+        /* Override */ OverrideClangTidyOptions, FSProvider.getFileSystem());
+  }
+  Opts.ClangTidyOptProvider = ClangTidyOptProvider.get();
+  Opts.SuggestMissingIncludes = SuggestMissingIncludes;
+  llvm::Optional<OffsetEncoding> OffsetEncodingFromFlag;
+  if (ForceOffsetEncoding != OffsetEncoding::UnsupportedEncoding)
+    OffsetEncodingFromFlag = ForceOffsetEncoding;
   ClangdLSPServer LSPServer(
-      *TransportLayer, CCOpts, CompileCommandsDirPath,
-      /*UseDirBasedCDB=*/CompileArgsFrom == FilesystemCompileArgs, Opts);
+      *TransportLayer, FSProvider, CCOpts, CompileCommandsDirPath,
+      /*UseDirBasedCDB=*/CompileArgsFrom == FilesystemCompileArgs,
+      OffsetEncodingFromFlag, Opts);
   llvm::set_thread_name("clangd.main");
   return LSPServer.run() ? 0
                          : static_cast<int>(ErrorResultCode::NoShutdownRequest);

@@ -1,9 +1,8 @@
 //===--- NamespaceCommentCheck.cpp - clang-tidy ---------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -103,11 +102,14 @@ void NamespaceCommentCheck::check(const MatchFinder::MatchResult &Result) {
     }
   }
 
+  // FIXME: This probably breaks on comments between the namespace and its '{'.
   auto TextRange =
       Lexer::getAsCharRange(SourceRange(NestedNamespaceBegin, LBracketLocation),
                             Sources, getLangOpts());
   StringRef NestedNamespaceName =
-      Lexer::getSourceText(TextRange, Sources, getLangOpts()).rtrim();
+      Lexer::getSourceText(TextRange, Sources, getLangOpts())
+          .rtrim('{') // Drop the { itself.
+          .rtrim();   // Drop any whitespace before it.
   bool IsNested = NestedNamespaceName.contains(':');
 
   if (IsNested)

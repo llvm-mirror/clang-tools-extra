@@ -1,3 +1,11 @@
+//===--- ExpectedTypes.cpp ---------------------------------------*- C++-*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "ExpectedTypes.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Type.h"
@@ -35,8 +43,10 @@ static llvm::Optional<QualType>
 typeOfCompletion(const CodeCompletionResult &R) {
   auto *VD = dyn_cast_or_null<ValueDecl>(R.Declaration);
   if (!VD)
-    return None; // We handle only variables and functions below.
+    return llvm::None; // We handle only variables and functions below.
   auto T = VD->getType();
+  if (T.isNull())
+    return llvm::None;
   if (auto FuncT = T->getAs<FunctionType>()) {
     // Functions are a special case. They are completed as 'foo()' and we want
     // to match their return type rather than the function type itself.

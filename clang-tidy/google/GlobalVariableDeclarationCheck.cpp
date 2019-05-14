@@ -1,9 +1,8 @@
 //===--- GlobalVariableDeclarationCheck.cpp - clang-tidy-------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -80,12 +79,16 @@ void GlobalVariableDeclarationCheck::registerMatchers(MatchFinder *Finder) {
 void GlobalVariableDeclarationCheck::check(
     const MatchFinder::MatchResult &Result) {
   if (const auto *Decl = Result.Nodes.getNodeAs<VarDecl>("global_var")) {
+    if (Decl->isStaticDataMember())
+      return;
     diag(Decl->getLocation(),
          "non-const global variable '%0' must have a name which starts with "
          "'g[A-Z]'")
         << Decl->getName() << generateFixItHint(Decl, false);
   }
   if (const auto *Decl = Result.Nodes.getNodeAs<VarDecl>("global_const")) {
+    if (Decl->isStaticDataMember())
+      return;
     diag(Decl->getLocation(),
          "const global variable '%0' must have a name which starts with "
          "an appropriate prefix")

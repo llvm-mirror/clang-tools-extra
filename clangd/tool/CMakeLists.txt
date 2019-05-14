@@ -3,6 +3,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/..)
 
 add_clang_tool(clangd
   ClangdMain.cpp
+  $<TARGET_OBJECTS:obj.clangDaemonTweaks>
   )
 
 set(LLVM_LINK_COMPONENTS
@@ -16,7 +17,9 @@ endif()
 
 target_link_libraries(clangd
   PRIVATE
+  clangAST
   clangBasic
+  clangTidy
   clangDaemon
   clangFormat
   clangFrontend

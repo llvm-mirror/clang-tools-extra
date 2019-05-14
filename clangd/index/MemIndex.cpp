@@ -1,9 +1,8 @@
 //===--- MemIndex.cpp - Dynamic in-memory symbol index. ----------*- C++-*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===-------------------------------------------------------------------===//
 
@@ -12,6 +11,7 @@
 #include "Logger.h"
 #include "Quality.h"
 #include "Trace.h"
+#include "clang/Index/IndexSymbol.h"
 
 namespace clang {
 namespace clangd {
